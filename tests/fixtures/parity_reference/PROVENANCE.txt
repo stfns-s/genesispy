@@ -1,0 +1,6 @@
+refresh_timestamp_utc: 2026-05-06T21:00:19+00:00
+genesis_home:          /home/stefanos/src/genesispy-port/Genesis2
+genesis2_git_sha:      1d7566900bd393b7aae73644400f6cb872866163
+genesis2_dirty:        False
+inner_repo_git_sha:    34ae01f751a06c6e873a5a7acfbf45cabb17f809
+inner_repo_dirty:      True

@@ -1,0 +1,713 @@
+{
+  "HierarchyTop": {
+    "BaseModuleName": "top",
+    "ImmutableParameters": "",
+    "InstanceName": "top",
+    "Parameters": [
+      {
+        "__ArrayType__": [
+          2,
+          5,
+          16,
+          32,
+          64
+        ],
+        "Doc": "List of wallace trees to generate",
+        "Name": "WALLACES_WIDTHS"
+      }
+    ],
+    "SubInstances": [
+      {
+        "BaseModuleName": "wallace",
+        "ImmutableParameters": [
+          {
+            "Doc": "This is the bit width of the partial products",
+            "Name": "N",
+            "Range": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              16,
+              32,
+              64
+            ],
+            "__Val__": 2
+          }
+        ],
+        "InstanceName": "wallace_2",
+        "Parameters": [
+          {
+            "Doc": "the value can be true or false",
+            "Name": "COND",
+            "Range": [
+              false,
+              true
+            ],
+            "__Val__": false
+          },
+          {
+            "Doc": "Demo: parameter whose Range declares only a Min bound (lower-bound check only).",
+            "Name": "ParWithMin",
+            "Range": {
+              "Min": 106
+            },
+            "__Val__": 107
+          },
+          {
+            "Doc": "Demo: parameter whose Range declares only a Max bound (upper-bound check only).",
+            "Name": "ParWithMax",
+            "Range": {
+              "Max": 210
+            },
+            "__Val__": 200
+          },
+          {
+            "Doc": "Demo: Range with Min and Step -- value must be Min + k*Step, k>=0.",
+            "Name": "ParWithMinStep",
+            "Range": {
+              "Min": 300,
+              "Step": 3
+            },
+            "__Val__": 309
+          },
+          {
+            "Doc": "Demo: Range with Max and Step -- value must be Max - k*Step, k>=0.",
+            "Name": "ParWithMaxStep",
+            "Range": {
+              "Max": 410,
+              "Step": 2
+            },
+            "__Val__": 404
+          },
+          {
+            "Doc": "Demo: Range with both Min and Max bounds (closed interval).",
+            "Name": "ParWithMinMax",
+            "Range": {
+              "Max": 510,
+              "Min": 500
+            },
+            "__Val__": 505
+          },
+          {
+            "Doc": "Demo: Range with Min, Max and Step -- discrete grid in [Min,Max].",
+            "Name": "ParWithMinMaxStep",
+            "Range": {
+              "Max": 630,
+              "Min": 610,
+              "Step": 2
+            },
+            "__Val__": 622
+          },
+          {
+            "Doc": "Demo: parameter whose value is an InstancePath reference (pointer to another instance, here itself).",
+            "InstancePath": "top.wallace_2",
+            "Name": "ParamExamplePointerToMe"
+          },
+          {
+            "Doc": "Demo: parameter encoded as a HashType -- a flat key/value dict (here cache-geometry-shaped fields).",
+            "__HashType__": {
+              "Assoc": 4,
+              "lineSize": 256,
+              "waySize": 4096,
+              "wordSize": 64
+            },
+            "Name": "ParamHash"
+          },
+          {
+            "__ArrayType__": [
+              "value",
+              [
+                1,
+                2,
+                3,
+                4
+              ],
+              {
+                "a": 1,
+                "b": 2,
+                "c": 3,
+                "d": [
+                  "a",
+                  "b",
+                  "c",
+                  "x"
+                ]
+              }
+            ],
+            "Doc": "This is realy a complex type that no one should ever use as parameter",
+            "Name": "ParamComplexStruct"
+          }
+        ],
+        "SubInstances": "",
+        "UniqueModuleName": "wallace_unq1"
+      },
+      {
+        "BaseModuleName": "wallace",
+        "CloneOf": {
+          "InstancePath": "top.wallace_2"
+        },
+        "InstanceName": "clone_of_wallce_2",
+        "UniqueModuleName": "wallace_unq1"
+      },
+      {
+        "BaseModuleName": "wallace",
+        "ImmutableParameters": [
+          {
+            "Doc": "This is the bit width of the partial products",
+            "Name": "N",
+            "Range": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              16,
+              32,
+              64
+            ],
+            "__Val__": 5
+          }
+        ],
+        "InstanceName": "wallace_5",
+        "Parameters": [
+          {
+            "Doc": "the value can be true or false",
+            "Name": "COND",
+            "Range": [
+              false,
+              true
+            ],
+            "__Val__": false
+          },
+          {
+            "Doc": "Demo: parameter whose Range declares only a Min bound (lower-bound check only).",
+            "Name": "ParWithMin",
+            "Range": {
+              "Min": 106
+            },
+            "__Val__": 107
+          },
+          {
+            "Doc": "Demo: parameter whose Range declares only a Max bound (upper-bound check only).",
+            "Name": "ParWithMax",
+            "Range": {
+              "Max": 210
+            },
+            "__Val__": 200
+          },
+          {
+            "Doc": "Demo: Range with Min and Step -- value must be Min + k*Step, k>=0.",
+            "Name": "ParWithMinStep",
+            "Range": {
+              "Min": 300,
+              "Step": 3
+            },
+            "__Val__": 309
+          },
+          {
+            "Doc": "Demo: Range with Max and Step -- value must be Max - k*Step, k>=0.",
+            "Name": "ParWithMaxStep",
+            "Range": {
+              "Max": 410,
+              "Step": 2
+            },
+            "__Val__": 404
+          },
+          {
+            "Doc": "Demo: Range with both Min and Max bounds (closed interval).",
+            "Name": "ParWithMinMax",
+            "Range": {
+              "Max": 510,
+              "Min": 500
+            },
+            "__Val__": 505
+          },
+          {
+            "Doc": "Demo: Range with Min, Max and Step -- discrete grid in [Min,Max].",
+            "Name": "ParWithMinMaxStep",
+            "Range": {
+              "Max": 630,
+              "Min": 610,
+              "Step": 2
+            },
+            "__Val__": 622
+          },
+          {
+            "Doc": "Demo: parameter whose value is an InstancePath reference (pointer to another instance, here itself).",
+            "InstancePath": "top.wallace_5",
+            "Name": "ParamExamplePointerToMe"
+          },
+          {
+            "Doc": "Demo: parameter encoded as a HashType -- a flat key/value dict (here cache-geometry-shaped fields).",
+            "__HashType__": {
+              "Assoc": 4,
+              "lineSize": 256,
+              "waySize": 4096,
+              "wordSize": 64
+            },
+            "Name": "ParamHash"
+          },
+          {
+            "__ArrayType__": [
+              "value",
+              [
+                1,
+                2,
+                3,
+                4
+              ],
+              {
+                "a": 1,
+                "b": 2,
+                "c": 3,
+                "d": [
+                  "a",
+                  "b",
+                  "c",
+                  "x"
+                ]
+              }
+            ],
+            "Doc": "This is realy a complex type that no one should ever use as parameter",
+            "Name": "ParamComplexStruct"
+          }
+        ],
+        "SubInstances": "",
+        "UniqueModuleName": "wallace_unq2"
+      },
+      {
+        "BaseModuleName": "wallace",
+        "CloneOf": {
+          "InstancePath": "top.wallace_5"
+        },
+        "InstanceName": "clone_of_wallce_5",
+        "UniqueModuleName": "wallace_unq2"
+      },
+      {
+        "BaseModuleName": "wallace",
+        "ImmutableParameters": [
+          {
+            "Doc": "This is the bit width of the partial products",
+            "Name": "N",
+            "Range": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              16,
+              32,
+              64
+            ],
+            "__Val__": 16
+          }
+        ],
+        "InstanceName": "wallace_16",
+        "Parameters": [
+          {
+            "Doc": "the value can be true or false",
+            "Name": "COND",
+            "Range": [
+              false,
+              true
+            ],
+            "__Val__": false
+          },
+          {
+            "Doc": "Demo: parameter whose Range declares only a Min bound (lower-bound check only).",
+            "Name": "ParWithMin",
+            "Range": {
+              "Min": 106
+            },
+            "__Val__": 107
+          },
+          {
+            "Doc": "Demo: parameter whose Range declares only a Max bound (upper-bound check only).",
+            "Name": "ParWithMax",
+            "Range": {
+              "Max": 210
+            },
+            "__Val__": 200
+          },
+          {
+            "Doc": "Demo: Range with Min and Step -- value must be Min + k*Step, k>=0.",
+            "Name": "ParWithMinStep",
+            "Range": {
+              "Min": 300,
+              "Step": 3
+            },
+            "__Val__": 309
+          },
+          {
+            "Doc": "Demo: Range with Max and Step -- value must be Max - k*Step, k>=0.",
+            "Name": "ParWithMaxStep",
+            "Range": {
+              "Max": 410,
+              "Step": 2
+            },
+            "__Val__": 404
+          },
+          {
+            "Doc": "Demo: Range with both Min and Max bounds (closed interval).",
+            "Name": "ParWithMinMax",
+            "Range": {
+              "Max": 510,
+              "Min": 500
+            },
+            "__Val__": 505
+          },
+          {
+            "Doc": "Demo: Range with Min, Max and Step -- discrete grid in [Min,Max].",
+            "Name": "ParWithMinMaxStep",
+            "Range": {
+              "Max": 630,
+              "Min": 610,
+              "Step": 2
+            },
+            "__Val__": 622
+          },
+          {
+            "Doc": "Demo: parameter whose value is an InstancePath reference (pointer to another instance, here itself).",
+            "InstancePath": "top.wallace_16",
+            "Name": "ParamExamplePointerToMe"
+          },
+          {
+            "Doc": "Demo: parameter encoded as a HashType -- a flat key/value dict (here cache-geometry-shaped fields).",
+            "__HashType__": {
+              "Assoc": 4,
+              "lineSize": 256,
+              "waySize": 4096,
+              "wordSize": 64
+            },
+            "Name": "ParamHash"
+          },
+          {
+            "__ArrayType__": [
+              "value",
+              [
+                1,
+                2,
+                3,
+                4
+              ],
+              {
+                "a": 1,
+                "b": 2,
+                "c": 3,
+                "d": [
+                  "a",
+                  "b",
+                  "c",
+                  "x"
+                ]
+              }
+            ],
+            "Doc": "This is realy a complex type that no one should ever use as parameter",
+            "Name": "ParamComplexStruct"
+          }
+        ],
+        "SubInstances": "",
+        "UniqueModuleName": "wallace_unq3"
+      },
+      {
+        "BaseModuleName": "wallace",
+        "CloneOf": {
+          "InstancePath": "top.wallace_16"
+        },
+        "InstanceName": "clone_of_wallce_16",
+        "UniqueModuleName": "wallace_unq3"
+      },
+      {
+        "BaseModuleName": "wallace",
+        "ImmutableParameters": [
+          {
+            "Doc": "This is the bit width of the partial products",
+            "Name": "N",
+            "Range": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              16,
+              32,
+              64
+            ],
+            "__Val__": 32
+          }
+        ],
+        "InstanceName": "wallace_32",
+        "Parameters": [
+          {
+            "Doc": "the value can be true or false",
+            "Name": "COND",
+            "Range": [
+              false,
+              true
+            ],
+            "__Val__": false
+          },
+          {
+            "Doc": "Demo: parameter whose Range declares only a Min bound (lower-bound check only).",
+            "Name": "ParWithMin",
+            "Range": {
+              "Min": 106
+            },
+            "__Val__": 107
+          },
+          {
+            "Doc": "Demo: parameter whose Range declares only a Max bound (upper-bound check only).",
+            "Name": "ParWithMax",
+            "Range": {
+              "Max": 210
+            },
+            "__Val__": 200
+          },
+          {
+            "Doc": "Demo: Range with Min and Step -- value must be Min + k*Step, k>=0.",
+            "Name": "ParWithMinStep",
+            "Range": {
+              "Min": 300,
+              "Step": 3
+            },
+            "__Val__": 309
+          },
+          {
+            "Doc": "Demo: Range with Max and Step -- value must be Max - k*Step, k>=0.",
+            "Name": "ParWithMaxStep",
+            "Range": {
+              "Max": 410,
+              "Step": 2
+            },
+            "__Val__": 404
+          },
+          {
+            "Doc": "Demo: Range with both Min and Max bounds (closed interval).",
+            "Name": "ParWithMinMax",
+            "Range": {
+              "Max": 510,
+              "Min": 500
+            },
+            "__Val__": 505
+          },
+          {
+            "Doc": "Demo: Range with Min, Max and Step -- discrete grid in [Min,Max].",
+            "Name": "ParWithMinMaxStep",
+            "Range": {
+              "Max": 630,
+              "Min": 610,
+              "Step": 2
+            },
+            "__Val__": 622
+          },
+          {
+            "Doc": "Demo: parameter whose value is an InstancePath reference (pointer to another instance, here itself).",
+            "InstancePath": "top.wallace_32",
+            "Name": "ParamExamplePointerToMe"
+          },
+          {
+            "Doc": "Demo: parameter encoded as a HashType -- a flat key/value dict (here cache-geometry-shaped fields).",
+            "__HashType__": {
+              "Assoc": 4,
+              "lineSize": 256,
+              "waySize": 4096,
+              "wordSize": 64
+            },
+            "Name": "ParamHash"
+          },
+          {
+            "__ArrayType__": [
+              "value",
+              [
+                1,
+                2,
+                3,
+                4
+              ],
+              {
+                "a": 1,
+                "b": 2,
+                "c": 3,
+                "d": [
+                  "a",
+                  "b",
+                  "c",
+                  "x"
+                ]
+              }
+            ],
+            "Doc": "This is realy a complex type that no one should ever use as parameter",
+            "Name": "ParamComplexStruct"
+          }
+        ],
+        "SubInstances": "",
+        "UniqueModuleName": "wallace_unq4"
+      },
+      {
+        "BaseModuleName": "wallace",
+        "CloneOf": {
+          "InstancePath": "top.wallace_32"
+        },
+        "InstanceName": "clone_of_wallce_32",
+        "UniqueModuleName": "wallace_unq4"
+      },
+      {
+        "BaseModuleName": "wallace",
+        "ImmutableParameters": [
+          {
+            "Doc": "This is the bit width of the partial products",
+            "Name": "N",
+            "Range": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              16,
+              32,
+              64
+            ],
+            "__Val__": 64
+          }
+        ],
+        "InstanceName": "wallace_64",
+        "Parameters": [
+          {
+            "Doc": "the value can be true or false",
+            "Name": "COND",
+            "Range": [
+              false,
+              true
+            ],
+            "__Val__": false
+          },
+          {
+            "Doc": "Demo: parameter whose Range declares only a Min bound (lower-bound check only).",
+            "Name": "ParWithMin",
+            "Range": {
+              "Min": 106
+            },
+            "__Val__": 107
+          },
+          {
+            "Doc": "Demo: parameter whose Range declares only a Max bound (upper-bound check only).",
+            "Name": "ParWithMax",
+            "Range": {
+              "Max": 210
+            },
+            "__Val__": 200
+          },
+          {
+            "Doc": "Demo: Range with Min and Step -- value must be Min + k*Step, k>=0.",
+            "Name": "ParWithMinStep",
+            "Range": {
+              "Min": 300,
+              "Step": 3
+            },
+            "__Val__": 309
+          },
+          {
+            "Doc": "Demo: Range with Max and Step -- value must be Max - k*Step, k>=0.",
+            "Name": "ParWithMaxStep",
+            "Range": {
+              "Max": 410,
+              "Step": 2
+            },
+            "__Val__": 404
+          },
+          {
+            "Doc": "Demo: Range with both Min and Max bounds (closed interval).",
+            "Name": "ParWithMinMax",
+            "Range": {
+              "Max": 510,
+              "Min": 500
+            },
+            "__Val__": 505
+          },
+          {
+            "Doc": "Demo: Range with Min, Max and Step -- discrete grid in [Min,Max].",
+            "Name": "ParWithMinMaxStep",
+            "Range": {
+              "Max": 630,
+              "Min": 610,
+              "Step": 2
+            },
+            "__Val__": 622
+          },
+          {
+            "Doc": "Demo: parameter whose value is an InstancePath reference (pointer to another instance, here itself).",
+            "InstancePath": "top.wallace_64",
+            "Name": "ParamExamplePointerToMe"
+          },
+          {
+            "Doc": "Demo: parameter encoded as a HashType -- a flat key/value dict (here cache-geometry-shaped fields).",
+            "__HashType__": {
+              "Assoc": 4,
+              "lineSize": 256,
+              "waySize": 4096,
+              "wordSize": 64
+            },
+            "Name": "ParamHash"
+          },
+          {
+            "__ArrayType__": [
+              "value",
+              [
+                1,
+                2,
+                3,
+                4
+              ],
+              {
+                "a": 1,
+                "b": 2,
+                "c": 3,
+                "d": [
+                  "a",
+                  "b",
+                  "c",
+                  "x"
+                ]
+              }
+            ],
+            "Doc": "This is realy a complex type that no one should ever use as parameter",
+            "Name": "ParamComplexStruct"
+          }
+        ],
+        "SubInstances": "",
+        "UniqueModuleName": "wallace_unq5"
+      },
+      {
+        "BaseModuleName": "wallace",
+        "CloneOf": {
+          "InstancePath": "top.wallace_64"
+        },
+        "InstanceName": "clone_of_wallce_64",
+        "UniqueModuleName": "wallace_unq5"
+      }
+    ],
+    "UniqueModuleName": "top"
+  }
+}

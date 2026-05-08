@@ -1,0 +1,208 @@
+"""End-to-end demo regression tests.
+
+For each ported demo, run the full genesispy pipeline (parse → emit → load →
+elaborate → write) and assert the expected Verilog files are produced.
+
+This is logical-equivalence verification, not byte-equality against the Perl
+gold output. Unique-name SHA suffixes (Foo_unq1, Foo_unq2, ...) are allowed
+to differ; we only check that the expected number of distinct modules are
+generated and each contains the demo's signature Verilog content.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+from pathlib import Path
+
+import pytest
+
+from genesispy import cache
+from genesispy.cli import parse_args
+from genesispy.manager import Manager
+
+
+DEMOS = Path(__file__).resolve().parents[1] / "demos"
+
+
+@pytest.fixture(autouse=True)
+def _reset_cache():
+    cache.clear_all()
+    yield
+    cache.clear_all()
+
+
+def _run_demo(
+    tmp_path: Path,
+    demo_dir: Path,
+    top: str,
+    *inputs: str,
+    config_flag: str | None = None,
+    config_file: str | None = None,
+    extra_argv: list[str] | None = None,
+) -> Path:
+    """Copy demo files into tmp_path, run genesispy on them, return synth dir."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    for src in demo_dir.iterdir():
+        if src.is_file():
+            shutil.copy(src, tmp_path / src.name)
+        elif src.is_dir() and src.name == "genesis_src":
+            shutil.copytree(src, tmp_path / src.name, dirs_exist_ok=True)
+
+    cache.clear_all()
+
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        argv = []
+        for f in inputs:
+            argv.extend(["--input", f])
+        argv.extend(["--top", top, "--srcpath", "genesis_src"])
+        if config_flag and config_file:
+            argv.extend([config_flag, config_file])
+        if extra_argv:
+            argv.extend(extra_argv)
+        rc = Manager(parse_args(argv)).execute()
+        assert rc == 0, f"genesispy returned {rc} for {demo_dir.name}"
+    finally:
+        os.chdir(cwd)
+
+    # Without --synthtop, every file is tagged 'verif' (Perl SynthTop=undef
+    # default).  Demos in this suite intentionally don't pass --synthtop;
+    # check verif_dir first, then fall back to synth_dir for any test that
+    # opts in via extra_argv.
+    verif = tmp_path / "genesis_verif"
+    if verif.is_dir() and any(verif.iterdir()):
+        return verif
+    return tmp_path / "genesis_synth"
+
+
+def test_random_logic(tmp_path: Path) -> None:
+    synth = _run_demo(
+        tmp_path, DEMOS / "random_logic", "top",
+        "top.vpy", "OneHotMux.vpy",
+    )
+    files = sorted(p.name for p in synth.iterdir())
+    assert "top.v" in files
+    onehot_files = [f for f in files if f.startswith("OneHotMux_")]
+    assert len(onehot_files) == 6, f"expected 6 OneHotMux variants, got {onehot_files}"
+
+    top_v = (synth / "top.v").read_text()
+    assert "module top" in top_v
+    assert "OneHotMux_" in top_v
+
+
+def test_iterative_wallace_tree(tmp_path: Path) -> None:
+    synth = _run_demo(
+        tmp_path, DEMOS / "iterative_wallace_tree", "top",
+        "top.vpy", "wallace.vpy", "CSA.vpy",
+    )
+    files = sorted(p.name for p in synth.iterdir())
+    assert "top.v" in files
+    assert any(f.startswith("wallace_") for f in files)
+    assert any(f.startswith("CSA_") for f in files)
+
+
+def test_many_iterative_wallace_trees_default(tmp_path: Path) -> None:
+    """No-config mode uses the in-source WALLACES_WIDTHS default of [4, 8]."""
+    synth = _run_demo(
+        tmp_path, DEMOS / "many_iterative_wallace_trees", "top",
+        "top.vpy", "wallace.vpy", "CSA.vpy",
+    )
+    files = sorted(p.name for p in synth.iterdir())
+    wallace_files = [f for f in files if f.startswith("wallace_unq")]
+    clone_files = [f for f in files if f.startswith("clone_of_wallce_")]
+    assert len(wallace_files) == 2, (
+        f"expected 2 distinct wallace widths (default [4,8]), got {wallace_files}"
+    )
+    # Perl parity: clones emit no per-clone file (UniqueModule.pm:1480).
+    assert clone_files == [], (
+        f"expected no per-clone files, got {clone_files}"
+    )
+    # Defaults: COND=True, ParamHash={}
+    body = (synth / "wallace_unq1.v").read_text()
+    assert "COND      = True" in body
+    assert "ParamHash = {}" in body
+
+
+def test_many_iterative_wallace_trees_via_json(tmp_path: Path) -> None:
+    """JSON config overrides the defaults: widths -> [2,5,16,32,64], COND=False,
+    ParamHash populated. Same source tree as the default test."""
+    synth = _run_demo(
+        tmp_path, DEMOS / "many_iterative_wallace_trees", "top",
+        "top.vpy", "wallace.vpy", "CSA.vpy",
+        config_flag="--json", config_file="config.json",
+    )
+    files = sorted(p.name for p in synth.iterdir())
+    wallace_files = [f for f in files if f.startswith("wallace_unq")]
+    clone_files = [f for f in files if f.startswith("clone_of_wallce_")]
+    assert len(wallace_files) == 5, (
+        f"expected 5 distinct wallace widths, got {wallace_files}"
+    )
+    assert clone_files == [], (
+        f"expected no per-clone files, got {clone_files}"
+    )
+    # Config-driven values flow into RTL.
+    body = (synth / "wallace_unq1.v").read_text()
+    assert "COND      = False" in body
+    assert "'Assoc': 4" in body  # ParamHash from config
+    # Confirm the JSON-driven run picked up the WALLACES_WIDTHS array
+    # (top-level Parameters / __ArrayType__ native list).
+    top_v = (synth / "top.v").read_text()
+    for w in (2, 5, 16, 32, 64):
+        assert f"wallace_{w}" in top_v, f"width {w} not instantiated"
+
+
+def test_many_iterative_wallace_trees_via_cfg(tmp_path: Path) -> None:
+    """`.cfg` Python config overrides the in-source defaults with its own
+    widths/COND/ParamHash when no higher-priority source is supplied."""
+    synth = _run_demo(
+        tmp_path, DEMOS / "many_iterative_wallace_trees", "top",
+        "top.vpy", "wallace.vpy", "CSA.vpy",
+        extra_argv=["--cfg", "config.py"],
+    )
+    wallace_files = [p.name for p in synth.iterdir() if p.name.startswith("wallace_unq")]
+    clone_files = [p.name for p in synth.iterdir() if p.name.startswith("clone_of_wallce_")]
+    assert len(wallace_files) == 3, wallace_files
+    assert clone_files == [], clone_files
+    body = (synth / "wallace_unq1.v").read_text()
+    assert "COND      = True" in body                      # cfg sets True
+    assert "'tag': 'cfg-driven'" in body                   # cfg's ParamHash payload
+
+
+def test_many_iterative_wallace_trees_json_beats_cfg(tmp_path: Path) -> None:
+    """When both --json and --cfg are supplied, JSON outranks .cfg for any
+    key it sets (matches Perl Genesis2 ordering)."""
+    synth = _run_demo(
+        tmp_path, DEMOS / "many_iterative_wallace_trees", "top",
+        "top.vpy", "wallace.vpy", "CSA.vpy",
+        config_flag="--json", config_file="config.json",
+        extra_argv=["--cfg", "config.py"],
+    )
+    wallace_files = [p.name for p in synth.iterdir() if p.name.startswith("wallace_unq")]
+    assert len(wallace_files) == 5, (
+        f"expected JSON widths [2,5,16,32,64] to win over cfg [3,7,11], got {wallace_files}"
+    )
+    body = (synth / "wallace_unq1.v").read_text()
+    assert "COND      = False" in body                     # JSON False beats cfg True
+    assert "'Assoc': 4" in body                            # JSON ParamHash beats cfg's
+
+
+def test_regfile(tmp_path: Path) -> None:
+    synth = _run_demo(
+        tmp_path, DEMOS / "regfile", "top",
+        "top.vpy", "reg_file.vpy", "flop.vpy", "cfg_ifc.vpy", "top_flop_only.vpy",
+    )
+    files = sorted(p.name for p in synth.iterdir())
+    v_files = [f for f in files if f.endswith(".v")]
+    assert "top.v" in files
+    flop_files = [f for f in v_files if f.startswith("flop_")]
+    reg_file_files = [f for f in v_files if f.startswith("reg_file_") or f == "reg_file.v"]
+    cfg_ifc_files = [f for f in v_files if f.startswith("cfg_ifc")]
+    assert len(flop_files) >= 1, flop_files
+    assert len(reg_file_files) >= 1, reg_file_files
+    assert len(cfg_ifc_files) >= 1, cfg_ifc_files
+    body = (synth / "top.v").read_text()
+    assert "module top()" in body
+    assert "DataOut1" in body
+    assert "DataOut2" in body

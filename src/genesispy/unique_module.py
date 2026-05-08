@@ -1,0 +1,692 @@
+"""Elaboration engine -- the Python port of ``Genesis2::UniqueModule``.
+
+This is a behavioural port of ``Genesis2/PerlLibs/Genesis2/UniqueModule.pm``
+covering construction (``new``/``new_as_son``/``new_as_clone``), the
+parameter machinery (``define_param``/``parameter``/``get_param``/
+``override_param``), the hierarchy / instantiation API
+(``unique_inst``/``unique_inst_param``/``clone_inst``/``ununique_inst``/
+``synonym``), name and path getters, and Verilog emission.
+
+Several Perl-side details (e.g. exact priority handling, Data::Dumper
+ordering for hashing, OUTFILE handle sharing across synonyms) are
+simplified or reinterpreted relative to the Perl original.
+"""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import io
+import re
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+from . import cache, hashing
+from .config_handler import Priority
+from .errors import ElaborationError, ParameterError
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .manager import Manager
+
+
+# Parameter "state" values, mirroring the Perl flag triplet.
+STATE_DEFINED = "DEFINED"
+STATE_FORCED = "FORCED"
+STATE_OVERRIDDEN = "OVERRIDDEN"
+
+
+def _subtree_tag(subtree_sig) -> str:
+    # subtree_sig is a sorted tuple of hashable triples; repr-then-sha256
+    # is enough to discriminate, no need to canonicalise further.
+    if not subtree_sig:
+        return ""
+    return "::sub::" + hashlib.sha256(repr(subtree_sig).encode()).hexdigest()
+
+
+class UniqueModule:
+    """Base class for elaborated hardware modules.
+
+    Canonical shared state (MODULE_CACHE, MODULE_NAME_NUM_DERIVS,
+    OUTFILE_CONTENT_CACHE) lives in :mod:`cache`; access it directly
+    rather than via class attributes.
+    """
+
+    # ------------------------------------------------------------------ ctor
+    def _init_defaults(
+        self, manager: "Manager", parent: Optional["UniqueModule"]
+    ) -> None:
+        # Single source of truth for the instance attribute set; called by
+        # __init__ and both alt-ctors. Add new fields here.
+        self._manager = manager
+        self._parent = parent
+        self._sub_instances: Dict[str, UniqueModule] = {}
+
+        cls_name = type(self).__name__
+        self._module_name: str = cls_name           # base (class) name
+        self._unique_module_name: str = cls_name    # filename / Verilog name
+        self._instance_name: str = cls_name         # default to class name
+
+        self._params: Dict[str, Dict[str, Any]] = {}
+        self._synonyms: List[str] = []
+        self._clone_of: Optional[UniqueModule] = None
+
+        # Verilog output buffer, allocated lazily by :meth:`execute`.
+        self._outfile_handle: Optional[io.StringIO] = None
+        self._outfile_name: Optional[str] = None
+
+    def __init__(self, manager: "Manager") -> None:
+        # Root constructor (mirrors Perl ``new`` at UniqueModule.pm:130).
+        self._init_defaults(manager, None)
+        cache.register(self._unique_module_name, self)
+
+    # -- alternate constructors -----------------------------------------
+    @classmethod
+    def _new_as_son(cls, parent: "UniqueModule") -> "UniqueModule":
+        """Create a child instance under ``parent`` (Perl ``new_as_son``)."""
+        self = cls.__new__(cls)
+        self._init_defaults(parent._manager, parent)
+        return self
+
+    @classmethod
+    def _new_as_clone(
+        cls, src: "UniqueModule", parent: "UniqueModule"
+    ) -> "UniqueModule":
+        """Clone ``src`` under ``parent`` (Perl ``new_as_clone``).
+
+        Parameter dict is deep-copied; the generated Verilog file is
+        *shared* via the synonym list so both names resolve to the same
+        cached output.
+        """
+        self = cls.__new__(cls)
+        self._init_defaults(parent._manager, parent)
+
+        self._module_name = src._module_name
+        # Synonym semantics: clone reuses src's unique module name so that
+        # only one Verilog file is emitted.
+        self._unique_module_name = src._unique_module_name
+        self._instance_name = src._instance_name
+
+        self._params = copy.deepcopy(src._params)
+        self._synonyms = list(src._synonyms)
+        self._clone_of = src
+        # Don't share src's StringIO; clone emits leak into src and a renamed
+        # flush would exfiltrate src's content. Lazy-alloc in emit() if needed.
+        self._outfile_name = src._outfile_name
+        return self
+
+    # ----------------------------------------------------------- parameters
+    def define_param(
+        self,
+        name: str,
+        default: Any = None,
+        doc: Optional[str] = None,
+        type: Optional[str] = None,  # noqa: A002 -- mirrors Perl flag name
+        **flags: Any,
+    ) -> None:
+        """Register a parameter (Perl ``define_param`` ~UniqueModule.pm:387).
+
+        If the parameter already exists in OVERRIDDEN/FORCED state (set by
+        unique_inst's pre-elaboration override pass), keep the value but
+        update default/doc/type metadata. A second DEFINED-state entry is
+        an error unless ``flags['force']`` is truthy.
+        """
+        if name in self._params:
+            existing = self._params[name]
+            if existing["state"] in (STATE_OVERRIDDEN, STATE_FORCED):
+                existing["default"] = default
+                if doc is not None:
+                    existing["doc"] = doc
+                if type is not None:
+                    existing["type"] = type
+                return
+            if not flags.get("force", False):
+                raise ParameterError(
+                    f"Parameter {name!r} already defined on {self._module_name}"
+                )
+        self._params[name] = {
+            "value": default,
+            "default": default,
+            "state": STATE_DEFINED,
+            "priority": flags.get("priority", 0),
+            "doc": doc,
+            "type": type,
+        }
+
+    def parameter(self, name: str, default: Any = None) -> Any:
+        """Declarative shortcut (Perl ``parameter`` UniqueModule.pm:1981).
+
+        If ``name`` is unknown, register it. If already overridden (by
+        unique_inst's pre-elaboration override pass or a forced override),
+        keep the existing value. Otherwise consult the manager's
+        config_handler.
+        """
+        if name not in self._params:
+            self.define_param(name, default=default)
+
+        if self._params[name]["state"] in (STATE_OVERRIDDEN, STATE_FORCED):
+            return self._params[name]["value"]
+
+        cfg = self._manager.cfg_handler
+        if cfg is not None:
+            path = self._instance_path_segments()
+            v, prio = cfg.get_configuration_with_priority(
+                name, instance_path=path
+            )
+            if v is not None:
+                self._params[name]["value"] = v
+                self._params[name]["state"] = STATE_OVERRIDDEN
+                if prio is not None:
+                    self._params[name]["priority"] = prio
+                return v
+        return self._params[name]["value"]
+
+    def get_param(self, name: str) -> Any:
+        if name not in self._params:
+            raise ParameterError(
+                f"Unknown parameter {name!r} on {self._module_name}"
+            )
+        return self._params[name]["value"]
+
+    def override_param(self, name: str, value: Any) -> None:
+        if name not in self._params:
+            # Match Perl behaviour: overriding an unknown parameter
+            # quietly defines it.
+            self.define_param(name, default=value)
+        if self._params[name]["state"] == STATE_FORCED:
+            # force_param pins the value; later override_param() is a no-op.
+            return
+        self._params[name]["value"] = value
+        self._params[name]["state"] = STATE_OVERRIDDEN
+        self._params[name]["priority"] = int(Priority.INHERITANCE)
+
+    def force_param(self, name: str, value: Any) -> None:
+        """Forced override -- pinned, cannot be re-overridden."""
+        if name not in self._params:
+            self.define_param(name, default=value)
+        # Already pinned: keep first value (matches override_param's pin).
+        if self._params[name]["state"] == STATE_FORCED:
+            return
+        self._params[name]["value"] = value
+        self._params[name]["state"] = STATE_FORCED
+        self._params[name]["priority"] = int(Priority.IMMUTABLE)
+
+    def get_mod_param_list(self) -> Dict[str, Any]:
+        """Return ``{name: value}`` for all parameters (Perl :2691)."""
+        return {k: v["value"] for k, v in self._params.items()}
+
+    # ----------------------------------------------------------- hierarchy
+    def _scoped_cmdln_overrides_for(
+        self, child_path: tuple[str, ...]
+    ) -> Dict[str, Any]:
+        """Collect hierarchical CLI overrides scoped to ``child_path``.
+
+        Returns ``{name: value}`` for every scoped CLI override whose
+        instance path equals ``child_path`` exactly. Empty dict when none
+        apply or no cfg_handler is attached. Used pre-elaboration so the
+        dedup hash reflects scoped overrides and the child's
+        ``parameter()`` call returns the overridden value.
+        """
+        cfg = self._manager.cfg_handler
+        if cfg is None:
+            return {}
+        scoped_db = cfg.cmdln_scoped_db_snapshot()
+        if not scoped_db:
+            return {}
+        return {
+            name: entry["value"]
+            for (path, name), entry in scoped_db.items()
+            if path == child_path
+        }
+
+    def _scoped_subtree_signature(
+        self, child_path: tuple[str, ...]
+    ) -> tuple:
+        """Return a hashable signature of every scoped CLI override whose
+        instance path is rooted at ``child_path``.
+
+        Used as a dedup discriminator: two instances at different paths
+        share a unique module only if the same subtree overrides apply
+        to both. Without this, ``parent_mod`` instances with no direct
+        params but different descendant overrides would collapse onto one
+        cached unique module before any descendant could observe its
+        scoped override.
+        """
+        cfg = self._manager.cfg_handler
+        if cfg is None:
+            return ()
+        scoped_db = cfg.cmdln_scoped_db_snapshot()
+        if not scoped_db:
+            return ()
+        n = len(child_path)
+        # Re-key relative to child_path so two instances at different paths
+        # but with structurally-identical subtree overrides still dedup.
+        rel = []
+        for (path, name), entry in scoped_db.items():
+            if path[:n] == child_path:
+                rel.append((path[n:], name, entry["value"]))
+        return tuple(sorted(rel, key=lambda t: (t[0], t[1])))
+
+    def _resolve_params(
+        self, module_cls: type, inst_name: str, overrides: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Materialise final parameter dict for an instantiation.
+
+        We don't actually run the child's defaults until elaboration, but
+        we *do* need a stable param dict for the dedup hash. Layers are:
+        explicit kwargs (highest), then hierarchical CLI overrides
+        targeting this exact instance path. The child fills in untouched
+        defaults once it elaborates.
+        """
+        child_path = self._instance_path_segments() + (inst_name,)
+        merged = dict(self._scoped_cmdln_overrides_for(child_path))
+        merged.update(overrides)  # explicit kwargs win
+        return merged
+
+    def unique_inst(
+        self, module_cls, inst_name: str, **params: Any
+    ) -> "UniqueModule":
+        """Instantiate ``module_cls`` with parameter-based dedup.
+
+        ``module_cls`` may be a class object or a string naming a module
+        class to be looked up via the Manager's generated-module registry
+        (string form is what user .vpy code typically uses).
+
+        Mirrors UniqueModule.pm:1060-1340, key cache check at ~:1218.
+        Two-stage dedup: fast pre-elaboration check on explicit overrides,
+        then a post-elaboration check on final parameter values so
+        defaults-vs-explicit-equal-value calls collapse onto one module.
+        """
+        if isinstance(module_cls, str):
+            module_cls = self._manager.resolve_module_class(module_cls)
+
+        eff_pre = self._resolve_params(module_cls, inst_name, params)
+        child_path = self._instance_path_segments() + (inst_name,)
+        subtree_sig = self._scoped_subtree_signature(child_path)
+        sig_pre = hashing.sha256_param_signature(module_cls.__name__, eff_pre)
+        subtree_tag = _subtree_tag(subtree_sig)
+        pre_key = f"{module_cls.__name__}::{sig_pre}{subtree_tag}"
+
+        cache_enabled = not self._manager.no_module_cache
+        if cache_enabled and pre_key in cache.MODULE_CACHE:
+            existing = cache.MODULE_CACHE[pre_key]
+            return self._clone_from_cached(existing, inst_name)
+
+        child = module_cls._new_as_son(self)
+        child._instance_name = inst_name
+        for k, v in eff_pre.items():
+            child.override_param(k, v)
+
+        n = cache.next_derivation(module_cls.__name__)
+        unique_name = f"{module_cls.__name__}_unq{n}"
+        child._unique_module_name = unique_name
+
+        # Transient: post-dedup may discard `child` and overwrite this slot;
+        # safe only because elaboration is single-threaded.
+        self._sub_instances[inst_name] = child
+
+        if cache_enabled:
+            # Journal cache writes so post-dedup rollback is O(writes), not O(cache).
+            with cache.journaled() as journal:
+                child.execute()
+
+                eff_post = child.get_mod_param_list()
+                sig_post = hashing.sha256_param_signature(
+                    module_cls.__name__, eff_post
+                )
+                post_key = (
+                    f"{module_cls.__name__}::post::{sig_post}{subtree_tag}"
+                )
+
+                if post_key in cache.MODULE_CACHE:
+                    existing = cache.MODULE_CACHE[post_key]
+                    cache.rollback_journal(*journal)
+                    # Reclaim the wasted _unqN only if no nested unique_inst
+                    # bumped the counter past it.
+                    if cache.MODULE_NAME_NUM_DERIVS.get(module_cls.__name__) == n:
+                        cache.MODULE_NAME_NUM_DERIVS[module_cls.__name__] = n - 1
+                    return self._clone_from_cached(existing, inst_name)
+
+                cache.MODULE_CACHE[pre_key] = child
+                cache.MODULE_CACHE[post_key] = child
+        else:
+            child.execute()
+
+        cache.register(unique_name, child)
+        return child
+
+    def _clone_from_cached(
+        self, existing: "UniqueModule", inst_name: str
+    ) -> "UniqueModule":
+        """Return a clone of an already-elaborated module under ``inst_name``."""
+        clone = type(existing)._new_as_clone(existing, self)
+        clone._instance_name = inst_name
+        self._sub_instances[inst_name] = clone
+        return clone
+
+    def unique_inst_param(
+        self, module_cls, inst_name: str, **params: Any
+    ) -> "UniqueModule":
+        """Like :meth:`unique_inst` but unique name encodes the params."""
+        if isinstance(module_cls, str):
+            module_cls = self._manager.resolve_module_class(module_cls)
+        eff = self._resolve_params(module_cls, inst_name, params)
+        child_path = self._instance_path_segments() + (inst_name,)
+        subtree_sig = self._scoped_subtree_signature(child_path)
+        subtree_tag = _subtree_tag(subtree_sig)
+        sig = hashing.sha256_param_signature(module_cls.__name__, eff)
+        cache_key = f"{module_cls.__name__}::param::{sig}{subtree_tag}"
+
+        cache_enabled = not self._manager.no_module_cache
+        if cache_enabled and cache_key in cache.MODULE_CACHE:
+            return self._clone_from_cached(cache.MODULE_CACHE[cache_key], inst_name)
+
+        child = module_cls._new_as_son(self)
+        child._instance_name = inst_name
+        for k, v in eff.items():
+            child.override_param(k, v)
+
+        # Non-scalar values collapse to a short hash to keep the emitted name a legal identifier.
+        def _safe_pair(k: str, v: Any) -> str:
+            raw = f"{k}{v}"
+            if re.fullmatch(r"\w+", raw):
+                return raw
+            digest = hashing.sha256_param_signature("", {k: v})[:8]
+            return f"{k}_{digest}"
+
+        suffix = "_".join(_safe_pair(k, eff[k]) for k in sorted(eff))
+        unique_name = (
+            f"{module_cls.__name__}_{suffix}" if suffix else module_cls.__name__
+        )
+        child._unique_module_name = unique_name
+
+        self._sub_instances[inst_name] = child
+        child.execute()
+
+        # Cache after execute() so a raising .vpy body doesn't poison it.
+        if cache_enabled:
+            cache.MODULE_CACHE[cache_key] = child
+        cache.register(unique_name, child)
+        return child
+
+    def clone_inst(
+        self, src_inst: "UniqueModule", new_name: str
+    ) -> "UniqueModule":
+        """Duplicate ``src_inst`` under ``new_name``.
+
+        Mirrors Perl ``clone_inst`` (UniqueModule.pm:1480): a clone is an
+        instance-level alias only — same ``UniqueModuleName`` as the source,
+        new ``InstanceName`` — and emits **no** additional Verilog file.
+        The parent module's instantiation references the source's unique
+        module name with the clone's instance name as the instance label.
+
+        Mirrors the Perl antecessor-cycle guard (UniqueModule.pm:1521):
+        if the source's ``UniqueModuleName`` matches ``self`` or any
+        ancestor, raise rather than silently building a self-referential
+        hierarchy.
+        """
+        src_uname = src_inst._unique_module_name
+        ancestor: Optional[UniqueModule] = self
+        while ancestor is not None:
+            if ancestor._unique_module_name == src_uname:
+                raise ElaborationError(
+                    f"{new_name}: Instance {self.get_instance_path()}: "
+                    f"is trying to instantiate a clone of itself or its "
+                    f"antecessor ({ancestor.get_instance_path()}) !"
+                )
+            ancestor = ancestor._parent
+        child = type(src_inst)._new_as_clone(src_inst, self)
+        child._instance_name = new_name
+        self._sub_instances[new_name] = child
+        return child
+
+    def ununique_inst(
+        self, module_cls, inst_name: str, **params: Any
+    ) -> "UniqueModule":
+        """Instantiate without dedup -- always a fresh unique name."""
+        if isinstance(module_cls, str):
+            module_cls = self._manager.resolve_module_class(module_cls)
+        # Same scoped-override layering as unique_inst / unique_inst_param.
+        eff = self._resolve_params(module_cls, inst_name, params)
+        child = module_cls._new_as_son(self)
+        child._instance_name = inst_name
+        for k, v in eff.items():
+            child.override_param(k, v)
+
+        n = cache.next_derivation(module_cls.__name__)
+        unique_name = f"{module_cls.__name__}_unq{n}"
+        child._unique_module_name = unique_name
+
+        self._sub_instances[inst_name] = child
+        child.execute()
+        # After execute() so a raising body doesn't poison MODULE_CACHE.
+        cache.register(unique_name, child)
+        return child
+
+    def generate(self, module_cls, inst_name: str, **params: Any) -> "UniqueModule":
+        """Perl-compat shortcut: dispatch to unique_inst or unique_inst_param.
+
+        Selection follows the active ConfigHandler's ``unq_style``
+        (set via the ``-unqstyle`` CLI flag, default ``'numeric'``).
+        Mirrors Perl ``generate`` (UniqueModule.pm:1846).
+        """
+        cfg = self._manager.cfg_handler
+        style = cfg.unq_style if cfg is not None else "numeric"
+        if style == "param":
+            return self.unique_inst_param(module_cls, inst_name, **params)
+        return self.unique_inst(module_cls, inst_name, **params)
+
+    def generate_w_name(
+        self,
+        base_module_name: str,
+        gen_module_name: str,
+        inst_name: str,
+        **params: Any,
+    ) -> "UniqueModule":
+        """Create an instance using a freshly-named module class.
+
+        Faithful port of Perl ``generate_w_name`` (UniqueModule.pm:1940):
+        registers ``gen_module_name`` as a class-level synonym of
+        ``base_module_name``, then calls :meth:`ununique_inst` so the
+        emitted module's unique name is derived from the new name rather
+        than the original base.
+        """
+        gen_cls = self._manager.synonym_class(base_module_name, gen_module_name)
+        return self.ununique_inst(gen_cls, inst_name, **params)
+
+    def synonym(self, name: str) -> None:
+        """Record an alternate name for this module's generated Verilog."""
+        if name in self._synonyms:
+            return
+        self._synonyms.append(name)
+        cache.register(name, self)
+
+        suffix = self._manager.output_suffix
+        src_file = f"{self._unique_module_name}{suffix}"
+        if src_file in cache.OUTFILE_CONTENT_CACHE:
+            cache.OUTFILE_CONTENT_CACHE[f"{name}{suffix}"] = (
+                cache.OUTFILE_CONTENT_CACHE[src_file]
+            )
+
+    def get_synonyms(self) -> List[str]:
+        """Return a shallow copy of the synonym names registered on this module.
+
+        Synonyms are alternate names under which the module's emitted Verilog
+        is also registered in :data:`cache.OUTFILE_CONTENT_CACHE`. Use this
+        accessor in tests instead of touching ``_synonyms`` directly.
+        """
+        return list(self._synonyms)
+
+    # ----------------------------------------------------------- name/path
+    def get_module_name(self) -> str:
+        return self._module_name
+
+    def get_unique_module_name(self) -> str:
+        return self._unique_module_name
+
+    def get_instance_name(self) -> str:
+        return self._instance_name
+
+    # Short aliases mirroring Genesis2's exported user API.
+    @property
+    def mname(self) -> str:
+        return self._unique_module_name
+
+    @property
+    def iname(self) -> str:
+        return self._instance_name
+
+    @property
+    def bname(self) -> str:
+        return self._module_name
+
+    @property
+    def sname(self) -> str:
+        # Synthesis top name = unique module name (parity with Genesis2).
+        return self._unique_module_name
+
+    def instantiate(self, **ports: Any) -> str:
+        """Return a Verilog instance fragment: ``MName inst (.p(v), ...)``.
+
+        With no port kwargs, returns ``MName inst`` so the user can supply
+        the port list separately in the surrounding template text.
+        """
+        head = f"{self._unique_module_name} {self._instance_name}"
+        if not ports:
+            return head
+        port_lines = ",\n  ".join(f".{k}({v})" for k, v in ports.items())
+        return f"{head} (\n  {port_lines}\n)"
+
+    def _instance_path_segments(self) -> tuple[str, ...]:
+        """Return the full instance path as a tuple of segment names,
+        from root to self. Used for hierarchical config lookups.
+        """
+        chain: List[str] = []
+        node: Optional[UniqueModule] = self
+        while node is not None:
+            chain.append(node._instance_name)
+            node = node._parent
+        return tuple(reversed(chain))
+
+    def get_instance_path(self) -> str:
+        return "/".join(self._instance_path_segments())
+
+    # ----------------------------------------------------- product-list DFS
+    def get_prod_list_insts(
+        self, synth_top: Optional[str]
+    ) -> List[Tuple["UniqueModule", bool]]:
+        """DFS the elaborated subinstance tree; return ``(inst, is_synth)``
+        pairs in Perl ``UniqueModule.pm::_get_prod_list_insts`` order.
+
+        ``synth_top`` is the **dotted** instance path that bounds the
+        synth cone (``None`` matches Perl ``SynthTop=undef`` -> every
+        instance is verif).  An instance is synth iff its dotted path
+        equals ``synth_top`` or starts with ``synth_top + "."``.  The
+        traversal yields each ``(outfile_name, is_synth)`` pair at most
+        once: this is what lets Manager promote a file seen on both
+        sides to ``synth_and_verif``.
+        """
+        results: List[Tuple[UniqueModule, bool]] = []
+        synth_files: set[str] = set()
+        verif_files: set[str] = set()
+        self._collect_prod_list(results, synth_files, verif_files, "", synth_top)
+        return results
+
+    def _collect_prod_list(
+        self,
+        results: List[Tuple["UniqueModule", bool]],
+        synth_files: set,
+        verif_files: set,
+        path: str,
+        synth_top: Optional[str],
+    ) -> None:
+        if synth_top is not None:
+            if self._parent is not None:
+                path = f"{path}.{self._instance_name}" if path else self._instance_name
+            else:
+                path = self._instance_name
+
+        is_synth = synth_top is not None and (
+            path == synth_top or path.startswith(synth_top + ".")
+        )
+        # On the path leading down to synth_top from above (so a verif
+        # parent of a synth descendant is still walked into).
+        on_synth_path = synth_top is not None and (
+            is_synth or synth_top.startswith(path + ".")
+        )
+
+        fname = self._outfile_name
+        if fname is not None:
+            # Skipping the recursion is safe because shared `fname` implies
+            # shared `_sub_instances` (clones via `_new_as_clone`).
+            if is_synth and fname in synth_files:
+                return
+            if (not is_synth) and fname in verif_files and not on_synth_path:
+                return
+            if is_synth:
+                synth_files.add(fname)
+            else:
+                verif_files.add(fname)
+
+        # clone: descend through _clone_of for traversal -- the clone owns
+        # no children, but its source's _sub_instances reflects the shared
+        # underlying module's elaborated tree.
+        descend = self._sub_instances
+        if not descend and self._clone_of is not None:
+            descend = self._clone_of._sub_instances
+        for sub in descend.values():
+            sub._collect_prod_list(results, synth_files, verif_files, path, synth_top)
+
+        results.append((self, is_synth))
+
+    def get_parent(self) -> "UniqueModule | None":
+        return self._parent
+
+    def get_top(self) -> "UniqueModule":
+        node: UniqueModule = self
+        while node._parent is not None:
+            node = node._parent
+        return node
+
+    # ----------------------------------------------------------- emission
+    def emit(self, text: str) -> None:
+        if self._outfile_handle is None:
+            self._outfile_handle = io.StringIO()
+        self._outfile_handle.write(text + "\n")
+
+    def to_verilog(self, infile: Optional[str] = None) -> None:
+        """Emit a comment banner + parameter table (parity with :2927)."""
+        self.emit(f"// Genesis-Py generated module: {self._unique_module_name}")
+        self.emit(f"// Source class: {self._module_name}")
+        if infile is not None:
+            self.emit(f"// Source file: {infile}")
+        if self._params:
+            self.emit("// Parameters:")
+            for k in sorted(self._params):
+                self.emit(f"//   {k} = {self._params[k]['value']!r}")
+
+    def execute(self) -> None:
+        """Elaborate this module: open buffer, emit header, flush.
+
+        Generated subclasses (template/emitter._header) call ``super().execute()``
+        for the banner + initial flush, then run user body, then re-flush via
+        ``_flush_outfile()`` in the footer. The double-flush is intentional:
+        plain subclasses (e.g. tests) rely on the base flush; generated bodies
+        need to overwrite with body content.
+        """
+        if self._outfile_handle is None:
+            self._outfile_handle = io.StringIO()
+        self.to_verilog()
+        self._flush_outfile()
+
+    def _flush_outfile(self) -> None:
+        """Write current buffer contents to OUTFILE_CONTENT_CACHE under
+        ``_unique_module_name`` and every registered synonym name.
+        """
+        if self._outfile_handle is None:
+            return
+        suffix = self._manager.output_suffix
+        self._outfile_name = f"{self._unique_module_name}{suffix}"
+        content = self._outfile_handle.getvalue()
+        cache.OUTFILE_CONTENT_CACHE[self._outfile_name] = content
+        for syn in self._synonyms:
+            cache.OUTFILE_CONTENT_CACHE[f"{syn}{suffix}"] = content
+

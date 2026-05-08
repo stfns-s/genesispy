@@ -1,0 +1,54 @@
+# Build artifacts
+*.egg-info/
+*.egg
+build/
+dist/
+*.whl
+
+# Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Test byproducts
+genesis_raw/
+genesis_synth/
+genesis_verif/
+# Genesis2-style product list emitted at demo root by `make gen`.
+genesis_vlog.vf
+
+# Simulator artifacts
+# Cadence Xcelium
+xcelium.d/
+xrun.log
+xrun.history
+xrun.key
+waves.shm/
+# Synopsys VCS
+simv
+simv.daidir/
+csrc/
+ucli.key
+vcdplus.vpd
+*.vpd
+# Mentor Questa/ModelSim
+work/
+transcript
+vsim.wlf
+# Verilator
+obj_dir/

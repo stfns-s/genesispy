@@ -1,0 +1,1 @@
+interface cfg_ifc__U(); logic [31:0] addr; logic [31:0] data; logic [1:0] op; modport cfgIn( input addr, input data, input op ); modport cfgOut( output addr, output data, output op ); endinterface: cfg_ifc__U

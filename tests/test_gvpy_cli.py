@@ -1,0 +1,390 @@
+"""Unit + integration tests for ``genesispy.gvpy_cli``.
+
+Exercises every flag of the ``gvpy`` console script through ``main()``,
+plus the small pure helpers (``_flatten_csv``, ``_stem``).
+"""
+
+from __future__ import annotations
+
+import sys
+
+import pytest
+
+from genesispy import gvpy_cli
+from genesispy.gvpy_cli import _flatten_csv, _stem, main
+
+
+# --------------------------------------------------------------------------
+# Pure helpers
+# --------------------------------------------------------------------------
+def test_flatten_csv_splits_commas():
+    assert _flatten_csv(["a,b,c"]) == ["a", "b", "c"]
+
+
+def test_flatten_csv_concatenates_repeats():
+    assert _flatten_csv(["a", "b,c", "d"]) == ["a", "b", "c", "d"]
+
+
+def test_flatten_csv_drops_empty():
+    assert _flatten_csv(["a,,b", ""]) == ["a", "b"]
+
+
+def test_flatten_csv_empty():
+    assert _flatten_csv([]) == []
+
+
+@pytest.mark.parametrize(
+    "path, expected",
+    [
+        ("foo.vpy", "foo"),
+        ("foo.gvpy", "foo"),
+        ("foo.vp", "foo"),
+        ("foo.gvp", "foo"),
+        ("foo.svpy", "foo"),
+        ("foo.svp", "foo"),
+        ("/abs/path/bar.vpy", "bar"),
+        ("noext", "noext"),
+        ("name.unknown", "name.unknown"),
+    ],
+)
+def test_stem(path, expected):
+    assert _stem(path) == expected
+
+
+# --------------------------------------------------------------------------
+# main(): error paths
+# --------------------------------------------------------------------------
+def test_main_no_files_errors(capsys):
+    rc = main([])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "no input files" in err
+
+
+def test_main_malformed_defparam(tmp_path, capsys):
+    """--defparam is a hidden alias for --parameter; malformed value still errors."""
+    src = tmp_path / "x.vpy"
+    src.write_text("module x; endmodule\n")
+    rc = main(["--defparam", "BROKEN_NO_EQUALS", str(src)])
+    assert rc == 2
+    assert "alformed -parameter" in capsys.readouterr().err
+
+
+def test_main_malformed_parameter(tmp_path, capsys):
+    src = tmp_path / "x.vpy"
+    src.write_text("module x; endmodule\n")
+    rc = main(["--parameter", "BROKEN_NO_EQUALS", str(src)])
+    assert rc == 2
+    assert "alformed -parameter" in capsys.readouterr().err
+
+
+def test_main_missing_input_returns_error(capsys):
+    rc = main(["does_not_exist.vpy"])
+    assert rc == 1
+    assert "error processing" in capsys.readouterr().err
+
+
+def test_main_help_exits():
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+    assert exc.value.code == 0
+
+
+def test_main_version_exits(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "gvpy" in out
+
+
+# --------------------------------------------------------------------------
+# main(): happy paths
+# --------------------------------------------------------------------------
+def _write_basic_module(tmp_path, name="example", body="  wire w;\n"):
+    src = tmp_path / f"{name}.vpy"
+    src.write_text(
+        f"module {name};\n{body}endmodule\n"
+    )
+    return src
+
+
+def test_main_emits_to_stdout(tmp_path, capsys):
+    src = _write_basic_module(tmp_path)
+    rc = main([str(src)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "module example" in out
+    assert "wire w" in out
+    assert "endmodule" in out
+
+
+def test_main_mname_overrides_stem(tmp_path, capsys):
+    src = tmp_path / "input_file.vpy"
+    src.write_text("module `mname`;\nendmodule\n")
+    rc = main(["--mname", "renamed", str(src)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "module renamed" in out
+
+
+def test_main_defparam_flows_through_parameter(tmp_path, capsys):
+    """--defparam alias still routes into parameter() lookups."""
+    src = tmp_path / "p.vpy"
+    src.write_text(
+        "module p;\n"
+        "//; W = parameter('WIDTH', 1)\n"
+        "  wire [`W-1`:0] x;\n"
+        "endmodule\n"
+    )
+    rc = main(["--defparam", "WIDTH=8", str(src)])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "wire [7:0] x" in captured.out
+    assert "--defparam is deprecated" in captured.err
+
+
+def test_main_defparam_warning_only_once(tmp_path, capsys):
+    """Repeated --defparam emits the deprecation warning a single time."""
+    src = tmp_path / "p.vpy"
+    src.write_text(
+        "module p;\n"
+        "//; A = parameter('A', 0)\n"
+        "//; B = parameter('B', 0)\n"
+        "  // A=`A` B=`B`\n"
+        "endmodule\n"
+    )
+    rc = main(["--defparam", "A=1", "--defparam", "B=2", str(src)])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.err.count("--defparam is deprecated") == 1
+
+
+def test_main_parameter_no_deprecation_warning(tmp_path, capsys):
+    """--parameter must not emit the --defparam deprecation."""
+    src = tmp_path / "p.vpy"
+    src.write_text(
+        "module p;\n"
+        "//; W = parameter('WIDTH', 1)\n"
+        "  wire [`W-1`:0] x;\n"
+        "endmodule\n"
+    )
+    rc = main(["--parameter", "WIDTH=8", str(src)])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "--defparam is deprecated" not in captured.err
+
+
+def test_main_parameter_flows_through_parameter(tmp_path, capsys):
+    src = tmp_path / "p.vpy"
+    src.write_text(
+        "module p;\n"
+        "//; W = parameter('WIDTH', 1)\n"
+        "  wire [`W-1`:0] x;\n"
+        "endmodule\n"
+    )
+    rc = main(["--parameter", "WIDTH=8", str(src)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wire [7:0] x" in out
+
+
+def test_main_parameter_short_flag(tmp_path, capsys):
+    src = tmp_path / "p.vpy"
+    src.write_text(
+        "module p;\n"
+        "//; W = parameter('WIDTH', 1)\n"
+        "  wire [`W-1`:0] x;\n"
+        "endmodule\n"
+    )
+    rc = main(["-p", "WIDTH=8", str(src)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wire [7:0] x" in out
+
+
+def test_main_defparam_default_when_absent(tmp_path, capsys):
+    src = tmp_path / "p.vpy"
+    src.write_text(
+        "module p;\n"
+        "//; W = parameter('WIDTH', 4)\n"
+        "  wire [`W-1`:0] x;\n"
+        "endmodule\n"
+    )
+    rc = main([str(src)])
+    assert rc == 0
+    assert "wire [3:0] x" in capsys.readouterr().out
+
+
+def test_main_incdirs_resolves_pinclude(tmp_path, capsys):
+    inc_dir = tmp_path / "inc"
+    inc_dir.mkdir()
+    (inc_dir / "snippet.py").write_text("emit('// helper-was-included\\n')\n")
+
+    src = tmp_path / "top.vpy"
+    src.write_text(
+        "module top;\n"
+        "//; self.pinclude('snippet.py')\n"
+        "endmodule\n"
+    )
+    rc = main(["--incdirs", str(inc_dir), str(src)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "helper-was-included" in out
+
+
+def test_main_incdirs_csv(tmp_path, capsys):
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    (b / "snippet.py").write_text("emit('// from-b\\n')\n")
+    src = tmp_path / "top.vpy"
+    src.write_text(
+        "module top;\n//; self.pinclude('snippet.py')\nendmodule\n"
+    )
+    rc = main(["--incdirs", f"{a},{b}", str(src)])
+    assert rc == 0
+    assert "from-b" in capsys.readouterr().out
+
+
+def test_main_libdirs_prepends_sys_path(tmp_path, capsys):
+    lib_dir = tmp_path / "lib"
+    lib_dir.mkdir()
+    src = _write_basic_module(tmp_path)
+    before = list(sys.path)
+    try:
+        rc = main(["--libdirs", str(lib_dir), str(src)])
+        assert rc == 0
+        assert str(lib_dir) in sys.path
+    finally:
+        # Restore sys.path so other tests aren't affected.
+        sys.path[:] = before
+
+
+def test_main_comment_flag_accepted(tmp_path, capsys):
+    """``--comment`` is a no-op (gvpy compat) but must still parse."""
+    src = _write_basic_module(tmp_path)
+    rc = main(["--comment", "#", str(src)])
+    assert rc == 0
+
+
+def test_main_multiple_files(tmp_path, capsys):
+    a = _write_basic_module(tmp_path, name="aaa")
+    b = _write_basic_module(tmp_path, name="bbb")
+    rc = main([str(a), str(b)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "module aaa" in out
+    assert "module bbb" in out
+
+
+def test_main_gvpy_strict_record_only_generate(tmp_path, capsys):
+    """In ``--gvpy-strict``, ``generate`` is record-only; the body of the
+    referenced module is NOT elaborated. The PARAMS comment lands in the
+    output via ``instantiate``.
+    """
+    src = tmp_path / "top.vpy"
+    src.write_text(
+        "module top;\n"
+        "//; sub = generate('submod', 'u_sub', WIDTH=8)\n"
+        "//; instantiate(sub)\n"
+        "endmodule\n"
+    )
+    rc = main(["--gvpy-strict", str(src)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "submod /*PARAMS: WIDTH=>8 */ u_sub" in out
+
+
+def test_gvpy_synonym_class_is_idempotent(tmp_path):
+    """`_GvpyManager.synonym_class(src, target)` returns the same class on repeats."""
+    from genesispy.gvpy_cli import _GvpyManager
+    import argparse
+
+    src = tmp_path / "leaf.vpy"
+    src.write_text("module leaf; endmodule\n")
+
+    args = argparse.Namespace(mname=None, parameter=[])
+    mgr = _GvpyManager(args, incdirs=[str(tmp_path)])
+    a = mgr.synonym_class("leaf", "alias")
+    b = mgr.synonym_class("leaf", "alias")
+    assert a is b
+
+
+def test_main_traceback_remapped_to_vpy_source(tmp_path, capsys):
+    """A runtime error in a //; line yields a traceback mentioning the .vpy file."""
+    src = tmp_path / "boom.vpy"
+    src.write_text(
+        "module boom;\n"
+        "//; raise ValueError('detonated')\n"
+        "endmodule\n"
+    )
+    rc = main([str(src)])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "boom.vpy" in err
+    # Without the line-map registration, the frame's line number is the
+    # generated-source line; with the fix it's remapped to .vpy line 2.
+    assert 'line 2' in err
+
+
+def test_main_gvpy_strict_parameter_honours_scoped_override(tmp_path, capsys):
+    """Hierarchical ``--parameter top.X=val`` reaches strict-mode ``parameter()``."""
+    src = tmp_path / "top.vpy"
+    src.write_text(
+        "module top;\n"
+        "//; W = parameter('WIDTH', 8)\n"
+        "//; sub = generate('submod', 'u_sub', WIDTH=W)\n"
+        "//; instantiate(sub)\n"
+        "endmodule\n"
+    )
+    rc = main(["--gvpy-strict", "--parameter", "top.WIDTH=16", str(src)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "WIDTH=>16" in out
+
+
+def test_main_pinclude_runs_python(tmp_path, capsys):
+    """``self.pinclude(path)`` execs raw Python in a namespace seeded
+    with ``self``/``emit``/``parameter``.
+    """
+    inc_dir = tmp_path / "inc"
+    inc_dir.mkdir()
+    py = inc_dir / "snippet.py"
+    py.write_text("emit('// hello-from-pinclude\\n')\n")
+
+    src = tmp_path / "top.vpy"
+    src.write_text(
+        "module top;\n"
+        "//; self.pinclude('snippet.py')\n"
+        "endmodule\n"
+    )
+    rc = main(["--incdirs", str(inc_dir), str(src)])
+    assert rc == 0
+    assert "hello-from-pinclude" in capsys.readouterr().out
+
+
+def test_main_pinclude_missing_file(tmp_path, capsys):
+    src = tmp_path / "top.vpy"
+    src.write_text(
+        "module top;\n"
+        "//; self.pinclude('nope.py')\n"
+        "endmodule\n"
+    )
+    rc = main([str(src)])
+    assert rc == 1
+    assert "error processing" in capsys.readouterr().err
+
+
+# Review 11 #152 -- _build_class_from_vpy must reject names that aren't valid identifiers.
+def test_build_class_from_vpy_rejects_unsafe_name(tmp_path):
+    """A stem with `-` or a leading digit must surface as ValueError, not SyntaxError."""
+    from genesispy.gvpy_cli import _build_class_from_vpy
+
+    vpy = tmp_path / "src.vpy"
+    vpy.write_text("")
+    with pytest.raises(ValueError):
+        _build_class_from_vpy("foo-bar", str(vpy))
+    with pytest.raises(ValueError):
+        _build_class_from_vpy("1leading", str(vpy))

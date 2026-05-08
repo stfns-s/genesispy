@@ -1,0 +1,1 @@
+module flop__U( input logic Clk, input logic [0:0] data_in, input logic Reset, input logic Enable, output logic [0:0] data_out ); always @ (posedge Clk) begin if (Reset) begin data_out <= 1'd0; end else begin if (Enable) data_out <= data_in; end end endmodule

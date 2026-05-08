@@ -1,0 +1,9 @@
+//; width = parameter('Width', 4)
+module `mname()` (
+    input logic [`width-1`:0] a,b,c,
+    output logic[`width-1`:0]  s, co);
+
+   assign s = a ^ b ^c;
+   assign co = a&b | b&c | a&c;
+
+endmodule
