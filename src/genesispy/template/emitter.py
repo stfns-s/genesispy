@@ -13,7 +13,7 @@ exceptions raised from elaboration can be remapped to .vpy coordinates.
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Iterable, Optional
 
 from .aliases import alias_prelude_source
 from .parser import parse_vpy
@@ -26,7 +26,7 @@ __all__ = ["emit_module", "write_module"]
 _ALIAS_PRELUDE = alias_prelude_source(indent="        ")
 
 
-def _header(vpy_path: str, cls_name: str) -> str:
+def _header(vpy_path: str, cls_name: str, output_suffix: str) -> str:
     return (
         f"# Auto-generated from {vpy_path} -- DO NOT EDIT\n"
         "from genesispy.template.runtime import UniqueModule, UserMixin, StrCallable\n"
@@ -34,6 +34,8 @@ def _header(vpy_path: str, cls_name: str) -> str:
         "\n"
         "\n"
         f"class {cls_name}(UniqueModule, UserMixin):\n"
+        f"    _OUTPUT_SUFFIX = {output_suffix!r}\n"
+        "\n"
         "    def execute(self):\n"
         "        # Initialize Verilog output buffer + standard banner.\n"
         "        super().execute()\n"
@@ -64,13 +66,17 @@ def emit_module(
     parsed_body: str,
     *,
     module_name: Optional[str] = None,
+    output_suffix: str = ".v",
 ) -> str:
     """Return Python source for a complete generated module file.
 
     ``parsed_body`` is the column-zero output of :func:`parse_vpy`; it is
     indented eight spaces (one level for ``class``, one for ``def execute``)
     before insertion.  ``# line N "file.vpy"`` directives are preserved
-    verbatim (as Python comments).
+    verbatim (as Python comments). ``output_suffix`` is stamped on the
+    generated class as ``_OUTPUT_SUFFIX`` so flush-time consumers
+    (``UniqueModule._flush_outfile`` / ``synonym``) know which Verilog
+    extension to emit without consulting the Manager.
     """
     cls_name = module_name or _module_name_from_path(vpy_path)
     indent = "        "  # 8 spaces
@@ -86,19 +92,30 @@ def emit_module(
     else:
         indented = indent + "pass\n"
 
-    return _header(vpy_path, cls_name) + indented + _FOOTER
+    return _header(vpy_path, cls_name, output_suffix) + indented + _FOOTER
 
 
-def write_module(vpy_path: str, output_dir: str) -> str:
+def write_module(
+    vpy_path: str,
+    output_dir: str,
+    *,
+    output_suffix: str = ".v",
+    allowed: Optional[Iterable[str]] = None,
+) -> str:
     """Parse ``vpy_path``, emit, write to ``<output_dir>/<stem>.py``.
 
     Returns the absolute path of the generated .py file.  Side-effect:
     builds a line map from the generated source and registers it with
     :mod:`genesispy.template.runtime`.
+
+    ``output_suffix`` is the Verilog extension paired with this input; it
+    is stamped onto the generated class. ``allowed`` is forwarded to
+    :func:`parse_vpy` for input-extension validation (defaults to the
+    built-in ``.vpy``/``.svpy`` set).
     """
     os.makedirs(output_dir, exist_ok=True)
-    body = parse_vpy(vpy_path)
-    src = emit_module(vpy_path, body)
+    body = parse_vpy(vpy_path, allowed)
+    src = emit_module(vpy_path, body, output_suffix=output_suffix)
 
     stem = _module_name_from_path(vpy_path)
     out_path = os.path.abspath(os.path.join(output_dir, f"{stem}.py"))

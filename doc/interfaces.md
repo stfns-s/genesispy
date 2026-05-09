@@ -47,11 +47,13 @@ class Manager:
     raw_dir: str
     synth_dir: str
     verif_dir: str
-    # File extension for emitted Verilog files (default ".v"; set via
-    # the --suffix CLI flag). Read by UniqueModule.execute / synonym /
-    # the generated module footer, and by output_writer when canonicalising
-    # cache keys.
-    output_suffix: str
+    # Input -> output extension pairs. Defaults: {".vpy": ".v", ".svpy": ".sv"};
+    # extended by repeatable --extension EXT_IN=EXT_OUT (and the -sv shorthand
+    # which maps to (".vpy", ".sv")). The output extension paired with each
+    # input is stamped onto the generated module class as _OUTPUT_SUFFIX in
+    # template/emitter._header; UniqueModule._flush_outfile and
+    # UniqueModule.synonym read type(self)._OUTPUT_SUFFIX at flush time.
+    extension_map: dict[str, str]
     # Synthesis-top instance bounding the synth cone: either a top-level
     # instance name ("foo") or a dotted instance path ("top.foo.bar"); the
     # walker matches `path == synth_top or path.startswith(synth_top+".")`.
@@ -276,10 +278,16 @@ class UniqueModule:
 ## genesispy.template.parser
 
 ```python
-def parse_vpy(path: str) -> str:
-    """Parse a .vpy/.svpy file and return Python source text.
+def parse_vpy(
+    path: str, allowed: Iterable[str] | None = None
+) -> str:
+    """Parse a template file and return Python source text.
 
-    Raises ParseError on .vp/.svp legacy extensions.
+    ``allowed`` is the set of accepted input extensions (e.g. the keys of
+    ``Manager.extension_map``); defaults to the built-in
+    ``DEFAULT_EXTENSION_MAP`` keys (``.vpy``, ``.svpy``). Raises
+    ParseError on .vp/.svp legacy extensions and on any extension not in
+    ``allowed``.
     """
 ```
 

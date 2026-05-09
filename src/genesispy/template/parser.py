@@ -55,9 +55,10 @@ from __future__ import annotations
 
 import json
 import os
-from typing import List
+from typing import Iterable, List, Optional
 
 from genesispy.errors import ParseError
+from genesispy.extensions import DEFAULT_EXTENSION_MAP
 
 
 __all__ = ["parse_vpy", "ParseError"]
@@ -203,8 +204,20 @@ def _process_verilog_line(line: str, lineno: int, infile: str) -> str:
     return f'self.emit(f"{"".join(parts)}")'
 
 
-def _check_extension(path: str) -> None:
-    """Raise :class:`ParseError` if ``path`` has a legacy extension."""
+def _check_extension(
+    path: str, allowed: Optional[Iterable[str]] = None
+) -> None:
+    """Raise :class:`ParseError` if ``path`` has a disallowed extension.
+
+    ``allowed`` is the set of accepted input extensions (e.g. the keys of
+    :data:`Manager.extension_map`); defaults to the built-in
+    :data:`DEFAULT_EXTENSION_MAP` keys. The legacy Genesis2 ``.vp``/``.svp``
+    extensions raise a special-cased "rename to .vpy/.svpy" error first.
+    """
+    allowed_set = (
+        frozenset(allowed) if allowed is not None
+        else frozenset(DEFAULT_EXTENSION_MAP.keys())
+    )
     _, ext = os.path.splitext(path)
     ext_lower = ext.lower()
     if ext_lower in (".vp", ".svp"):
@@ -212,20 +225,24 @@ def _check_extension(path: str) -> None:
             f"{path}: legacy Genesis2 extension '{ext}' is not supported. "
             f"Rename the file to '{ext}y' (genesispy uses .vpy/.svpy)."
         )
-    if ext_lower not in (".vpy", ".svpy"):
+    if ext_lower not in allowed_set:
+        expected = ", ".join(sorted(allowed_set)) or "<none>"
         raise ParseError(
-            f"{path}: unsupported extension '{ext}'; expected .vpy or .svpy."
+            f"{path}: unsupported extension '{ext}'; expected {expected}."
         )
 
 
-def parse_vpy(path: str) -> str:
-    """Parse a ``.vpy``/``.svpy`` template file.
+def parse_vpy(
+    path: str, allowed: Optional[Iterable[str]] = None
+) -> str:
+    """Parse a ``.vpy``/``.svpy`` (or user-allowed) template file.
 
     Returns Python source text -- the body of a generated module's
     ``execute()`` method.  Raises :class:`ParseError` for legacy ``.vp``/
-    ``.svp`` files or for malformed templates (e.g. unterminated backticks).
+    ``.svp`` files, for any extension not in ``allowed``, or for malformed
+    templates (e.g. unterminated backticks).
     """
-    _check_extension(path)
+    _check_extension(path, allowed)
 
     with open(path, "r", encoding="utf-8") as fh:
         raw_lines = fh.readlines()

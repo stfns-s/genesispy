@@ -14,6 +14,7 @@ from typing import List, Optional, Sequence, Tuple
 
 from genesispy import __version__
 from genesispy.errors import warning
+from genesispy.extensions import parse_extension_spec
 
 
 _LISTFILE_DIRECTIVES = {
@@ -264,19 +265,24 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--suffix",
-        default=None,
-        metavar="EXT",
+        "--extension",
+        dest="extensions",
+        action="append",
+        default=[],
+        type=parse_extension_spec,
+        metavar="EXT_IN=EXT_OUT",
         help=(
-            "File extension for emitted Verilog files (default: .v). "
-            "A leading dot is added if missing."
+            "Pair an input template extension with its emitted-Verilog "
+            "extension (may be repeated). Defaults: .vpy=.v, .svpy=.sv. "
+            "User entries override defaults; e.g. '--extension .vpy=.sv' "
+            "or '--extension .tvpy=.tv'."
         ),
     )
     parser.add_argument(
         "-sv", "--systemverilog",
         action="store_true",
         default=False,
-        help="Shortcut for --suffix sv (mutually exclusive with --suffix).",
+        help="Shorthand for '--extension .vpy=.sv'.",
     )
     parser.add_argument(
         "--stdout",
@@ -425,16 +431,21 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         parser.error("--parse-only and --generate-only are mutually exclusive")
     if args.keep_tmp:
         args.use_tmp = True
-    if args.systemverilog and args.suffix is not None:
-        parser.error("--systemverilog and --suffix are mutually exclusive")
+    # -sv is shorthand for '--extension .vpy=.sv'. If the user already passed
+    # an explicit .vpy mapping with a different output extension, raise; if
+    # they passed exactly .vpy=.sv it's a redundant no-op.
     if args.systemverilog:
-        args.suffix = ".sv"
-    if args.suffix is None:
-        args.suffix = ".v"
-    if args.suffix == "" or args.suffix == ".":
-        parser.error("--suffix must be a non-empty file extension")
-    if not args.suffix.startswith("."):
-        args.suffix = "." + args.suffix
+        explicit_vpy = next(
+            (out for (in_ext, out) in args.extensions if in_ext == ".vpy"),
+            None,
+        )
+        if explicit_vpy is not None and explicit_vpy != ".sv":
+            parser.error(
+                f"-sv requests '.vpy=.sv' but --extension .vpy={explicit_vpy} "
+                f"was also given; mappings conflict."
+            )
+        if explicit_vpy is None:
+            args.extensions.append((".vpy", ".sv"))
 
     if args.inputlist:
         extra_in, extra_src, extra_inc = _expand_listfiles(args.inputlist, parser)

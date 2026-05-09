@@ -397,5 +397,5 @@ def test_dump_to_stdout_emits_top_last(manager):
 def test_stub_manager_has_documented_attrs():
     s = StubManager()
     for attr in ("synth_top", "synth_dir", "verif_dir", "raw_dir",
-                 "output_dir", "output_suffix", "top", "cfg_handler"):
+                 "output_dir", "extension_map", "top", "cfg_handler"):
         assert hasattr(s, attr), f"StubManager missing {attr!r}"

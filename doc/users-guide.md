@@ -350,8 +350,12 @@ elaborate group: it skips the parse phase and runs only the elaborate step.
   `genesis_synth`).
 - `--verif-dir DIR` -- directory for verif-tagged Verilog (default: `--outputdir` if set, else
   `genesis_verif`).
-- `--suffix EXT` -- file extension for emitted Verilog files (default: `.v`). Leading dot added if missing.
-- `-sv`, `--systemverilog` -- shortcut for `--suffix sv`. Mutually exclusive with `--suffix`.
+- `--extension EXT_IN=EXT_OUT` -- pair an input template extension with its emitted-Verilog
+  extension (may be repeated). Defaults: `.vpy=.v`, `.svpy=.sv`. User entries override defaults;
+  e.g. `--extension .vpy=.sv` or `--extension .tvpy=.tv`. Leading dots are added on either side
+  if missing; both sides are case-folded.
+- `-sv`, `--systemverilog` -- shorthand for `--extension .vpy=.sv`. Errors out if combined with
+  a conflicting `--extension .vpy=...` entry.
 - `--stdout` -- write generated Verilog to stdout instead of `genesis_synth`/`genesis_verif`. Skips
   `.vlist`/`.depend`/clean script and removes the raw dir on exit.
 - `--product FILE` -- write Genesis2-style product file lists `FILE.synth` and `FILE.verif`.
@@ -393,7 +397,11 @@ behaviour-affecting incompatibilities -- unique-module hash, JSON-only configs (
 `genesispy-xml2json`), post-elaboration dedup -- see
 [genesis2-incompatibilities.md](./genesis2-incompatibilities.md).
 
-- **File extension** -- `.vp` -> `.vpy`, `.svp` -> `.svpy`.
+- **File extension** -- `.vp` -> `.vpy`, `.svp` -> `.svpy`. Configurable via the repeatable
+  `--extension EXT_IN=EXT_OUT` flag (e.g. `--extension .tvpy=.tv` to register a custom pair, or
+  `--extension .vpy=.sv` to redirect the default).
+- **`--suffix` removed** -- replaced by `--extension`. `-sv`/`--systemverilog` is preserved as
+  a shorthand for `--extension .vpy=.sv`.
 - **Config input** -- XML support removed from the core CLI; convert legacy XML once with `genesispy-xml2json
   in.xml out.json` and pass `--json out.json`. The reverse helper `genesispy-json2xml` is provided for
   symmetry.

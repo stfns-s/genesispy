@@ -29,6 +29,7 @@ from typing import Any, Iterable
 from genesispy import __version__, cache, user_config
 from genesispy.config_handler import ConfigHandler
 from genesispy.errors import ParameterError
+from genesispy.extensions import build_extension_map, parse_extension_spec
 from genesispy.template.aliases import alias_prelude_source
 from genesispy.template.parser import parse_vpy
 from genesispy.unique_module import UniqueModule
@@ -66,7 +67,9 @@ class _GvpyManager:
         self.raw_dir = ""
         self.synth_dir = ""
         self.verif_dir = ""
-        self.output_suffix = ".v"
+        self.extension_map = build_extension_map(
+            getattr(args, "extensions", []) or []
+        )
         self.no_module_cache = False
         self.flavor = "both"
         self.gen_raw = False
@@ -94,21 +97,23 @@ class _GvpyManager:
         raise FileNotFoundError(name)
 
     def resolve_module_class(self, name: str) -> type:
-        """Locate a sibling .vpy by name and produce a UniqueModule class.
+        """Locate a sibling template by name and produce a UniqueModule class.
 
         Mirrors :meth:`Manager.resolve_module_class` minus the on-disk .py
         emission: we parse and exec the body directly into a class body.
+        Searches every input extension registered in
+        :attr:`self.extension_map`, plus ``.gvpy`` as a gvpy-only fallback.
         """
-        try:
-            path = self.find_file(name + ".vpy")
-        except FileNotFoundError:
+        candidates = list(self.extension_map.keys()) + [".gvpy"]
+        for ext in candidates:
             try:
-                path = self.find_file(name + ".gvpy")
-            except FileNotFoundError as exc:
-                raise RuntimeError(
-                    f"Cannot resolve module {name!r}: no {name}.vpy/.gvpy found"
-                ) from exc
-        return _build_class_from_vpy(name, path)
+                path = self.find_file(name + ext)
+            except FileNotFoundError:
+                continue
+            return _build_class_from_vpy(name, path, self.extension_map)
+        raise RuntimeError(
+            f"Cannot resolve module {name!r}: no {name}{{{','.join(candidates)}}} found"
+        )
 
     def synonym_class(self, src_name: str, target_name: str) -> type:
         # Cache per (src, target): same call returns the same class so
@@ -126,12 +131,23 @@ class _GvpyManager:
 # --------------------------------------------------------------------------
 # Class factory: turn a .vpy into a UniqueModule subclass via parser.
 # --------------------------------------------------------------------------
-def _build_class_from_vpy(name: str, path: str) -> type:
+def _build_class_from_vpy(
+    name: str, path: str, extension_map: dict[str, str] | None = None
+) -> type:
     if not name.isidentifier():
         raise ValueError(
             f"_build_class_from_vpy: {name!r} is not a valid Python identifier"
         )
-    body = parse_vpy(path)
+    # Allowed input extensions: keys of the configured map, plus the gvpy
+    # ``.gvpy`` alias so resolve_module_class fallbacks still parse.
+    if extension_map is None:
+        allowed = None
+        out_suffix = ".v"
+    else:
+        allowed = frozenset(list(extension_map.keys()) + [".gvpy"])
+        ext = os.path.splitext(path)[1].lower()
+        out_suffix = extension_map.get(ext, ".v")
+    body = parse_vpy(path, allowed)
     indent = "        "
     indented = "\n".join(
         (indent + ln) if ln.strip() else ln for ln in body.splitlines()
@@ -141,6 +157,7 @@ def _build_class_from_vpy(name: str, path: str) -> type:
         "from genesispy.gvpy_cli import pp\n"
         "from genesispy import user_config as _gpy_user_config\n"
         f"class {name}(UniqueModule, UserMixin):\n"
+        f"    _OUTPUT_SUFFIX = {out_suffix!r}\n"
         "    def execute(self):\n"
         "        super().execute()\n"
         + alias_prelude_source(indent="        ")
@@ -284,6 +301,18 @@ def main(argv: list[str] | None = None) -> int:
         help='Comment prefix of the target language (default "//").',
     )
     parser.add_argument(
+        "--extension",
+        dest="extensions",
+        action="append",
+        default=[],
+        type=parse_extension_spec,
+        metavar="EXT_IN=EXT_OUT",
+        help=(
+            "Pair an input template extension with its emitted-Verilog "
+            "extension (may be repeated). Defaults: .vpy=.v, .svpy=.sv."
+        ),
+    )
+    parser.add_argument(
         "--gvpy-strict",
         dest="gvpy_strict",
         action="store_true",
@@ -333,10 +362,10 @@ def _process(
     fname: str, mgr: _GvpyManager, args: argparse.Namespace, incdirs: list[str]
 ) -> None:
     path = mgr.find_file(fname) if not os.path.isabs(fname) else fname
-    stem = _stem(path)
+    stem = _stem(path, extra=mgr.extension_map.keys())
     name = args.mname or stem
 
-    cls = _build_class_from_vpy(name, path)
+    cls = _build_class_from_vpy(name, path, mgr.extension_map)
     inst = cls(mgr)
 
     # Allow strict-mode overrides of generate/instantiate/synonym by
@@ -390,9 +419,13 @@ def _install_pinclude(inst: UniqueModule, incdirs: list[str]) -> None:
     inst.pinclude = pinclude  # type: ignore[attr-defined]
 
 
-def _stem(path: str) -> str:
+def _stem(path: str, extra: Iterable[str] = ()) -> str:
     base = os.path.basename(path)
-    for ext in (".vpy", ".gvpy", ".vp", ".gvp", ".svpy", ".svp"):
+    # Built-in/legacy gvpy extensions stripped unconditionally. ``extra`` is
+    # used by callers that know about user-registered extensions (e.g. from
+    # an extension_map).
+    candidates = list(extra) + [".vpy", ".gvpy", ".vp", ".gvp", ".svpy", ".svp"]
+    for ext in candidates:
         if base.endswith(ext):
             return base[: -len(ext)]
     return base

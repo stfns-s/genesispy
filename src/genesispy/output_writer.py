@@ -50,13 +50,32 @@ from . import cache
 _KNOWN_EXTENSIONS = (".v", ".sv", ".vh", ".svh")
 
 
-def _canonical_filename(name: str, suffix: str = ".v") -> str:
+def _canonical_filename(
+    name: str, suffix: str = ".v", *, extra_known: tuple = ()
+) -> str:
     """Append ``suffix`` unless ``name`` already ends in a known Verilog
     extension. Plain dotted names (e.g. ``foo.bar``) get the suffix.
+
+    ``extra_known`` extends :data:`_KNOWN_EXTENSIONS` for this call --
+    used by :func:`flush_to_disk` to recognise user-configured output
+    extensions (e.g. ``.tv``) so cache keys produced by
+    ``UniqueModule._flush_outfile`` aren't double-suffixed.
     """
-    if name.endswith(_KNOWN_EXTENSIONS):
+    known = _KNOWN_EXTENSIONS + tuple(extra_known)
+    if name.endswith(known):
         return name
     return name + suffix
+
+
+def _manager_extra_known(manager) -> tuple:
+    """Tuple of output extensions configured on ``manager``'s extension_map.
+
+    Falls back to an empty tuple for shim managers that don't expose one.
+    """
+    em = getattr(manager, "extension_map", None)
+    if not em:
+        return ()
+    return tuple(set(em.values()) - set(_KNOWN_EXTENSIONS))
 
 
 def _ensure_dir(path: str) -> None:
@@ -127,7 +146,6 @@ def flush_to_disk(manager) -> Dict[str, List[str]]:
     flavor = manager.flavor
     gen_raw = manager.gen_raw
     raw_dir = manager.raw_dir
-    suffix = manager.output_suffix
 
     written: Dict[str, List[str]] = {
         "synth": [],
@@ -141,9 +159,16 @@ def flush_to_disk(manager) -> Dict[str, List[str]]:
     seen_bases: Dict[Tuple[str, str], str] = {}
 
     # Sort for deterministic output.
+    # Cache keys are written with their per-module suffix in
+    # UniqueModule._flush_outfile / synonym, so _canonical_filename's
+    # default fallback ('.v' if no known extension) only kicks in for raw
+    # cache entries registered by tests or library callers. Extra
+    # user-configured output extensions (from manager.extension_map) are
+    # treated as 'known' so e.g. 'foo.tv' isn't re-suffixed to 'foo.tv.v'.
+    extra_known = _manager_extra_known(manager)
     for raw_name in sorted(cache.OUTFILE_CONTENT_CACHE.keys()):
         content = cache.OUTFILE_CONTENT_CACHE[raw_name]
-        filename = _canonical_filename(raw_name, suffix)
+        filename = _canonical_filename(raw_name, extra_known=extra_known)
         base = os.path.basename(filename)
 
         # Try both raw and suffixed keys (tests register raw, prod registers suffixed).
@@ -327,20 +352,20 @@ def dump_to_stdout(manager, stream: TextIO | None = None) -> None:
     """
     out = stream if stream is not None else sys.stdout
     top = manager.top
-    suffix = manager.output_suffix
+    extra_known = _manager_extra_known(manager)
 
     names = sorted(cache.OUTFILE_CONTENT_CACHE.keys())
     if top:
         # Move any cache entry whose canonical filename stem matches top to the end.
         def _is_top(n: str) -> bool:
-            base = os.path.basename(_canonical_filename(n, suffix))
+            base = os.path.basename(_canonical_filename(n, extra_known=extra_known))
             stem, _ = os.path.splitext(base)
             return stem == top
         names = [n for n in names if not _is_top(n)] + [n for n in names if _is_top(n)]
 
     for name in names:
         content = cache.OUTFILE_CONTENT_CACHE[name]
-        filename = os.path.basename(_canonical_filename(name, suffix))
+        filename = os.path.basename(_canonical_filename(name, extra_known=extra_known))
         out.write(f"// genesispy: {filename}\n")
         out.write(content)
         if not content.endswith("\n"):

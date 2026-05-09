@@ -71,7 +71,7 @@ class StubManager:
         self,
         cfg_handler: Optional[StubConfigHandler] = None,
         debug: int = 0,
-        output_suffix: str = ".v",
+        extension_map: Optional[Dict[str, str]] = None,
     ) -> None:
         self.cfg_handler = cfg_handler or StubConfigHandler()
         self.top: Optional[str] = None
@@ -84,7 +84,10 @@ class StubManager:
         self.raw_dir: str = ""
         self.synth_dir: str = ""
         self.verif_dir: str = ""
-        self.output_suffix: str = output_suffix
+        from genesispy.extensions import DEFAULT_EXTENSION_MAP
+        self.extension_map: Dict[str, str] = dict(
+            extension_map if extension_map is not None else DEFAULT_EXTENSION_MAP
+        )
         # Required by ConfigHandler/UniqueModule/output_writer consumers.
         self.args = types.SimpleNamespace(parameter=[], unqstyle=None)
         self.no_module_cache: bool = False

@@ -85,7 +85,7 @@ def test_emitter_header_uses_canonical_prelude():
     """`_header()` must contain every binding from `alias_prelude_source`."""
     from genesispy.template.emitter import _header
 
-    formatted = _header("x.vpy", "X")
+    formatted = _header("x.vpy", "X", ".v")
     expected = _norm_alias_lines(alias_prelude_source(indent=""))
     actual = _norm_alias_lines(formatted)
     assert expected.issubset(actual), expected - actual

@@ -92,6 +92,24 @@ def test_legacy_svp_extension_rejected(tmp_path) -> None:
     assert ".svp" in ei.value.msg
 
 
+def test_custom_allowed_extension_parses(tmp_path) -> None:
+    """An extension absent from the defaults parses cleanly when listed in ``allowed``."""
+    p = tmp_path / "x.tvpy"
+    p.write_text("module x; endmodule\n")
+    out = parse_vpy(str(p), allowed=(".tvpy",))
+    # Body is plain Verilog -> a single self.emit(...) call.
+    assert "self.emit" in out
+
+
+def test_unallowed_extension_rejected_with_expected_list(tmp_path) -> None:
+    p = tmp_path / "x.tvpy"
+    p.write_text("module x; endmodule\n")
+    with pytest.raises(ParseError) as ei:
+        parse_vpy(str(p), allowed=(".vpy", ".svpy"))
+    assert ".tvpy" in ei.value.msg
+    assert ".vpy" in ei.value.msg or ".svpy" in ei.value.msg
+
+
 def test_tab_in_python_line_indent_rejected(tmp_path) -> None:
     p = tmp_path / "x.vpy"
     p.write_text("//;\tfor i in range(2):\n//; # endfor\n")

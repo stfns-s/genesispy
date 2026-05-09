@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, Type
 
 from . import cache, errors
 from .errors import GenesisPyError, ParseError, error, warning
+from .extensions import build_extension_map
 
 
 class Manager:
@@ -52,9 +53,14 @@ class Manager:
         self.output_dir = outputdir_arg or "genesis_synth"
         self.synth_dir = synth_dir_arg or outputdir_arg or "genesis_synth"
         self.verif_dir = verif_dir_arg or outputdir_arg or "genesis_verif"
-        self.output_suffix = args.suffix or ".v"
-        if not self.output_suffix.startswith("."):
-            self.output_suffix = "." + self.output_suffix
+        # build_extension_map raises ValueError on conflicts among args.extensions;
+        # surface as GenesisPyError so the CLI prints a clean message.
+        try:
+            self.extension_map = build_extension_map(
+                getattr(args, "extensions", []) or []
+            )
+        except ValueError as exc:
+            raise GenesisPyError(str(exc)) from exc
 
         self.input_files = list(args.input)
         self.parameter_overrides = list(args.parameter)
@@ -189,16 +195,39 @@ class Manager:
                 stem = os.path.splitext(fname)[0]
                 self._generated_modules[stem] = os.path.join(self.raw_dir, fname)
 
+    def _output_suffix_for(self, path: str) -> str:
+        """Return the output extension paired with ``path``'s input extension.
+
+        Lookup is case-insensitive against :data:`self.extension_map`.
+        Unknown extensions raise :class:`ParseError` -- the parser would
+        reject them anyway, but tripping here gives a uniform error path.
+        """
+        ext = os.path.splitext(path)[1].lower()
+        try:
+            return self.extension_map[ext]
+        except KeyError:
+            allowed = ", ".join(sorted(self.extension_map.keys())) or "<none>"
+            raise ParseError(
+                f"{path}: unsupported extension {ext!r}; expected {allowed}."
+            )
+
     def parse_files(self) -> None:
-        """Parse every input .vpy/.svpy and write a generated .py module."""
+        """Parse every input template and write a generated .py module."""
         # Local import to avoid cycle at module import time.
         from .template import emitter
 
         os.makedirs(self.raw_dir, exist_ok=True)
 
+        allowed = frozenset(self.extension_map.keys())
         for src in self.input_files:
             path = self.find_file(src) if not os.path.isabs(src) else src
-            py_path = emitter.write_module(path, self.raw_dir)
+            out_suffix = self._output_suffix_for(path)
+            py_path = emitter.write_module(
+                path,
+                self.raw_dir,
+                output_suffix=out_suffix,
+                allowed=allowed,
+            )
             stem = os.path.splitext(os.path.basename(path))[0]
             self._generated_modules[stem] = py_path
 
@@ -271,7 +300,13 @@ class Manager:
                     path = self.find_file(src) if not os.path.isabs(src) else src
                     from .template import emitter
 
-                    py_path = emitter.write_module(path, self.raw_dir)
+                    out_suffix = self._output_suffix_for(path)
+                    py_path = emitter.write_module(
+                        path,
+                        self.raw_dir,
+                        output_suffix=out_suffix,
+                        allowed=frozenset(self.extension_map.keys()),
+                    )
                     self._generated_modules[name] = py_path
                     break
 
@@ -405,13 +440,14 @@ class Manager:
             elif existing != "synth_and_verif":
                 cache.OUTFILE_TAGS[name] = "synth_and_verif"
 
-        suffix = self.output_suffix
         for inst, is_synth in self._top_inst.get_prod_list_insts(self.synth_top):
             fname = inst._outfile_name
             if fname is None:
                 continue
             tag = "synth" if is_synth else "verif"
             _promote(fname, tag)
+            # Synonym output files share the source module's extension.
+            suffix = getattr(type(inst), "_OUTPUT_SUFFIX", ".v")
             for syn in inst._synonyms:
                 _promote(f"{syn}{suffix}", tag)
 
