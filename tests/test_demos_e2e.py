@@ -32,6 +32,9 @@ def _reset_cache():
     cache.clear_all()
 
 
+SYNTAXES = ("genesis", "jinja2")
+
+
 def _run_demo(
     tmp_path: Path,
     demo_dir: Path,
@@ -40,13 +43,20 @@ def _run_demo(
     config_flag: str | None = None,
     config_file: str | None = None,
     extra_argv: list[str] | None = None,
+    syntax: str = "genesis",
 ) -> Path:
-    """Copy demo files into tmp_path, run genesispy on them, return synth dir."""
+    """Copy demo files into tmp_path, run genesispy on them, return synth dir.
+
+    ``syntax`` selects the template flavour: ``"genesis"`` uses
+    ``genesis_src/`` (default ``//;`` / backtick directives); ``"jinja2"``
+    uses ``genesis_src.j2/`` and passes ``--jinja2``.
+    """
+    src_subdir = "genesis_src" if syntax == "genesis" else "genesis_src.j2"
     tmp_path.mkdir(parents=True, exist_ok=True)
     for src in demo_dir.iterdir():
         if src.is_file():
             shutil.copy(src, tmp_path / src.name)
-        elif src.is_dir() and src.name == "genesis_src":
+        elif src.is_dir() and src.name == src_subdir:
             shutil.copytree(src, tmp_path / src.name, dirs_exist_ok=True)
 
     cache.clear_all()
@@ -57,7 +67,9 @@ def _run_demo(
         argv = []
         for f in inputs:
             argv.extend(["--input", f])
-        argv.extend(["--top", top, "--srcpath", "genesis_src"])
+        argv.extend(["--top", top, "--srcpath", src_subdir])
+        if syntax == "jinja2":
+            argv.append("--jinja2")
         if config_flag and config_file:
             argv.extend([config_flag, config_file])
         if extra_argv:
@@ -77,10 +89,12 @@ def _run_demo(
     return tmp_path / "genesis_synth"
 
 
-def test_random_logic(tmp_path: Path) -> None:
+@pytest.mark.parametrize("syntax", SYNTAXES)
+def test_random_logic(tmp_path: Path, syntax: str) -> None:
     synth = _run_demo(
         tmp_path, DEMOS / "random_logic", "top",
         "top.vpy", "OneHotMux.vpy",
+        syntax=syntax,
     )
     files = sorted(p.name for p in synth.iterdir())
     assert "top.v" in files
@@ -92,10 +106,12 @@ def test_random_logic(tmp_path: Path) -> None:
     assert "OneHotMux_" in top_v
 
 
-def test_iterative_wallace_tree(tmp_path: Path) -> None:
+@pytest.mark.parametrize("syntax", SYNTAXES)
+def test_iterative_wallace_tree(tmp_path: Path, syntax: str) -> None:
     synth = _run_demo(
         tmp_path, DEMOS / "iterative_wallace_tree", "top",
         "top.vpy", "wallace.vpy", "CSA.vpy",
+        syntax=syntax,
     )
     files = sorted(p.name for p in synth.iterdir())
     assert "top.v" in files
@@ -103,11 +119,13 @@ def test_iterative_wallace_tree(tmp_path: Path) -> None:
     assert any(f.startswith("CSA_") for f in files)
 
 
-def test_many_iterative_wallace_trees_default(tmp_path: Path) -> None:
+@pytest.mark.parametrize("syntax", SYNTAXES)
+def test_many_iterative_wallace_trees_default(tmp_path: Path, syntax: str) -> None:
     """No-config mode uses the in-source WALLACES_WIDTHS default of [4, 8]."""
     synth = _run_demo(
         tmp_path, DEMOS / "many_iterative_wallace_trees", "top",
         "top.vpy", "wallace.vpy", "CSA.vpy",
+        syntax=syntax,
     )
     files = sorted(p.name for p in synth.iterdir())
     wallace_files = [f for f in files if f.startswith("wallace_unq")]
@@ -125,13 +143,15 @@ def test_many_iterative_wallace_trees_default(tmp_path: Path) -> None:
     assert "ParamHash = {}" in body
 
 
-def test_many_iterative_wallace_trees_via_json(tmp_path: Path) -> None:
+@pytest.mark.parametrize("syntax", SYNTAXES)
+def test_many_iterative_wallace_trees_via_json(tmp_path: Path, syntax: str) -> None:
     """JSON config overrides the defaults: widths -> [2,5,16,32,64], COND=False,
     ParamHash populated. Same source tree as the default test."""
     synth = _run_demo(
         tmp_path, DEMOS / "many_iterative_wallace_trees", "top",
         "top.vpy", "wallace.vpy", "CSA.vpy",
         config_flag="--json", config_file="config.json",
+        syntax=syntax,
     )
     files = sorted(p.name for p in synth.iterdir())
     wallace_files = [f for f in files if f.startswith("wallace_unq")]
@@ -153,13 +173,15 @@ def test_many_iterative_wallace_trees_via_json(tmp_path: Path) -> None:
         assert f"wallace_{w}" in top_v, f"width {w} not instantiated"
 
 
-def test_many_iterative_wallace_trees_via_cfg(tmp_path: Path) -> None:
+@pytest.mark.parametrize("syntax", SYNTAXES)
+def test_many_iterative_wallace_trees_via_cfg(tmp_path: Path, syntax: str) -> None:
     """`.cfg` Python config overrides the in-source defaults with its own
     widths/COND/ParamHash when no higher-priority source is supplied."""
     synth = _run_demo(
         tmp_path, DEMOS / "many_iterative_wallace_trees", "top",
         "top.vpy", "wallace.vpy", "CSA.vpy",
         extra_argv=["--cfg", "config.py"],
+        syntax=syntax,
     )
     wallace_files = [p.name for p in synth.iterdir() if p.name.startswith("wallace_unq")]
     clone_files = [p.name for p in synth.iterdir() if p.name.startswith("clone_of_wallce_")]
@@ -170,7 +192,8 @@ def test_many_iterative_wallace_trees_via_cfg(tmp_path: Path) -> None:
     assert "'tag': 'cfg-driven'" in body                   # cfg's ParamHash payload
 
 
-def test_many_iterative_wallace_trees_json_beats_cfg(tmp_path: Path) -> None:
+@pytest.mark.parametrize("syntax", SYNTAXES)
+def test_many_iterative_wallace_trees_json_beats_cfg(tmp_path: Path, syntax: str) -> None:
     """When both --json and --cfg are supplied, JSON outranks .cfg for any
     key it sets (matches Perl Genesis2 ordering)."""
     synth = _run_demo(
@@ -178,6 +201,7 @@ def test_many_iterative_wallace_trees_json_beats_cfg(tmp_path: Path) -> None:
         "top.vpy", "wallace.vpy", "CSA.vpy",
         config_flag="--json", config_file="config.json",
         extra_argv=["--cfg", "config.py"],
+        syntax=syntax,
     )
     wallace_files = [p.name for p in synth.iterdir() if p.name.startswith("wallace_unq")]
     assert len(wallace_files) == 5, (
@@ -188,10 +212,12 @@ def test_many_iterative_wallace_trees_json_beats_cfg(tmp_path: Path) -> None:
     assert "'Assoc': 4" in body                            # JSON ParamHash beats cfg's
 
 
-def test_regfile(tmp_path: Path) -> None:
+@pytest.mark.parametrize("syntax", SYNTAXES)
+def test_regfile(tmp_path: Path, syntax: str) -> None:
     synth = _run_demo(
         tmp_path, DEMOS / "regfile", "top",
         "top.vpy", "reg_file.vpy", "flop.vpy", "cfg_ifc.vpy", "top_flop_only.vpy",
+        syntax=syntax,
     )
     files = sorted(p.name for p in synth.iterdir())
     v_files = [f for f in files if f.endswith(".v")]

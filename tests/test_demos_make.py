@@ -66,6 +66,20 @@ def test_make_gen(demo_copy: Path) -> None:
 
 
 @pytest.mark.parametrize("demo_copy", DEMO_NAMES, indirect=True)
+def test_make_gen_j2(demo_copy: Path) -> None:
+    """The jinja2 twin sources elaborate via ``make gen-j2``; outputs land
+    in a parallel ``genesis_synth.j2/`` tree."""
+    r = subprocess.run(
+        ["make", "gen-j2"], cwd=demo_copy, capture_output=True, text=True,
+        timeout=300,
+    )
+    assert r.returncode == 0, f"make gen-j2 failed:\n{r.stdout}\n{r.stderr}"
+    assert (demo_copy / "genesis_synth.j2" / "top.v").exists()
+    assert (demo_copy / "genesis_synth.j2" / "top.vlist").exists()
+    assert (demo_copy / "genesis_vlog.j2.vf").exists()
+
+
+@pytest.mark.parametrize("demo_copy", DEMO_NAMES, indirect=True)
 def test_make_pylint(demo_copy: Path) -> None:
     r = subprocess.run(
         ["make", "pylint"], cwd=demo_copy, capture_output=True, text=True

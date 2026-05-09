@@ -25,6 +25,20 @@ _LISTFILE_DIRECTIVES = {
 }
 
 
+def _comment_arg(raw: str) -> str:
+    """argparse ``type=`` validator for ``--comment``.
+
+    Rejects empty/whitespace-only values: an empty prefix collapses the
+    directive sentinel to bare ``;`` and emits banner lines without any
+    comment marker.
+    """
+    if not raw.strip():
+        raise argparse.ArgumentTypeError(
+            f"--comment {raw!r}: empty/whitespace-only comment prefix"
+        )
+    return raw
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="genesispy",
@@ -285,6 +299,27 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Shorthand for '--extension .vpy=.sv'.",
     )
     parser.add_argument(
+        "--comment",
+        default="//",
+        type=_comment_arg,
+        help=(
+            "Line-comment prefix of the target language (default \"//\"). "
+            "Sets both the directive sentinel ('<comment>;' replaces '//;') "
+            "and the prefix used in the auto-generated module banner."
+        ),
+    )
+    parser.add_argument(
+        "-j2", "--jinja2",
+        action="store_true",
+        default=False,
+        help=(
+            "Parse templates with Jinja2 delimiters: '{%% stmt %%}' replaces "
+            "'//; stmt', '{{ expr }}' replaces backticks, and '{# comment #}' "
+            "is a stripped comment. Embedded code is full Python (no Jinja2 "
+            "expression-language layer)."
+        ),
+    )
+    parser.add_argument(
         "--stdout",
         action="store_true",
         default=False,
@@ -432,19 +467,17 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     if args.keep_tmp:
         args.use_tmp = True
     # -sv is shorthand for '--extension .vpy=.sv'. If the user already passed
-    # an explicit .vpy mapping with a different output extension, raise; if
+    # any explicit .vpy mapping with a different output extension, raise; if
     # they passed exactly .vpy=.sv it's a redundant no-op.
     if args.systemverilog:
-        explicit_vpy = next(
-            (out for (in_ext, out) in args.extensions if in_ext == ".vpy"),
-            None,
-        )
-        if explicit_vpy is not None and explicit_vpy != ".sv":
+        vpy_outs = [out for (in_ext, out) in args.extensions if in_ext == ".vpy"]
+        non_sv = [out for out in vpy_outs if out != ".sv"]
+        if non_sv:
             parser.error(
-                f"-sv requests '.vpy=.sv' but --extension .vpy={explicit_vpy} "
+                f"-sv requests '.vpy=.sv' but --extension .vpy={non_sv[0]} "
                 f"was also given; mappings conflict."
             )
-        if explicit_vpy is None:
+        if not vpy_outs:
             args.extensions.append((".vpy", ".sv"))
 
     if args.inputlist:

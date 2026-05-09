@@ -59,7 +59,19 @@ DEPEND         := $(OUTPUTDIR)/$(TOP).depend
 CLEAN_SH       := $(OUTPUTDIR)/genesispy_clean.sh
 VLOG_VF        := genesis_vlog.vf
 
-.PHONY: gen cleangen cleansim clean pylint vlint lint sim help
+# Jinja2-flavour twin sources (opt-in via `make gen-j2`). genesis_src.j2/
+# carries the same INPUTS rewritten with {% %}/{{ }}/{# #} delimiters;
+# outputs land in a parallel genesis_synth.j2/ tree so the default genesis
+# flow is untouched.
+SRCDIR_J2      ?= genesis_src.j2
+OUTPUTDIR_J2   ?= genesis_synth.j2
+SRC_FILES_J2   := $(addprefix $(SRCDIR_J2)/,$(INPUTS))
+VLIST_J2       := $(OUTPUTDIR_J2)/$(TOP).vlist
+DEPEND_J2      := $(OUTPUTDIR_J2)/$(TOP).depend
+CLEAN_SH_J2    := $(OUTPUTDIR_J2)/genesispy_clean.sh
+VLOG_VF_J2     := genesis_vlog.j2.vf
+
+.PHONY: gen gen-j2 cleangen cleansim clean pylint vlint lint sim help
 
 # XML -> JSON config conversion. One-way: XML is canonical for demos that
 # carry both forms; JSON is regenerated from it. Use `genesispy-json2xml`
@@ -77,9 +89,20 @@ $(VLIST): $(SRC_FILES) $(CONFIG_DEP)
 $(VLOG_VF): $(VLIST)
 	cp $(VLIST) $(VLOG_VF)
 
+gen-j2: $(VLIST_J2) $(VLOG_VF_J2)
+
+$(VLIST_J2): $(SRC_FILES_J2) $(CONFIG_DEP)
+	$(GENESISPY) --jinja2 $(GEN_INPUT_FLAGS) --top $(TOP) $(CONFIG_FLAG) \
+	    --srcpath $(SRCDIR_J2) --outputdir $(OUTPUTDIR_J2) $(EXTRA_FLAGS)
+
+$(VLOG_VF_J2): $(VLIST_J2)
+	cp $(VLIST_J2) $(VLOG_VF_J2)
+
 cleangen:
 	rm -rf genesis_raw genesis_synth genesis_verif
+	rm -rf $(OUTPUTDIR_J2)
 	rm -f $(VLIST) $(DEPEND) $(CLEAN_SH) $(VLOG_VF)
+	rm -f $(VLIST_J2) $(DEPEND_J2) $(CLEAN_SH_J2) $(VLOG_VF_J2)
 
 cleansim:
 	rm -rf obj_dir csrc simv.daidir work
@@ -132,6 +155,7 @@ ifndef HELP_LOCAL
 help:
 	@echo "genesispy demo targets:"
 	@echo "  gen     - elaborate $(TOP) from genesis_src/$(INPUTS) (default)"
+	@echo "  gen-j2  - elaborate $(TOP) from $(SRCDIR_J2)/$(INPUTS) using --jinja2 (outputs under $(OUTPUTDIR_J2)/)"
 	@echo "  pylint  - py_compile generated Python modules"
 	@echo "  vlint   - lint generated Verilog (VERILINT=slang|verilator; default verilator)"
 	@echo "  lint    - run pylint + vlint"

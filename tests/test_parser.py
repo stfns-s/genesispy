@@ -129,6 +129,29 @@ def test_tab_after_spaces_in_python_line_indent_rejected(tmp_path) -> None:
     assert "tab character in //; indent" in ei.value.msg
 
 
+def test_custom_comment_directive_recognised(tmp_path) -> None:
+    """``parse_vpy(..., comment="#")`` recognises ``#;`` as the directive."""
+    p = tmp_path / "x.vpy"
+    p.write_text("#; x = 1\nplain text\n")
+    out = parse_vpy(str(p), comment="#")
+    # The directive should have been consumed as a Python statement,
+    # leaving 'x = 1' at column zero (not as emitted text).
+    assert "x = 1" in out
+    assert "self.emit(\"#; x = 1\")" not in out
+    # Plain text is still emitted.
+    assert 'self.emit("plain text")' in out
+
+
+def test_custom_comment_directive_does_not_match_default(tmp_path) -> None:
+    """With ``comment="#"``, ``//;`` lines are plain text, not directives."""
+    p = tmp_path / "x.vpy"
+    p.write_text("//; x = 1\n")
+    out = parse_vpy(str(p), comment="#")
+    # The //; line is now passed through as text via self.emit.
+    assert "self.emit" in out
+    assert "//;" in out
+
+
 def test_misaligned_indent_rejected(tmp_path) -> None:
     # 3-space indent must raise; silent floor-to-0 would swallow scope.
     p = tmp_path / "x.vpy"

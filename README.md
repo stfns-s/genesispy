@@ -54,7 +54,7 @@ PYTHONPATH=src pytest tests/
 
 ## Documentation
 
-- [doc/users-guide.md](./doc/users-guide.md) -- `.vpy` syntax, walkthrough,
+- [doc/user-guide.md](./doc/user-guide.md) -- `.vpy` syntax, walkthrough,
   CLI reference for `genesispy` and `gvpy`, migrating from Genesis2.
 - [doc/code-structure.md](./doc/code-structure.md) -- pipeline, dedup,
   control surfaces.

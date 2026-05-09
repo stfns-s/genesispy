@@ -26,6 +26,12 @@ def test_init_from_namespace_defaults():
     assert m.synth_dir == "genesis_synth"
     assert m.verif_dir == "genesis_verif"
     assert m.cfg_handler is None
+    assert m.syntax == "genesis"
+
+
+def test_jinja2_flag_sets_syntax():
+    m = _make_manager(["--jinja2"])
+    assert m.syntax == "jinja2"
 
 
 def test_init_propagates_cli_values():

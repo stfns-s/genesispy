@@ -101,6 +101,8 @@ def write_module(
     *,
     output_suffix: str = ".v",
     allowed: Optional[Iterable[str]] = None,
+    syntax: str = "genesis",
+    comment: str = "//",
 ) -> str:
     """Parse ``vpy_path``, emit, write to ``<output_dir>/<stem>.py``.
 
@@ -111,10 +113,11 @@ def write_module(
     ``output_suffix`` is the Verilog extension paired with this input; it
     is stamped onto the generated class. ``allowed`` is forwarded to
     :func:`parse_vpy` for input-extension validation (defaults to the
-    built-in ``.vpy``/``.svpy`` set).
+    built-in ``.vpy``/``.svpy`` set). ``syntax`` selects the directive
+    flavour (``"genesis"`` or ``"jinja2"``).
     """
     os.makedirs(output_dir, exist_ok=True)
-    body = parse_vpy(vpy_path, allowed)
+    body = parse_vpy(vpy_path, allowed, syntax=syntax, comment=comment)
     src = emit_module(vpy_path, body, output_suffix=output_suffix)
 
     stem = _module_name_from_path(vpy_path)

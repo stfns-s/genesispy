@@ -16,7 +16,7 @@ deduplicated so the same module body is emitted once.
 
 This document covers: the package layering, the orchestrator's order of operations, the lifecycle of a single
 `.vpy` file, the dedup cache, and the top-level flag surface. It does **not** document the user-facing
-template language (`users-guide.md`), the run instructions (`README.md`), or the contract surface between
+template language (`user-guide.md`), the run instructions (`README.md`), or the contract surface between
 modules (`interfaces.md`).
 
 ## 2. Layered view
@@ -251,5 +251,5 @@ emits a one-time deprecation warning.
 
 - [`interfaces.md`](./interfaces.md) -- frozen contract surface: every attribute, method, exception, and
   exec-namespace key the modules expose to each other. The source of truth for signatures.
-- [`../README.md`](../README.md) and [`users-guide.md`](./users-guide.md) -- run instructions and end-user
+- [`../README.md`](../README.md) and [`user-guide.md`](./user-guide.md) -- run instructions and end-user
   template guide.

@@ -83,6 +83,8 @@ class Manager:
         self.pymodules = list(args.pymodule)
         self.clean_flag = args.clean
         self.stdout_mode = args.stdout
+        self.syntax = "jinja2" if getattr(args, "jinja2", False) else "genesis"
+        self.comment = getattr(args, "comment", "//")
 
         # Track every directory touched during elaboration for --pathfile.
         self.touched_dirs: List[str] = []
@@ -227,6 +229,8 @@ class Manager:
                 self.raw_dir,
                 output_suffix=out_suffix,
                 allowed=allowed,
+                syntax=self.syntax,
+                comment=self.comment,
             )
             stem = os.path.splitext(os.path.basename(path))[0]
             self._generated_modules[stem] = py_path
@@ -306,6 +310,8 @@ class Manager:
                         self.raw_dir,
                         output_suffix=out_suffix,
                         allowed=frozenset(self.extension_map.keys()),
+                        syntax=self.syntax,
+                        comment=self.comment,
                     )
                     self._generated_modules[name] = py_path
                     break

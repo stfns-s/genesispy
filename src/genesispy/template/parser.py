@@ -44,6 +44,18 @@ becomes (modulo line comments)::
         # endfor
     # endif
 
+Jinja2 syntax (``syntax="jinja2"``)
+-----------------------------------
+
+Opt-in alternative directive style: ``{% python-stmt %}`` replaces ``//;``,
+``{{ python-expr }}`` replaces backticks, and ``{# comment #}`` is a comment
+that is stripped from output. Indent / block-opener / sentinel-close rules
+are identical. Embedded Python is full Python: there is no Jinja2
+expression-language layer (no filters, no tests, no macros). Whitespace
+modifiers ``{%-``, ``-%}``, ``{{-``, ``-}}`` are accepted as a syntactic
+no-op (no whitespace stripping). All three forms may span multiple physical
+lines; tracebacks land on the opener line.
+
 Legacy extensions
 -----------------
 
@@ -64,7 +76,7 @@ from genesispy.extensions import DEFAULT_EXTENSION_MAP
 __all__ = ["parse_vpy", "ParseError"]
 
 
-_PRL_ESC = "//;"
+_DEFAULT_COMMENT = "//"
 
 
 def _is_block_opener(stripped: str) -> bool:
@@ -233,20 +245,50 @@ def _check_extension(
 
 
 def parse_vpy(
-    path: str, allowed: Optional[Iterable[str]] = None
+    path: str,
+    allowed: Optional[Iterable[str]] = None,
+    *,
+    syntax: str = "genesis",
+    comment: str = _DEFAULT_COMMENT,
 ) -> str:
     """Parse a ``.vpy``/``.svpy`` (or user-allowed) template file.
 
     Returns Python source text -- the body of a generated module's
     ``execute()`` method.  Raises :class:`ParseError` for legacy ``.vp``/
     ``.svp`` files, for any extension not in ``allowed``, or for malformed
-    templates (e.g. unterminated backticks).
+    templates.
+
+    ``syntax`` selects the directive flavour: ``"genesis"`` (default) uses
+    ``//;`` line directives and backtick inline expressions; ``"jinja2"``
+    uses ``{% %}``, ``{{ }}``, ``{# #}`` with full Python inside the
+    delimiters.
     """
     _check_extension(path, allowed)
 
-    with open(path, "r", encoding="utf-8") as fh:
-        raw_lines = fh.readlines()
+    if syntax == "genesis":
+        with open(path, "r", encoding="utf-8") as fh:
+            raw_lines = fh.readlines()
+        out_lines = _parse_vpy_genesis(path, raw_lines, comment + ";")
+    elif syntax == "jinja2":
+        with open(path, "r", encoding="utf-8") as fh:
+            source = fh.read()
+        out_lines = _parse_vpy_jinja2(path, source)
+    else:
+        raise ValueError(
+            f"parse_vpy: unknown syntax {syntax!r}; expected 'genesis' or 'jinja2'"
+        )
 
+    return "\n".join(out_lines) + ("\n" if out_lines else "")
+
+
+def _parse_vpy_genesis(
+    path: str, raw_lines: List[str], prl_esc: str = "//;"
+) -> List[str]:
+    """Genesis-flavour line-based scanner. Returns out_lines.
+
+    ``prl_esc`` is the directive sentinel (default ``"//;"`` -- the
+    configured ``--comment`` prefix plus a trailing ``;``).
+    """
     out_lines: List[str] = []
     # Indent level (in 4-space units) for *emit* lines and continuation
     # statements that follow the most recent //; line.
@@ -267,9 +309,9 @@ def parse_vpy(
             line = raw
 
         stripped_left = line.lstrip(" \t")
-        if stripped_left.startswith(_PRL_ESC):
+        if stripped_left.startswith(prl_esc):
             # Python line.
-            content = stripped_left[len(_PRL_ESC):]
+            content = stripped_left[len(prl_esc):]
             # Drop ONE optional leading space after //; (matches Perl
             # convention for the `//; ` prefix).
             if content.startswith(" "):
@@ -311,4 +353,387 @@ def parse_vpy(
                 stmt = _process_verilog_line(line, lineno, path)
                 out_lines.append(f"{indent_str}{stmt}")
 
-    return "\n".join(out_lines) + ("\n" if out_lines else "")
+    return out_lines
+
+
+# ---------------------------------------------------------------------------
+# Jinja2-flavour scanner
+# ---------------------------------------------------------------------------
+
+def _emit_call(pieces: List, indent: int) -> str:
+    """Build a ``self.emit(...)`` Python statement from pieces.
+
+    ``pieces`` is a list of ``("text", str)`` / ``("expr", str)`` tuples;
+    ``indent`` is the number of 4-space units to prefix.
+    """
+    indent_str = "    " * indent
+    if not pieces:
+        return f'{indent_str}self.emit("")'
+    has_expr = any(k == "expr" for k, _ in pieces)
+    if not has_expr:
+        text = "".join(seg for k, seg in pieces if k == "text")
+        return f'{indent_str}self.emit("{_escape_plain(text)}")'
+    parts: List[str] = []
+    for kind, seg in pieces:
+        if kind == "text":
+            parts.append(_escape_fstring_text(seg))
+        else:
+            # Pad with spaces inside the braces so that a leading '{' or
+            # trailing '}' in the expression (e.g. dict literals) doesn't
+            # collide with f-string '{{'/'}}' literal-escape parsing.
+            parts.append("{ " + seg + " }")
+    return f'{indent_str}self.emit(f"{"".join(parts)}")'
+
+
+def _scan_python_close(
+    source: str, start: int, close_a: str, close_b: str, path: str, lineno: int
+) -> int:
+    """Scan a Python expression / statement looking for the close delimiter.
+
+    Returns the index of the first character of the close delimiter
+    (``}}`` or ``%}``, possibly preceded by ``-``). String literals and
+    bracket nesting (``( [ {``) are honoured so braces inside the
+    embedded Python don't false-close. Raises :class:`ParseError` on EOF.
+    """
+    i = start
+    n = len(source)
+    depth = 0  # nesting of (), [], {}
+    in_str: Optional[str] = None  # one of '"', "'", "'''", '"""'
+    while i < n:
+        ch = source[i]
+        if in_str is not None:
+            # Inside a Python string literal.
+            if len(in_str) == 3:
+                if source.startswith(in_str, i):
+                    i += 3
+                    in_str = None
+                    continue
+            else:
+                if ch == "\\" and i + 1 < n:
+                    i += 2
+                    continue
+                if ch == in_str:
+                    in_str = None
+                    i += 1
+                    continue
+            i += 1
+            continue
+        # Not in a string.
+        if ch in ('"', "'"):
+            if source.startswith(ch * 3, i):
+                in_str = ch * 3
+                i += 3
+                continue
+            in_str = ch
+            i += 1
+            continue
+        # At depth 0, a close delimiter (optionally preceded by '-') wins
+        # over the brace-decrement that '}' or '%' would trigger.
+        if depth == 0:
+            if ch == "-" and (
+                source.startswith(close_a, i + 1)
+                or (close_b != close_a and source.startswith(close_b, i + 1))
+            ):
+                return i
+            if source.startswith(close_a, i):
+                return i
+            if close_b != close_a and source.startswith(close_b, i):
+                return i
+        if ch in "([{":
+            depth += 1
+            i += 1
+            continue
+        if ch in ")]}":
+            depth -= 1
+            i += 1
+            continue
+        i += 1
+    raise ParseError(
+        f"{path}:{lineno}: unterminated {{{close_a[0]} ... {close_a}}}"
+    )
+
+
+_J2_END_KEYWORDS = frozenset({"endfor", "endif", "endwhile"})
+
+
+def _parse_vpy_jinja2(path: str, source: str) -> List[str]:
+    """Jinja2-flavour stream scanner. Returns out_lines."""
+    out_lines: List[str] = []
+    # Indent state (mirrors genesis-mode tracking).
+    emit_indent = 0
+    last_py_indent = 0
+    last_was_opener = False
+    # Stack of py_indent levels for blocks opened by directives ending in
+    # `:`. Both close forms pop this stack: bare keyword (`{% endfor %}`)
+    # and sentinel-comment (`{% # endfor %}`). Mismatch with an empty
+    # stack raises "without matching opener" in either form.
+    block_stack: List[int] = []
+
+    n = len(source)
+    i = 0
+
+    # State for the current "logical text line": pieces accumulated since
+    # the last top-level newline, plus the line number where the first
+    # piece (or the line itself) began.
+    pieces: List = []
+    line_pieces_lineno: Optional[int] = None
+    # Line number of the start of the current physical line (1-based).
+    current_line = 1
+    # Has the current physical line had any non-whitespace text emitted
+    # outside of a form? Used to detect "directive sharing a line with
+    # plain Verilog".
+    line_has_nonspace_text = False
+    # Beginning-of-physical-line index in source (used to detect "is the
+    # next non-space token at start-of-line").
+    line_start = 0
+
+    def flush_logical_line(emit_lineno: int) -> None:
+        nonlocal pieces, line_pieces_lineno
+        out_lines.append(f"# line {emit_lineno} {json.dumps(path)}")
+        out_lines.append(_emit_call(pieces, emit_indent))
+        pieces = []
+        line_pieces_lineno = None
+
+    def at_line_start() -> bool:
+        # True iff source[line_start:i] is all spaces/tabs.
+        return source[line_start:i].strip(" \t") == ""
+
+    text_buf: List[str] = []
+
+    def push_text(s: str) -> None:
+        nonlocal line_has_nonspace_text, line_pieces_lineno
+        if not s:
+            return
+        text_buf.append(s)
+        if line_pieces_lineno is None:
+            line_pieces_lineno = current_line
+        if s.strip(" \t"):
+            line_has_nonspace_text = True
+
+    def flush_text_to_pieces() -> None:
+        if text_buf:
+            pieces.append(("text", "".join(text_buf)))
+            text_buf.clear()
+
+    while i < n:
+        ch = source[i]
+
+        # Newline at top level → end of logical line.
+        if ch == "\n":
+            flush_text_to_pieces()
+            emit_lineno = line_pieces_lineno if line_pieces_lineno is not None else current_line
+            flush_logical_line(emit_lineno)
+            i += 1
+            current_line += 1
+            line_start = i
+            line_has_nonspace_text = False
+            continue
+
+        # `\{{`: literal `{{` in text.
+        if ch == "\\" and source.startswith("\\{{", i):
+            push_text("{{")
+            i += 3
+            continue
+
+        # `{%` or `{%-` → directive.
+        if source.startswith("{%", i):
+            # Must be at start of physical line (only whitespace before on this line).
+            if not at_line_start():
+                raise ParseError(
+                    f"{path}:{current_line}: '{{%' must start the line "
+                    "(no plain Verilog before the directive)"
+                )
+            # Drop any leading-whitespace text that was buffered for this line.
+            text_buf.clear()
+            # Also discard pieces that came purely from leading whitespace.
+            # (pieces should be empty here because a directive on a fresh
+            # logical line means we haven't accumulated non-whitespace text;
+            # if pieces are non-empty, that would mean the directive opens
+            # mid-logical-line which we already rejected.)
+            if pieces:
+                # This shouldn't happen given at_line_start() == True, but
+                # belt-and-braces: a logical line cannot start before the
+                # directive and continue across the directive line.
+                raise ParseError(
+                    f"{path}:{current_line}: directive '{{%' cannot share "
+                    "a logical line with prior text"
+                )
+            opener_line = current_line
+            # Skip "{%" and optional "-".
+            i += 2
+            if i < n and source[i] == "-":
+                i += 1
+            close = _scan_python_close(source, i, "%}", "%}", path, opener_line)
+            inner = source[i:close]
+            # Step past the close ("-%}" or "%}").
+            i = close
+            if source.startswith("-%}", i):
+                i += 3
+            else:
+                i += 2
+            # Strip exactly one leading space (mirror "//; " convention).
+            if inner.startswith(" "):
+                inner = inner[1:]
+            # Strip exactly one trailing space (mirror " %}" symmetry).
+            if inner.endswith(" "):
+                inner = inner[:-1]
+            # Update current_line for any newlines consumed inside the directive.
+            consumed_newlines = source.count("\n", line_start, i)
+            current_line = opener_line + consumed_newlines
+            # After close, the rest of the closing physical line must be
+            # whitespace-only (until newline or EOF).
+            j = i
+            while j < n and source[j] != "\n":
+                if source[j] not in " \t":
+                    raise ParseError(
+                        f"{path}:{current_line}: '%}}' must end the line "
+                        "(no plain Verilog after the directive)"
+                    )
+                j += 1
+            # Consume the trailing newline of the closer line (if any) so
+            # the directive doesn't leave an empty self.emit("") behind.
+            if j < n and source[j] == "\n":
+                i = j + 1
+                current_line += 1
+                line_start = i
+                line_has_nonspace_text = False
+            else:
+                i = j
+            # Block close. Two equivalent forms:
+            #   * Bare keyword: `{% endfor %}` / `{% endif %}` /
+            #     `{% endwhile %}` (real Jinja2 spelling).
+            #   * Sentinel-comment: `{% # endfor %}` etc. (Genesis2-style
+            #     close, still a Python comment in the generated body).
+            # Both pop `block_stack`; either form with an empty stack
+            # raises "without matching opener".
+            stripped_inner = inner.strip()
+            end_kw: str | None = None
+            if stripped_inner in _J2_END_KEYWORDS:
+                end_kw = stripped_inner
+            elif stripped_inner.startswith("#"):
+                after_hash = stripped_inner[1:].strip()
+                if after_hash in _J2_END_KEYWORDS:
+                    end_kw = after_hash
+            if end_kw is not None:
+                if not block_stack:
+                    raise ParseError(
+                        f"{path}:{opener_line}: '{{% {stripped_inner} %}}' "
+                        "without matching opener"
+                    )
+                popped = block_stack.pop()
+                out_lines.append(f"# line {opener_line} {json.dumps(path)}")
+                out_lines.append(f'{"    " * popped}# {end_kw}')
+                last_py_indent = popped
+                last_was_opener = False
+                emit_indent = last_py_indent
+                continue
+            # Indent / opener handling on the joined inner content.
+            inner_lines = inner.split("\n")
+            first_line = inner_lines[0]
+            leading_ws = first_line[: len(first_line) - len(first_line.lstrip(" \t"))]
+            if "\t" in leading_ws:
+                raise ParseError(
+                    f"{path}:{opener_line}: tab character in {{% %}} indent; "
+                    "use spaces (indent unit is 4 spaces)"
+                )
+            n_spaces = len(first_line) - len(first_line.lstrip(" "))
+            if n_spaces % 4 != 0:
+                raise ParseError(
+                    f"{path}:{opener_line}: misaligned {{% %}} indent "
+                    f"({n_spaces} spaces); expected multiple of 4"
+                )
+            py_indent = n_spaces // 4
+            body_first = first_line[n_spaces:]
+            indent_str = "    " * py_indent
+            out_lines.append(f"# line {opener_line} {json.dumps(path)}")
+            if body_first == "" and len(inner_lines) == 1:
+                # Bare `{% %}` (or `{%  %}` etc.): blank line, indent state unchanged.
+                out_lines.append("")
+            else:
+                # First inner line gets the computed indent prefix.
+                out_lines.append(f"{indent_str}{body_first}")
+                # Subsequent inner lines: append verbatim (Python's own
+                # indentation rules govern the multi-line statement).
+                for extra in inner_lines[1:]:
+                    out_lines.append(extra)
+                # Block-opener detection runs on the LAST non-blank inner line.
+                last_nonblank = ""
+                for ln in reversed(inner_lines):
+                    if ln.strip():
+                        last_nonblank = ln
+                        break
+                last_was_opener = _is_block_opener(last_nonblank.lstrip(" \t"))
+                last_py_indent = py_indent
+                emit_indent = last_py_indent + (1 if last_was_opener else 0)
+                # Track open blocks for bare-keyword close. Push only when
+                # this directive deepens the block stack; midblock
+                # continuations (`else:`, `elif x:`, `except ...:`,
+                # `finally:`) reuse the indent of the existing top-of-
+                # stack opener and must not push a new entry.
+                if last_was_opener and (
+                    not block_stack or py_indent > block_stack[-1]
+                ):
+                    block_stack.append(py_indent)
+            continue
+
+        # `{{` or `{{-` → expression.
+        if source.startswith("{{", i):
+            opener_line = current_line
+            flush_text_to_pieces()
+            i += 2
+            if i < n and source[i] == "-":
+                i += 1
+            close = _scan_python_close(source, i, "}}", "}}", path, opener_line)
+            expr = source[i:close]
+            # Step past the close ("-}}" or "}}").
+            i = close
+            if source.startswith("-}}", i):
+                i += 3
+            else:
+                i += 2
+            # Strip exactly one leading/trailing space.
+            if expr.startswith(" "):
+                expr = expr[1:]
+            if expr.endswith(" "):
+                expr = expr[:-1]
+            # Newlines inside the expression are part of the Python source;
+            # update current_line to match.
+            consumed = expr.count("\n")
+            current_line = opener_line + consumed
+            if line_pieces_lineno is None:
+                line_pieces_lineno = opener_line
+            pieces.append(("expr", expr))
+            line_has_nonspace_text = True
+            continue
+
+        # `{#` → comment.
+        if source.startswith("{#", i):
+            opener_line = current_line
+            i += 2
+            j = source.find("#}", i)
+            if j < 0:
+                raise ParseError(
+                    f"{path}:{opener_line}: unterminated {{# ... #}}"
+                )
+            consumed = source.count("\n", i, j)
+            current_line = opener_line + consumed
+            i = j + 2
+            # If the comment was the only non-whitespace content of the
+            # logical line so far AND nothing follows on the closer's
+            # physical line up to its newline, drop the line entirely.
+            # Otherwise leave the surrounding text untouched (the comment
+            # is just stripped from the logical line).
+            # We don't add anything to pieces.
+            continue
+
+        # Plain text character.
+        push_text(ch)
+        i += 1
+
+    # EOF: flush the in-flight logical line if there's anything to flush.
+    flush_text_to_pieces()
+    if pieces or text_buf or line_pieces_lineno is not None:
+        emit_lineno = line_pieces_lineno if line_pieces_lineno is not None else current_line
+        flush_logical_line(emit_lineno)
+
+    return out_lines

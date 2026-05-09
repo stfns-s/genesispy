@@ -60,6 +60,10 @@ def _canonical_filename(
     used by :func:`flush_to_disk` to recognise user-configured output
     extensions (e.g. ``.tv``) so cache keys produced by
     ``UniqueModule._flush_outfile`` aren't double-suffixed.
+
+    Production callers always pass an explicit ``suffix`` matching the
+    module class's ``_OUTPUT_SUFFIX``; the ``".v"`` default is a fallback
+    for ad-hoc / library callers that have no per-class context.
     """
     known = _KNOWN_EXTENSIONS + tuple(extra_known)
     if name.endswith(known):
@@ -347,12 +351,14 @@ def dump_to_stdout(manager, stream: TextIO | None = None) -> None:
 
     Used by ``--stdout`` mode. Files are emitted in sorted order with the
     top module (when known) emitted last, each preceded by a
-    ``// genesispy: <filename>`` separator comment so consumers can split
-    the stream while keeping it valid Verilog.
+    ``<comment> genesispy: <filename>`` separator (default ``//``,
+    overridden by ``--comment``) so consumers can split the stream while
+    keeping it valid in the target language.
     """
     out = stream if stream is not None else sys.stdout
     top = manager.top
     extra_known = _manager_extra_known(manager)
+    cmt = getattr(manager, "comment", "//")
 
     names = sorted(cache.OUTFILE_CONTENT_CACHE.keys())
     if top:
@@ -366,7 +372,7 @@ def dump_to_stdout(manager, stream: TextIO | None = None) -> None:
     for name in names:
         content = cache.OUTFILE_CONTENT_CACHE[name]
         filename = os.path.basename(_canonical_filename(name, extra_known=extra_known))
-        out.write(f"// genesispy: {filename}\n")
+        out.write(f"{cmt} genesispy: {filename}\n")
         out.write(content)
         if not content.endswith("\n"):
             out.write("\n")

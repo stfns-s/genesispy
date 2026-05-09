@@ -119,6 +119,28 @@ def test_main_emits_to_stdout(tmp_path, capsys):
     assert "endmodule" in out
 
 
+def test_main_comment_flag_rewrites_directive_and_banner(tmp_path, capsys):
+    """--comment '#' makes the parser recognise '#;' directives and
+    stamps '#' on the generated banner."""
+    src = tmp_path / "c.vpy"
+    src.write_text(
+        "#; for i in range(2):\n"
+        "    wire w_`i`;\n"
+        "#; # endfor\n"
+    )
+    rc = main(["--comment", "#", str(src)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    # Loop body unrolled.
+    assert "wire w_0;" in out
+    assert "wire w_1;" in out
+    # Banner uses the configured prefix.
+    assert "# Genesis-Py generated module:" in out
+    assert "// Genesis-Py" not in out
+    # Directive lines themselves were consumed (not echoed).
+    assert "#; for" not in out
+
+
 def test_main_mname_overrides_stem(tmp_path, capsys):
     src = tmp_path / "input_file.vpy"
     src.write_text("module `mname`;\nendmodule\n")
@@ -263,10 +285,25 @@ def test_main_libdirs_prepends_sys_path(tmp_path, capsys):
 
 
 def test_main_comment_flag_accepted(tmp_path, capsys):
-    """``--comment`` is a no-op (gvpy compat) but must still parse."""
+    """``--comment`` parses and is plumbed end-to-end (sentinel + banner)
+    by ``test_main_comment_flag_rewrites_directive_and_banner`` above; this
+    test just covers the rc==0 happy path with a non-default value.
+    """
     src = _write_basic_module(tmp_path)
     rc = main(["--comment", "#", str(src)])
     assert rc == 0
+
+
+def test_main_comment_empty_rejected(tmp_path):
+    src = _write_basic_module(tmp_path)
+    with pytest.raises(SystemExit):
+        main(["--comment", "", str(src)])
+
+
+def test_main_comment_whitespace_only_rejected(tmp_path):
+    src = _write_basic_module(tmp_path)
+    with pytest.raises(SystemExit):
+        main(["--comment", "  ", str(src)])
 
 
 def test_main_multiple_files(tmp_path, capsys):
@@ -388,3 +425,24 @@ def test_build_class_from_vpy_rejects_unsafe_name(tmp_path):
         _build_class_from_vpy("foo-bar", str(vpy))
     with pytest.raises(ValueError):
         _build_class_from_vpy("1leading", str(vpy))
+
+
+# Review 15 #37 -- .gvpy input must follow .vpy's output extension.
+def test_build_class_from_vpy_gvpy_inherits_vpy_suffix(tmp_path):
+    """A ``.gvpy`` input file must emit using whatever ``.vpy`` is mapped
+    to (e.g. ``.sv`` under ``--extension .vpy=.sv``), not the hardcoded
+    ``.v`` fallback. Mixing ``.vpy`` and ``.gvpy`` inputs in one run
+    should produce consistent output suffixes.
+    """
+    from genesispy.gvpy_cli import _build_class_from_vpy
+
+    src = tmp_path / "foo.gvpy"
+    src.write_text("")
+    cls_default = _build_class_from_vpy(
+        "foo", str(src), {".vpy": ".v", ".svpy": ".sv"}
+    )
+    assert cls_default._OUTPUT_SUFFIX == ".v"
+    cls_sv = _build_class_from_vpy(
+        "foo", str(src), {".vpy": ".sv", ".svpy": ".sv"}
+    )
+    assert cls_sv._OUTPUT_SUFFIX == ".sv"

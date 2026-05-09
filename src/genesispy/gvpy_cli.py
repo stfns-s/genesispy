@@ -27,6 +27,7 @@ import sys
 from typing import Any, Iterable
 
 from genesispy import __version__, cache, user_config
+from genesispy.cli import _comment_arg
 from genesispy.config_handler import ConfigHandler
 from genesispy.errors import ParameterError
 from genesispy.extensions import build_extension_map, parse_extension_spec
@@ -70,6 +71,8 @@ class _GvpyManager:
         self.extension_map = build_extension_map(
             getattr(args, "extensions", []) or []
         )
+        self.syntax = "jinja2" if getattr(args, "jinja2", False) else "genesis"
+        self.comment = getattr(args, "comment", "//")
         self.no_module_cache = False
         self.flavor = "both"
         self.gen_raw = False
@@ -110,7 +113,10 @@ class _GvpyManager:
                 path = self.find_file(name + ext)
             except FileNotFoundError:
                 continue
-            return _build_class_from_vpy(name, path, self.extension_map)
+            return _build_class_from_vpy(
+                name, path, self.extension_map,
+                syntax=self.syntax, comment=self.comment,
+            )
         raise RuntimeError(
             f"Cannot resolve module {name!r}: no {name}{{{','.join(candidates)}}} found"
         )
@@ -132,7 +138,12 @@ class _GvpyManager:
 # Class factory: turn a .vpy into a UniqueModule subclass via parser.
 # --------------------------------------------------------------------------
 def _build_class_from_vpy(
-    name: str, path: str, extension_map: dict[str, str] | None = None
+    name: str,
+    path: str,
+    extension_map: dict[str, str] | None = None,
+    *,
+    syntax: str = "genesis",
+    comment: str = "//",
 ) -> type:
     if not name.isidentifier():
         raise ValueError(
@@ -146,8 +157,13 @@ def _build_class_from_vpy(
     else:
         allowed = frozenset(list(extension_map.keys()) + [".gvpy"])
         ext = os.path.splitext(path)[1].lower()
-        out_suffix = extension_map.get(ext, ".v")
-    body = parse_vpy(path, allowed)
+        # ``.gvpy`` is gvpy's canonical input alias and is never present in
+        # ``extension_map`` (the user configures ``.vpy``); resolve it to
+        # whatever ``.vpy`` maps to so a ``--extension .vpy=.sv`` run emits
+        # consistent suffixes across mixed ``.vpy`` / ``.gvpy`` inputs.
+        lookup_ext = ".vpy" if ext == ".gvpy" else ext
+        out_suffix = extension_map.get(lookup_ext, ".v")
+    body = parse_vpy(path, allowed, syntax=syntax, comment=comment)
     indent = "        "
     indented = "\n".join(
         (indent + ln) if ln.strip() else ln for ln in body.splitlines()
@@ -298,6 +314,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--comment",
         default="//",
+        type=_comment_arg,
         help='Comment prefix of the target language (default "//").',
     )
     parser.add_argument(
@@ -310,6 +327,16 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "Pair an input template extension with its emitted-Verilog "
             "extension (may be repeated). Defaults: .vpy=.v, .svpy=.sv."
+        ),
+    )
+    parser.add_argument(
+        "-j2", "--jinja2",
+        action="store_true",
+        default=False,
+        help=(
+            "Parse templates with Jinja2 delimiters: '{%% stmt %%}' replaces "
+            "'//; stmt', '{{ expr }}' replaces backticks, and '{# comment #}' "
+            "is a stripped comment. Embedded code is full Python."
         ),
     )
     parser.add_argument(
@@ -365,7 +392,10 @@ def _process(
     stem = _stem(path, extra=mgr.extension_map.keys())
     name = args.mname or stem
 
-    cls = _build_class_from_vpy(name, path, mgr.extension_map)
+    cls = _build_class_from_vpy(
+        name, path, mgr.extension_map,
+        syntax=mgr.syntax, comment=mgr.comment,
+    )
     inst = cls(mgr)
 
     # Allow strict-mode overrides of generate/instantiate/synonym by

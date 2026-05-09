@@ -64,12 +64,18 @@ def _stage_demo(tmp: Path, demo: str) -> Path:
     return dst
 
 
-def _run_genesispy(workdir: Path, demo: str) -> None:
+_SYNTAXES = ("genesis", "jinja2")
+_SRCPATH = {"genesis": "genesis_src", "jinja2": "genesis_src.j2"}
+
+
+def _run_genesispy(workdir: Path, demo: str, syntax: str = "genesis") -> None:
     top, inputs, extra = _DEMO_ARGS[demo]
     argv = []
     for inp in inputs:
         argv.extend(["--input", inp])
-    argv.extend(["--top", top, "--srcpath", "genesis_src"])
+    argv.extend(["--top", top, "--srcpath", _SRCPATH[syntax]])
+    if syntax == "jinja2":
+        argv.append("--jinja2")
     argv.extend(extra)
 
     cache.clear_all()
@@ -77,7 +83,7 @@ def _run_genesispy(workdir: Path, demo: str) -> None:
     os.chdir(workdir)
     try:
         rc = Manager(parse_args(argv)).execute()
-        assert rc == 0, f"genesispy returned {rc} for {demo}"
+        assert rc == 0, f"genesispy returned {rc} for {demo} [{syntax}]"
     finally:
         os.chdir(cwd)
 
@@ -125,10 +131,15 @@ def _load_reference(demo: str) -> Tuple[set, Dict[str, set]]:
     return bases, buckets
 
 
+@pytest.mark.parametrize("syntax", _SYNTAXES)
 @pytest.mark.parametrize("demo", sorted(_DEMO_ARGS))
-def test_parity_smoke(tmp_path: Path, demo: str) -> None:
+def test_parity_smoke(tmp_path: Path, demo: str, syntax: str) -> None:
+    # The reference fixture set is Perl-derived (genesis-only), but the
+    # jinja2 twin sources are required to produce byte-equivalent output
+    # post-normalisation -- same .vpy logic, different delimiter spelling.
+    # So both flavours compare against the same fixture set.
     workdir = _stage_demo(tmp_path, demo)
-    _run_genesispy(workdir, demo)
+    _run_genesispy(workdir, demo, syntax=syntax)
     py_bases, py_buckets = _collect(workdir)
 
     _ref_bases, ref_buckets = _load_reference(demo)
@@ -137,7 +148,7 @@ def test_parity_smoke(tmp_path: Path, demo: str) -> None:
         only_py = sorted(set(py_buckets) - set(ref_buckets))
         only_ref = sorted(set(ref_buckets) - set(py_buckets))
         pytest.fail(
-            f"{demo}: base-set differs from reference\n"
+            f"{demo} [{syntax}]: base-set differs from reference\n"
             f"  only in genesispy: {only_py}\n"
             f"  only in reference: {only_ref}"
         )
@@ -162,4 +173,4 @@ def test_parity_smoke(tmp_path: Path, demo: str) -> None:
             failures.append(f"{base}: missing genesispy body for reference #{i}")
 
     if failures:
-        pytest.fail(f"{demo}: per-base body mismatch\n" + "\n".join(failures))
+        pytest.fail(f"{demo} [{syntax}]: per-base body mismatch\n" + "\n".join(failures))

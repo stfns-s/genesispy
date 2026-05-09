@@ -4,10 +4,12 @@ SIM_TOP   ?= $(TOP)
 WIDTH     ?= 8
 DEPTH     ?= 4
 OUT       := example.out.v
+OUT_J2    := example.j2.out.v
+SRC_J2    := $(TOP).j2.vpy
 SIMULATOR ?= verilator
 VERILINT  ?= verilator
 
-.PHONY: gen cleangen cleansim clean vlint lint sim help
+.PHONY: gen gen-j2 cleangen cleansim clean vlint lint sim help
 
 gen: $(OUT)
 
@@ -16,8 +18,15 @@ $(OUT): $(TOP).vpy
 	    --parameter WIDTH=$(WIDTH) --parameter DEPTH=$(DEPTH) \
 	    $< > $@
 
+gen-j2: $(OUT_J2)
+
+$(OUT_J2): $(SRC_J2)
+	$(GVPY) --jinja2 --gvpy-strict --mname $(TOP) \
+	    --parameter WIDTH=$(WIDTH) --parameter DEPTH=$(DEPTH) \
+	    $< > $@
+
 cleangen:
-	rm -f $(OUT)
+	rm -f $(OUT) $(OUT_J2)
 
 cleansim:
 	rm -rf obj_dir csrc simv.daidir work
@@ -63,6 +72,7 @@ endif
 help:
 	@echo "gvpy demo targets:"
 	@echo "  gen     - run gvpy on $(TOP).vpy (writes $(OUT))"
+	@echo "  gen-j2  - run gvpy --jinja2 on $(SRC_J2) (writes $(OUT_J2))"
 	@echo "  vlint   - lint $(OUT) (VERILINT=slang|verilator; default verilator)"
 	@echo "  lint    - alias for vlint"
 	@echo "  sim     - run simulation on $(OUT) (SIMULATOR=xrun|vcs|vlog|verilator|iverilog; default verilator)"

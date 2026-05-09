@@ -39,11 +39,22 @@ def test_defaults():
     assert ns.synth_dir is None
     assert ns.verif_dir is None
     assert ns.stdout is False
+    assert ns.jinja2 is False
 
 
 def test_stdout_flag():
     ns = parse_args(["--stdout"])
     assert ns.stdout is True
+
+
+def test_jinja2_flag():
+    ns = parse_args(["--jinja2"])
+    assert ns.jinja2 is True
+
+
+def test_jinja2_short_flag():
+    ns = parse_args(["-j2"])
+    assert ns.jinja2 is True
 
 
 def test_input_multi():
@@ -381,3 +392,56 @@ def test_jsonout_help_does_not_reference_nonexistent_gen_flag():
     assert "parse-only" in help_text.lower(), (
         f"--jsonout help should reference --parse-only: {help_text!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# --comment validation
+# ---------------------------------------------------------------------------
+
+def test_comment_default_is_double_slash():
+    ns = parse_args([])
+    assert ns.comment == "//"
+
+
+def test_comment_custom_accepted():
+    ns = parse_args(["--comment", "#"])
+    assert ns.comment == "#"
+
+
+def test_comment_empty_rejected():
+    # Empty prefix would collapse the directive sentinel to bare ';' and
+    # emit banner lines without any comment marker.
+    with pytest.raises(SystemExit):
+        parse_args(["--comment", ""])
+
+
+def test_comment_whitespace_only_rejected():
+    with pytest.raises(SystemExit):
+        parse_args(["--comment", "   "])
+
+
+def test_main_comment_flag_rewrites_directive_and_banner(tmp_path, capsys):
+    """End-to-end: --comment '#' makes the parser recognise '#;' directives
+    and stamps '#' on the auto-generated banner. Mirror of the gvpy test
+    test_gvpy_cli.test_main_comment_flag_rewrites_directive_and_banner.
+    """
+    from genesispy.cli import main
+
+    src = tmp_path / "c.vpy"
+    src.write_text(
+        "module c;\n"
+        "#; for i in range(2):\n"
+        "    wire w_`i`;\n"
+        "#; # endfor\n"
+        "endmodule\n"
+    )
+    rc = main([
+        "-i", str(src), "-t", "c", "--comment", "#", "--stdout",
+    ])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wire w_0;" in out
+    assert "wire w_1;" in out
+    assert "# Genesis-Py generated module:" in out
+    assert "// Genesis-Py" not in out
+    assert "#; for" not in out

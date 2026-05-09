@@ -659,14 +659,15 @@ class UniqueModule:
 
     def to_verilog(self, infile: Optional[str] = None) -> None:
         """Emit a comment banner + parameter table (parity with :2927)."""
-        self.emit(f"// Genesis-Py generated module: {self._unique_module_name}")
-        self.emit(f"// Source class: {self._module_name}")
+        cmt = getattr(self._manager, "comment", "//")
+        self.emit(f"{cmt} Genesis-Py generated module: {self._unique_module_name}")
+        self.emit(f"{cmt} Source class: {self._module_name}")
         if infile is not None:
-            self.emit(f"// Source file: {infile}")
+            self.emit(f"{cmt} Source file: {infile}")
         if self._params:
-            self.emit("// Parameters:")
+            self.emit(f"{cmt} Parameters:")
             for k in sorted(self._params):
-                self.emit(f"//   {k} = {self._params[k]['value']!r}")
+                self.emit(f"{cmt}   {k} = {self._params[k]['value']!r}")
 
     def execute(self) -> None:
         """Elaborate this module: open buffer, emit header, flush.

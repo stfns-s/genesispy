@@ -95,6 +95,8 @@ class StubManager:
         self.gen_raw: bool = False
         self.depend_file: Optional[str] = None
         self.touched_dirs: list = []
+        self.syntax: str = "genesis"
+        self.comment: str = "//"
 
     def find_file(self, name: str, paths=None) -> str:  # pragma: no cover
         raise FileNotFoundError(name)

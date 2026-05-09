@@ -140,11 +140,28 @@ def test_cli_sv_conflicts_with_explicit_vpy_v() -> None:
         )
 
 
+def test_cli_sv_conflict_detected_regardless_of_argv_order() -> None:
+    # Both orderings must hit the cli-layer '-sv ... mappings conflict'
+    # error, not slip past it and trip build_extension_map's deeper
+    # ValueError. (review15 #39)
+    for argv in (
+        ["-i", "x.vpy", "-t", "X", "-sv",
+         "--extension", ".vpy=.sv", "--extension", ".vpy=.v"],
+        ["-i", "x.vpy", "-t", "X", "-sv",
+         "--extension", ".vpy=.v", "--extension", ".vpy=.sv"],
+    ):
+        with pytest.raises(SystemExit):
+            parse_args(argv)
+
+
 def test_cli_extension_invalid_rejected() -> None:
     with pytest.raises(SystemExit):
         parse_args(["-i", "x.vpy", "-t", "X", "--extension", "no_eq"])
     with pytest.raises(SystemExit):
         parse_args(["-i", "x.vpy", "-t", "X", "--extension", ".vpy="])
+    # Empty LHS (=.v) -- argparse layer must reject too.
+    with pytest.raises(SystemExit):
+        parse_args(["-i", "x.vpy", "-t", "X", "--extension", "=.v"])
 
 
 def test_cli_suffix_removed() -> None:

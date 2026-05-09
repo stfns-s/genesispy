@@ -44,7 +44,7 @@ Common overrides:
   set in both
 - `EXTRA_FLAGS=...` -- passed verbatim to `genesispy`
 
-See `genesispy/doc/users-guide.md` section 3 for the full `genesispy` flag list.
+See `genesispy/doc/user-guide.md` section 3 for the full `genesispy` flag list.
 
 ### `env_setup.sh`
 
@@ -100,6 +100,6 @@ backtick expressions, control flow (`for` / `if`), and `pp()`. Run via `bin/gvpy
 
 ## See also
 
-- `genesispy/doc/users-guide.md` -- full CLI and config reference.
+- `genesispy/doc/user-guide.md` -- full CLI and config reference.
 - `genesispy/doc/interfaces.md` -- module-author API contracts.
 - `test_parity/README.md` -- running parity vs. Perl Genesis2.

@@ -22,7 +22,12 @@
 
 (defface genesispy-sentinel-face
   '((t :inherit font-lock-comment-face :weight bold))
-  "Face for comment-only Python lines (`//; # ...')."
+  "Face for comment-only Python lines (`//; # ...' or `{% # ... %}')."
+  :group 'genesispy)
+
+(defface genesispy-j2-comment-face
+  '((t :inherit font-lock-comment-face))
+  "Face for Jinja2 `{# ... #}' template comments."
   :group 'genesispy)
 
 (defconst genesispy--verilog-backtick-directives
@@ -33,7 +38,15 @@
 (defconst genesispy--font-lock-keywords
   `(("^[ \t]*//;[ \t]*#.*$" . 'genesispy-sentinel-face)
     ("//;\\(?:[^#]\\|$\\)" 0 'genesispy-delim-face t)
-    ("`" . 'genesispy-delim-face))
+    ("`" . 'genesispy-delim-face)
+    ;; --jinja2 delimiters. The whitespace modifiers `{%-' / `-%}'
+    ;; are accepted by the parser as a syntactic no-op. The `{{ ... }}'
+    ;; expression form is intentionally not highlighted -- it collides
+    ;; with Verilog brace patterns (nested concatenation, replication
+    ;; closes), so it is left as plain Verilog.
+    ("{%-?[ \t]*#[^%]*%}" . 'genesispy-sentinel-face)
+    ("{%-?\\|-?%}" . 'genesispy-delim-face)
+    ("{#\\(?:.\\|\n\\)*?#}" 0 'genesispy-j2-comment-face t))
   "Additional font-lock keywords for `genesispy-mode'.")
 
 ;;;###autoload
@@ -54,6 +67,12 @@
   (save-excursion
     (goto-char (match-end 0))
     (not (looking-at-p "[ \t]*#"))))
+
+(defun genesispy--j2-stmt-verify ()
+  "Return non-nil unless the matched `{%' opens a `{% # ... %}' sentinel."
+  (save-excursion
+    (goto-char (match-end 0))
+    (not (looking-at-p "-?[ \t]*#"))))
 
 (defun genesispy--python-inline-verify ()
   "Return non-nil unless the matched backtick opens a Verilog directive."
@@ -83,10 +102,19 @@
     :back  "\\(?:^\\|[^\\\\]\\)\\(`\\)"
     :back-match 1
     :include-front nil
+    :include-back nil)
+   (genesispy-j2-stmt
+    :submode python-mode
+    :face mmm-code-submode-face
+    :front "{%-?"
+    :front-verify genesispy--j2-stmt-verify
+    :back  "-?%}"
+    :include-front nil
     :include-back nil)))
 
 (mmm-add-mode-ext-class 'genesispy-mode nil 'genesispy-python-line)
 (mmm-add-mode-ext-class 'genesispy-mode nil 'genesispy-python-inline)
+(mmm-add-mode-ext-class 'genesispy-mode nil 'genesispy-j2-stmt)
 
 (provide 'genesispy-mode)
 

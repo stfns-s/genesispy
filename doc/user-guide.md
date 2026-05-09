@@ -72,6 +72,113 @@ Perl-era `//;` bodies as Python.
   `` `f"{x:02x}"` `` for hex. (The `pp(value, fmt)` helper from upstream gvpy is gvpy-only: available in
   `bin/gvpy`-driven flows, not in genesispy elaboration.)
 
+### Jinja2 syntax (opt-in: `--jinja2`)
+
+For projects that prefer Jinja2-style delimiters, pass `--jinja2` (works on
+both `genesispy` and `gvpy`). The directive flavour changes; embedded code
+is **full Python** — there is no Jinja2 expression-language layer (no
+filters, no tests, no macros).
+
+`--jinja2` mode shares the *delimiter set* with the canonical Jinja2
+library (`{% %}`, `{{ }}`, `{# #}`) but is **not source-compatible**.
+The embedded code is Python, not Jinja2's expression sub-language, so
+stock Jinja2 templates do not parse here as-is:
+
+- Block openers need a trailing `:` — `{% for x in xs: %}`, not
+  `{% for x in xs %}` (Python syntax).
+- Continuations are `{% else: %}` / `{% elif cond: %}`, not
+  `{% else %}` / `{% elif cond %}`.
+- No `set` / `macro` / `block` / `extends` / `include` keywords; use
+  Python (`{% x = 1 %}`, `def`, `import`, etc.).
+- No filter pipe (`{{ x | upper }}` is bitwise-or in Python); use
+  function calls (`{{ str.upper(x) }}`) or methods (`{{ x.upper() }}`).
+- No tests (`is defined`, `is none`); use Python (`x is None`).
+
+Conversely, anything inside `{% %}` / `{{ }}` is full Python — arbitrary
+statements, multi-line expressions, side-effecting calls — which stock
+Jinja2 forbids.
+
+| genesis (default)             | jinja2 (`--jinja2`)            |
+|-------------------------------|--------------------------------|
+| `//; <python stmt>` line      | `{% <python stmt> %}` line     |
+| `` `<python expr>` `` inline  | `{{ <python expr> }}` inline   |
+| (no comment form)             | `{# ... #}` (stripped)         |
+
+**Block close**: jinja2 mode accepts the bare keywords `{% endfor %}`,
+`{% endif %}`, and `{% endwhile %}` (matching real Jinja2 — recommended).
+The genesis-style sentinel-comment form `{% # endfor %}` etc. is also
+accepted for symmetry with `//; # endfor` in genesis mode. Both forms
+pop the parser-side block stack; an unmatched close in either spelling
+raises `ParseError("without matching opener")`. Indent rules and
+block-opener detection (trailing `:`) are identical to genesis mode.
+
+The bare keywords `endfor` / `endif` / `endwhile` are reserved in
+jinja2-mode `{% %}` directives: a directive whose body strips to
+exactly one of these names is always treated as a block close, not as
+a Python expression that evaluates a same-named local. Use a different
+name (e.g. `endfor_x = ...`) if you need to bind a variable that
+shadows them.
+
+The whitespace modifiers `{%-`, `-%}`, `{{-`, `-}}` are accepted as a
+syntactic no-op (same output as the unmodified delimiters; no
+whitespace-stripping behavior). All three forms may span multiple physical
+lines; tracebacks land on the opener line. Selecting the engine is per
+run — engines do not mix within a file.
+
+Example (genesis vs jinja2):
+
+```
+//; W = 4
+//; for i in range(W):
+wire r`i`;
+//; # endfor
+```
+
+```
+{% W = 4 %}
+{% for i in range(W): %}
+wire r{{ i }};
+{% endfor %}
+```
+
+Both produce identical Verilog.
+
+#### Brace collisions with Verilog source
+
+Any `{{` in plain text opens a jinja2 expression and consumes through the
+matching `}}` — including `{{` that the user intends as adjacent literal
+braces (genesis-flavour `.vpy` is unaffected). Common Verilog collisions:
+
+1. **Replication concat `{{N{value}}`** opens with `{{`, which the parser
+   would consume as an expression. Escape with a leading backslash:
+   `\{{N{value}}` emits a literal `{{`. Implemented at
+   `template/parser.py` (`\{{` consumes 3 chars, emits `{{`).
+   The same escape covers any other adjacent-brace form
+   (e.g. concat-of-concat `\{{a, b}}` → `{{a, b}}`).
+
+2. **Single literal `{` immediately before an inline expression** —
+   e.g. translating genesis `` {`i`{1'b0}} `` to jinja2 yields the
+   ambiguous `{{{ i }}{1'b0}}`. There is no escape for a bare single
+   `{`. Two workarounds:
+
+   ```
+   {{ "{" }}{{ i }}{1'b0}}      # byte-identical output: {3{1'b0}}
+   { {{ i }} {1'b0}}            # extra spaces in output: { 3 {1'b0}}
+   ```
+
+   The first emits the literal `{` via a tiny string expression and is
+   byte-identical to the genesis-flavour output; the second relies on
+   Verilog's whitespace insensitivity but inserts visible spaces.
+
+A trailing `}}` in plain text needs no escape — only `{{` opens an
+expression.
+
+Each ported demo carries a jinja2 twin source tree under
+`demos/<demo>/genesis_src.j2/` (the gvpy demo carries
+`demos/gvpy/example.j2.vpy`), elaborated via `make gen-j2`. Outputs land in
+a parallel `genesis_synth.j2/` directory so the default `make gen` flow is
+untouched.
+
 ### Provided functions and short names
 
 Bare names bound automatically inside every generated `execute()` body:
@@ -356,6 +463,9 @@ elaborate group: it skips the parse phase and runs only the elaborate step.
   if missing; both sides are case-folded.
 - `-sv`, `--systemverilog` -- shorthand for `--extension .vpy=.sv`. Errors out if combined with
   a conflicting `--extension .vpy=...` entry.
+- `--comment PREFIX` -- line-comment prefix of the target output language (default: `//`). Sets both the
+  template directive sentinel (`<comment>;` replaces `//;` in genesis flavour) and the prefix used by the
+  auto-generated module banner. Jinja2 mode is unaffected.
 - `--stdout` -- write generated Verilog to stdout instead of `genesis_synth`/`genesis_verif`. Skips
   `.vlist`/`.depend`/clean script and removes the raw dir on exit.
 - `--product FILE` -- write Genesis2-style product file lists `FILE.synth` and `FILE.verif`.
@@ -384,7 +494,8 @@ Usage: `gvpy [options] FILE [FILE ...]` (output goes to stdout).
 - `--incdirs DIR[,DIR...]` -- comma-separated dirs for `include()`/`pinclude()` search. Repeatable.
 - `-p`, `--parameter NAME=VALUE` -- set a flat parameter consulted by `parameter()`. Repeatable. (`--defparam`
   is a deprecated hidden alias; emits a one-time warning.)
-- `--comment PREFIX` -- comment prefix of the target language (default: `//`).
+- `--comment PREFIX` -- line-comment prefix of the target output language (default: `//`). Sets both
+  the directive sentinel (`<comment>;` replaces `//;`) and the banner prefix.
 - `--gvpy-strict` -- use gvpy's record-only `generate`/`instantiate`/`synonym` instead of genesispy's
   elaboration-based versions.
 - `--version` -- print version and exit.

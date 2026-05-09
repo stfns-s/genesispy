@@ -142,7 +142,9 @@ def _include(path: str) -> None:
     else:
         mgr = _current_manager()
         resolved = mgr.find_file(path, list(mgr.includes_path) + ["."])
-    src = parse_vpy(resolved)
+    syntax = getattr(_active_manager, "syntax", "genesis")
+    comment = getattr(_active_manager, "comment", "//")
+    src = parse_vpy(resolved, syntax=syntax, comment=comment)
     # Register a line map so tracebacks from the included .vpy point at the
     # author's source lines, not the generated Python.
     runtime.register_line_map(resolved, runtime.build_line_map(src))

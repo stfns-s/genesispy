@@ -32,6 +32,17 @@ def test_root_construction_and_module_name() -> None:
     assert top.get_top() is top
 
 
+def test_to_verilog_banner_uses_manager_comment_prefix() -> None:
+    mgr = StubManager()
+    mgr.comment = "--"  # VHDL-style line comment
+    top = Top(mgr)
+    top.execute()
+    out = top._outfile_handle.getvalue()
+    # All banner lines must be prefixed with the configured comment.
+    assert out.startswith("-- Genesis-Py generated module: Top")
+    assert "// Genesis-Py" not in out
+
+
 # ---------------------------------------------------------------- params
 def test_define_and_get_param() -> None:
     top = Top(StubManager())

@@ -81,6 +81,17 @@ class Manager:
     # Disable post-elaboration MODULE_CACHE dedup. Set from
     # --no-module-cache. Read by unique_module.unique_inst[_param].
     no_module_cache: bool
+    # Selected template directive flavour: "genesis" (default; //; lines
+    # and backtick inline expressions) or "jinja2" ({% %}, {{ }}, {# #}
+    # delimiters with full Python inside). Set from --jinja2; threaded
+    # through to parse_vpy / write_module / user_config._include.
+    syntax: str
+    # Line-comment prefix of the target output language (default "//").
+    # Set from --comment. Threaded through parse_vpy / write_module /
+    # user_config._include (where it controls the directive sentinel
+    # "<comment>;") and read by UniqueModule.to_verilog and
+    # output_writer.dump_to_stdout for emitted banners/separators.
+    comment: str
     # Original argparse.Namespace as parsed by cli.parse_args(). Engine
     # classes (ConfigHandler) read late-bound flags directly off this
     # (e.g. args.unqstyle, args.parameter).
@@ -279,7 +290,11 @@ class UniqueModule:
 
 ```python
 def parse_vpy(
-    path: str, allowed: Iterable[str] | None = None
+    path: str,
+    allowed: Iterable[str] | None = None,
+    *,
+    syntax: str = "genesis",
+    comment: str = "//",
 ) -> str:
     """Parse a template file and return Python source text.
 
@@ -288,7 +303,53 @@ def parse_vpy(
     ``DEFAULT_EXTENSION_MAP`` keys (``.vpy``, ``.svpy``). Raises
     ParseError on .vp/.svp legacy extensions and on any extension not in
     ``allowed``.
+
+    ``syntax`` selects the directive flavour:
+
+    * ``"genesis"`` (default): ``//; stmt`` lines and ``\`expr\``` inline.
+    * ``"jinja2"``: ``{% stmt %}`` lines, ``{{ expr }}`` inline,
+      ``{# comment #}`` stripped. Embedded code is full Python (no
+      Jinja2 expression-language layer); whitespace modifiers
+      ``{%-``/``-%}``/``{{-``/``-}}`` are accepted as a syntactic
+      no-op. All three forms may span multiple physical lines;
+      tracebacks land on the opener line.
+
+    ``comment`` is the line-comment prefix of the target output language
+    (default ``"//"``, set per-run by ``--comment`` on both ``genesispy``
+    and ``gvpy``). In genesis flavour it determines the directive
+    sentinel: ``<comment>;`` lines are treated as Python; the default
+    ``"//"`` keeps the historical ``//;`` behaviour. Jinja2 flavour is
+    unaffected. Threaded through ``Manager.comment`` /
+    ``_GvpyManager.comment``.
+
+    Indent rules, block-opener detection (trailing ``:``), and the
+    ``# line N "path"`` traceback directives are identical across
+    flavours. Block close: genesis mode uses the lower-indent +
+    sentinel-comment convention (``//; # endfor`` / ``# endif`` /
+    ``# endwhile``). jinja2 mode accepts both the bare keyword form
+    (``{% endfor %}`` / ``{% endif %}`` / ``{% endwhile %}``, matching
+    real Jinja2) and the sentinel-comment form (``{% # endfor %}`` etc.,
+    for symmetry with genesis mode). Both forms pop the same parser-side
+    block stack, so an unmatched close raises ``ParseError("without
+    matching opener")`` regardless of spelling. Selected per run by
+    ``--jinja2`` on both ``genesispy`` and ``gvpy``; reflected in
+    ``Manager.syntax`` / ``_GvpyManager.syntax``.
     """
+```
+
+## genesispy.template.emitter
+
+```python
+def write_module(
+    vpy_path: str,
+    output_dir: str,
+    *,
+    output_suffix: str = ".v",
+    allowed: Iterable[str] | None = None,
+    syntax: str = "genesis",
+    comment: str = "//",
+) -> str:
+    """Forward ``syntax`` and ``comment`` to ``parse_vpy``; otherwise unchanged."""
 ```
 
 ## genesispy.template.runtime
