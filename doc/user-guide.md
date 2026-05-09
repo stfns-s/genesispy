@@ -72,17 +72,24 @@ Perl-era `//;` bodies as Python.
   `` `f"{x:02x}"` `` for hex. (The `pp(value, fmt)` helper from upstream gvpy is gvpy-only: available in
   `bin/gvpy`-driven flows, not in genesispy elaboration.)
 
-### Jinja2 syntax (opt-in: `--jinja2`)
+### j2 syntax (opt-in: `--j2`)
 
-For projects that prefer Jinja2-style delimiters, pass `--jinja2` (works on
-both `genesispy` and `gvpy`). The directive flavour changes; embedded code
-is **full Python** — there is no Jinja2 expression-language layer (no
-filters, no tests, no macros).
+`j2` is genesispy's Jinja2-*like* template flavour: it shares the
+delimiter set with the canonical Jinja2 library (`{% %}`, `{{ }}`,
+`{# #}`) but the embedded language is **full Python** with **expanded
+semantics** — arbitrary statements, multi-line expressions, and
+side-effecting calls inside `{% %}` and `{{ }}`. There is no Jinja2
+expression sub-language: no filter pipes, no `is`-tests, no macros,
+no `extends`/`block`/`include` keywords. Pass `--j2` (works on both
+`genesispy` and `gvpy`) to opt in.
 
-`--jinja2` mode shares the *delimiter set* with the canonical Jinja2
-library (`{% %}`, `{{ }}`, `{# #}`) but is **not source-compatible**.
-The embedded code is Python, not Jinja2's expression sub-language, so
-stock Jinja2 templates do not parse here as-is:
+> **`j2` is not stock Jinja2.** The two share delimiters, not
+> semantics. Templates written for the canonical Jinja2 library will
+> **not** parse here as-is. To port stock Jinja2 sources into the j2
+> dialect, see the companion CLI `genesispy-jinja2j2` (section 4 /
+> `--help`).
+
+The deltas vs stock Jinja2:
 
 - Block openers need a trailing `:` — `{% for x in xs: %}`, not
   `{% for x in xs %}` (Python syntax).
@@ -98,22 +105,23 @@ Conversely, anything inside `{% %}` / `{{ }}` is full Python — arbitrary
 statements, multi-line expressions, side-effecting calls — which stock
 Jinja2 forbids.
 
-| genesis (default)             | jinja2 (`--jinja2`)            |
+| genesis (default)             | j2 (`--j2`)                    |
 |-------------------------------|--------------------------------|
 | `//; <python stmt>` line      | `{% <python stmt> %}` line     |
 | `` `<python expr>` `` inline  | `{{ <python expr> }}` inline   |
 | (no comment form)             | `{# ... #}` (stripped)         |
 
-**Block close**: jinja2 mode accepts the bare keywords `{% endfor %}`,
-`{% endif %}`, and `{% endwhile %}` (matching real Jinja2 — recommended).
-The genesis-style sentinel-comment form `{% # endfor %}` etc. is also
-accepted for symmetry with `//; # endfor` in genesis mode. Both forms
-pop the parser-side block stack; an unmatched close in either spelling
-raises `ParseError("without matching opener")`. Indent rules and
-block-opener detection (trailing `:`) are identical to genesis mode.
+**Block close**: j2 mode accepts the bare keywords `{% endfor %}`,
+`{% endif %}`, and `{% endwhile %}` (matching the upstream Jinja2
+spelling — recommended). The genesis-style sentinel-comment form
+`{% # endfor %}` etc. is also accepted for symmetry with `//; # endfor`
+in genesis mode. Both forms pop the parser-side block stack; an
+unmatched close in either spelling raises
+`ParseError("without matching opener")`. Indent rules and block-opener
+detection (trailing `:`) are identical to genesis mode.
 
 The bare keywords `endfor` / `endif` / `endwhile` are reserved in
-jinja2-mode `{% %}` directives: a directive whose body strips to
+j2-mode `{% %}` directives: a directive whose body strips to
 exactly one of these names is always treated as a block close, not as
 a Python expression that evaluates a same-named local. Use a different
 name (e.g. `endfor_x = ...`) if you need to bind a variable that
@@ -125,7 +133,7 @@ whitespace-stripping behavior). All three forms may span multiple physical
 lines; tracebacks land on the opener line. Selecting the engine is per
 run — engines do not mix within a file.
 
-Example (genesis vs jinja2):
+Example (genesis vs j2):
 
 ```
 //; W = 4
@@ -145,7 +153,7 @@ Both produce identical Verilog.
 
 #### Brace collisions with Verilog source
 
-Any `{{` in plain text opens a jinja2 expression and consumes through the
+Any `{{` in plain text opens a j2 expression and consumes through the
 matching `}}` — including `{{` that the user intends as adjacent literal
 braces (genesis-flavour `.vpy` is unaffected). Common Verilog collisions:
 
@@ -157,7 +165,7 @@ braces (genesis-flavour `.vpy` is unaffected). Common Verilog collisions:
    (e.g. concat-of-concat `\{{a, b}}` → `{{a, b}}`).
 
 2. **Single literal `{` immediately before an inline expression** —
-   e.g. translating genesis `` {`i`{1'b0}} `` to jinja2 yields the
+   e.g. translating genesis `` {`i`{1'b0}} `` to j2 yields the
    ambiguous `{{{ i }}{1'b0}}`. There is no escape for a bare single
    `{`. Two workarounds:
 
@@ -173,11 +181,41 @@ braces (genesis-flavour `.vpy` is unaffected). Common Verilog collisions:
 A trailing `}}` in plain text needs no escape — only `{{` opens an
 expression.
 
-Each ported demo carries a jinja2 twin source tree under
+Each ported demo carries a j2 twin source tree under
 `demos/<demo>/genesis_src.j2/` (the gvpy demo carries
 `demos/gvpy/example.j2.vpy`), elaborated via `make gen-j2`. Outputs land in
 a parallel `genesis_synth.j2/` directory so the default `make gen` flow is
 untouched.
+
+#### Porting stock Jinja2 templates
+
+Templates written for the canonical Jinja2 library do not parse under
+`--j2` as-is (filter pipes, `is`-tests, missing trailing `:`, etc.).
+The companion CLI `genesispy-jinja2j2` mechanically rewrites the
+mappable cases:
+
+```sh
+# Strict (default): error on the first unmappable construct
+genesispy-jinja2j2 stock.j2 -o ported.vpy
+genesispy --j2 ported.vpy
+
+# Best-effort: emit `{# TODO(genesispy-jinja2j2): ... #}` placeholders
+# for unmappable constructs and warn
+genesispy-jinja2j2 --best-effort stock.j2 -o ported.vpy
+```
+
+Conversions: block openers gain a trailing `:`, filters become Python
+(`x | upper` -> `(x).upper()`, `xs | join(',')` -> `','.join(...)`,
+etc.), `is`-tests become Python predicates (`x is defined` ->
+`(x) is not None`), `{% set N = E %}` becomes `{% N = E %}`, and
+`{% include "f" %}` becomes `{% include("f") %}`. Macros, blocks,
+`extends`, `import`, `raw`, and custom filters are unmappable.
+
+The tool requires the optional `jinja2` dependency:
+
+```sh
+pip install 'genesispy[import-j2]'
+```
 
 ### Provided functions and short names
 
@@ -425,6 +463,10 @@ elaborate group: it skips the parse phase and runs only the elaborate step.
 - `--pythonpath DIR` -- prepend `DIR` to `sys.path` before parsing. Repeatable.
 - `--pymodule NAME` -- import a Python module before parsing. Repeatable.
 - `--parse-only` -- run only the parse phase (`.vpy` -> `.py`); skip elaboration.
+- `-j2`, `--j2` -- parse templates with the j2 (Jinja2-like) flavour. Shares delimiters with stock Jinja2
+  (`{% %}` / `{{ }}` / `{# #}`) but with expanded semantics: the embedded language is full Python (no filter
+  pipes, no `is`-tests, no macro/block/extends). Stock Jinja2 sources do not parse here as-is; see
+  `genesispy-jinja2j2` (section 1, "Porting stock Jinja2 templates").
 - `--gen-raw` -- also emit unprocessed Verilog into `<raw_dir>/`.
 - `--use-tmp` -- place the raw directory under a `/tmp` scratch dir.
 - `--keep-tmp` -- keep the `/tmp` scratch dir after exit (implies `--use-tmp`).
@@ -465,7 +507,7 @@ elaborate group: it skips the parse phase and runs only the elaborate step.
   a conflicting `--extension .vpy=...` entry.
 - `--comment PREFIX` -- line-comment prefix of the target output language (default: `//`). Sets both the
   template directive sentinel (`<comment>;` replaces `//;` in genesis flavour) and the prefix used by the
-  auto-generated module banner. Jinja2 mode is unaffected.
+  auto-generated module banner. j2 mode is unaffected.
 - `--stdout` -- write generated Verilog to stdout instead of `genesis_synth`/`genesis_verif`. Skips
   `.vlist`/`.depend`/clean script and removes the raw dir on exit.
 - `--product FILE` -- write Genesis2-style product file lists `FILE.synth` and `FILE.verif`.

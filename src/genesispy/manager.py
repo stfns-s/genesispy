@@ -83,7 +83,7 @@ class Manager:
         self.pymodules = list(args.pymodule)
         self.clean_flag = args.clean
         self.stdout_mode = args.stdout
-        self.syntax = "jinja2" if getattr(args, "jinja2", False) else "genesis"
+        self.syntax = "j2" if getattr(args, "j2", False) else "genesis"
         self.comment = getattr(args, "comment", "//")
 
         # Track every directory touched during elaboration for --pathfile.

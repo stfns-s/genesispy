@@ -32,7 +32,7 @@ def _reset_cache():
     cache.clear_all()
 
 
-SYNTAXES = ("genesis", "jinja2")
+SYNTAXES = ("genesis", "j2")
 
 
 def _run_demo(
@@ -48,8 +48,8 @@ def _run_demo(
     """Copy demo files into tmp_path, run genesispy on them, return synth dir.
 
     ``syntax`` selects the template flavour: ``"genesis"`` uses
-    ``genesis_src/`` (default ``//;`` / backtick directives); ``"jinja2"``
-    uses ``genesis_src.j2/`` and passes ``--jinja2``.
+    ``genesis_src/`` (default ``//;`` / backtick directives); ``"j2"``
+    uses ``genesis_src.j2/`` and passes ``--j2``.
     """
     src_subdir = "genesis_src" if syntax == "genesis" else "genesis_src.j2"
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -68,8 +68,8 @@ def _run_demo(
         for f in inputs:
             argv.extend(["--input", f])
         argv.extend(["--top", top, "--srcpath", src_subdir])
-        if syntax == "jinja2":
-            argv.append("--jinja2")
+        if syntax == "j2":
+            argv.append("--j2")
         if config_flag and config_file:
             argv.extend([config_flag, config_file])
         if extra_argv:

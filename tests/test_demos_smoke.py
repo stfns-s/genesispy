@@ -62,8 +62,8 @@ _JSON_FILES = _all((".json",))
 
 @pytest.mark.parametrize("path", _VPY_FILES, ids=lambda p: os.path.relpath(p, _DEMOS_ROOT))
 def test_vpy_parses_and_compiles(path: str) -> None:
-    # Files under a demo's genesis_src.j2/ subtree are jinja2-flavour twins.
-    syntax = "jinja2" if "genesis_src.j2" in path.split(os.sep) else "genesis"
+    # Files under a demo's genesis_src.j2/ subtree are j2-flavour twins.
+    syntax = "j2" if "genesis_src.j2" in path.split(os.sep) else "genesis"
     src = parse_vpy(path, syntax=syntax)
     # The parser output is the body of an ``execute()`` method.  Wrap in a
     # ``def`` so that ``return`` / indentation are valid.

@@ -1,4 +1,4 @@
-"""End-to-end check: a jinja2-syntax template runs through write_module +
+"""End-to-end check: a j2-syntax template runs through write_module +
 import + execute and produces the same Verilog as the genesis-syntax
 equivalent.
 """
@@ -29,7 +29,7 @@ def _reset_runtime_line_maps():
     yield
 
 
-def test_jinja2_e2e_matches_genesis(tmp_path):
+def test_j2_e2e_matches_genesis(tmp_path):
     """Same logical template in both flavours yields the same Verilog."""
     genesis_src = textwrap.dedent("""\
         //; W = 4
@@ -39,7 +39,7 @@ def test_jinja2_e2e_matches_genesis(tmp_path):
         //; # endfor
         endmodule
         """)
-    jinja2_src = textwrap.dedent("""\
+    j2_src = textwrap.dedent("""\
         {% W = 4 %}
         module top;
         {% for i in range(W): %}
@@ -50,13 +50,13 @@ def test_jinja2_e2e_matches_genesis(tmp_path):
     pg = tmp_path / "g.vpy"
     pg.write_text(genesis_src)
     pj = tmp_path / "j.vpy"
-    pj.write_text(jinja2_src)
+    pj.write_text(j2_src)
 
     out_g = tmp_path / "out_g"
     out_j = tmp_path / "out_j"
     py_g = emitter.write_module(str(pg), str(out_g), output_suffix=".v")
     py_j = emitter.write_module(
-        str(pj), str(out_j), output_suffix=".v", syntax="jinja2"
+        str(pj), str(out_j), output_suffix=".v", syntax="j2"
     )
 
     mod_g = _import_generated(py_g, "_g_g")

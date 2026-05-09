@@ -64,8 +64,8 @@ def _stage_demo(tmp: Path, demo: str) -> Path:
     return dst
 
 
-_SYNTAXES = ("genesis", "jinja2")
-_SRCPATH = {"genesis": "genesis_src", "jinja2": "genesis_src.j2"}
+_SYNTAXES = ("genesis", "j2")
+_SRCPATH = {"genesis": "genesis_src", "j2": "genesis_src.j2"}
 
 
 def _run_genesispy(workdir: Path, demo: str, syntax: str = "genesis") -> None:
@@ -74,8 +74,8 @@ def _run_genesispy(workdir: Path, demo: str, syntax: str = "genesis") -> None:
     for inp in inputs:
         argv.extend(["--input", inp])
     argv.extend(["--top", top, "--srcpath", _SRCPATH[syntax]])
-    if syntax == "jinja2":
-        argv.append("--jinja2")
+    if syntax == "j2":
+        argv.append("--j2")
     argv.extend(extra)
 
     cache.clear_all()
@@ -135,7 +135,7 @@ def _load_reference(demo: str) -> Tuple[set, Dict[str, set]]:
 @pytest.mark.parametrize("demo", sorted(_DEMO_ARGS))
 def test_parity_smoke(tmp_path: Path, demo: str, syntax: str) -> None:
     # The reference fixture set is Perl-derived (genesis-only), but the
-    # jinja2 twin sources are required to produce byte-equivalent output
+    # j2 twin sources are required to produce byte-equivalent output
     # post-normalisation -- same .vpy logic, different delimiter spelling.
     # So both flavours compare against the same fixture set.
     workdir = _stage_demo(tmp_path, demo)

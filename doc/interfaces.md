@@ -82,9 +82,10 @@ class Manager:
     # --no-module-cache. Read by unique_module.unique_inst[_param].
     no_module_cache: bool
     # Selected template directive flavour: "genesis" (default; //; lines
-    # and backtick inline expressions) or "jinja2" ({% %}, {{ }}, {# #}
-    # delimiters with full Python inside). Set from --jinja2; threaded
-    # through to parse_vpy / write_module / user_config._include.
+    # and backtick inline expressions) or "j2" (Jinja2-like flavour:
+    # {% %}, {{ }}, {# #} delimiters with full Python inside). Set from
+    # --j2; threaded through to parse_vpy / write_module /
+    # user_config._include.
     syntax: str
     # Line-comment prefix of the target output language (default "//").
     # Set from --comment. Threaded through parse_vpy / write_module /
@@ -307,18 +308,20 @@ def parse_vpy(
     ``syntax`` selects the directive flavour:
 
     * ``"genesis"`` (default): ``//; stmt`` lines and ``\`expr\``` inline.
-    * ``"jinja2"``: ``{% stmt %}`` lines, ``{{ expr }}`` inline,
-      ``{# comment #}`` stripped. Embedded code is full Python (no
-      Jinja2 expression-language layer); whitespace modifiers
-      ``{%-``/``-%}``/``{{-``/``-}}`` are accepted as a syntactic
-      no-op. All three forms may span multiple physical lines;
-      tracebacks land on the opener line.
+    * ``"j2"``: Jinja2-*like* flavour. ``{% stmt %}`` lines,
+      ``{{ expr }}`` inline, ``{# comment #}`` stripped. Shares the
+      delimiter set with the canonical Jinja2 library, but the
+      embedded language is full Python (no filter pipes, no
+      ``is``-tests, no macros, no ``extends``/``block``/``include``
+      etc.). Whitespace modifiers ``{%-``/``-%}``/``{{-``/``-}}`` are
+      accepted as a syntactic no-op. All three forms may span multiple
+      physical lines; tracebacks land on the opener line.
 
     ``comment`` is the line-comment prefix of the target output language
     (default ``"//"``, set per-run by ``--comment`` on both ``genesispy``
     and ``gvpy``). In genesis flavour it determines the directive
     sentinel: ``<comment>;`` lines are treated as Python; the default
-    ``"//"`` keeps the historical ``//;`` behaviour. Jinja2 flavour is
+    ``"//"`` keeps the historical ``//;`` behaviour. j2 flavour is
     unaffected. Threaded through ``Manager.comment`` /
     ``_GvpyManager.comment``.
 
@@ -326,14 +329,14 @@ def parse_vpy(
     ``# line N "path"`` traceback directives are identical across
     flavours. Block close: genesis mode uses the lower-indent +
     sentinel-comment convention (``//; # endfor`` / ``# endif`` /
-    ``# endwhile``). jinja2 mode accepts both the bare keyword form
+    ``# endwhile``). j2 mode accepts both the bare keyword form
     (``{% endfor %}`` / ``{% endif %}`` / ``{% endwhile %}``, matching
-    real Jinja2) and the sentinel-comment form (``{% # endfor %}`` etc.,
-    for symmetry with genesis mode). Both forms pop the same parser-side
-    block stack, so an unmatched close raises ``ParseError("without
-    matching opener")`` regardless of spelling. Selected per run by
-    ``--jinja2`` on both ``genesispy`` and ``gvpy``; reflected in
-    ``Manager.syntax`` / ``_GvpyManager.syntax``.
+    the upstream Jinja2 spelling) and the sentinel-comment form
+    (``{% # endfor %}`` etc., for symmetry with genesis mode). Both
+    forms pop the same parser-side block stack, so an unmatched close
+    raises ``ParseError("without matching opener")`` regardless of
+    spelling. Selected per run by ``--j2`` on both ``genesispy`` and
+    ``gvpy``; reflected in ``Manager.syntax`` / ``_GvpyManager.syntax``.
     """
 ```
 
@@ -390,3 +393,39 @@ def sha256_param_signature(module_name: str,
                            params: dict[str, object]) -> str:
     """Canonical-JSON SHA-256 hex digest, stable across Python runs."""
 ```
+
+## genesispy.tools.jinja2j2
+
+Stand-alone helper, not used by the elaboration core. Ports a stock-Jinja2
+template to genesispy's ``--j2`` dialect (Jinja2-style delimiters with
+full-Python embedded language). Requires the optional ``jinja2`` dependency
+(``pip install 'genesispy[import-j2]'``); a missing import surfaces as a
+clear error at CLI start. Driven by Jinja2's own parser to handle filter
+pipelines and ``is``-tests robustly. Block openers gain a trailing ``:``;
+filters and tests are translated to Python via fixed mapping tables;
+``{% set N = E %}`` becomes ``{% N = PY(E) %}``; ``{% include "f" %}``
+becomes ``{% include("f") %}``. Macros, blocks, ``extends``, ``import``,
+``raw``, custom filters, and complex ``include`` forms are unmappable;
+``--strict`` (default) errors on the first such construct,
+``--best-effort`` emits ``{# TODO(genesispy-jinja2j2): ... #}`` placeholders
+and warns. Top-level ``{# ... #}`` comments pass through verbatim;
+comments inside ``{% %}`` / ``{{ }}`` are not preserved (Jinja2's parser
+strips them).
+
+```python
+@dataclass
+class Issue:
+    line: int
+    col: int
+    reason: str
+
+def convert(source: str, *, strict: bool = True) -> tuple[str, list[Issue]]:
+    """Port `source` (stock Jinja2) to genesispy-j2.
+
+    On strict=True, raises tools.jinja2j2._Unmappable on the first
+    construct with no clean equivalent. On strict=False, emits TODO
+    comments and returns collected Issue records for the caller to
+    display. The companion CLI is `genesispy-jinja2j2` (entry point:
+    `tools.jinja2j2.main`)."""
+```
+

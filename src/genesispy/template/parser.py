@@ -44,17 +44,20 @@ becomes (modulo line comments)::
         # endfor
     # endif
 
-Jinja2 syntax (``syntax="jinja2"``)
------------------------------------
+j2 syntax (``syntax="j2"``)
+---------------------------
 
-Opt-in alternative directive style: ``{% python-stmt %}`` replaces ``//;``,
-``{{ python-expr }}`` replaces backticks, and ``{# comment #}`` is a comment
-that is stripped from output. Indent / block-opener / sentinel-close rules
-are identical. Embedded Python is full Python: there is no Jinja2
-expression-language layer (no filters, no tests, no macros). Whitespace
-modifiers ``{%-``, ``-%}``, ``{{-``, ``-}}`` are accepted as a syntactic
-no-op (no whitespace stripping). All three forms may span multiple physical
-lines; tracebacks land on the opener line.
+Opt-in alternative directive style. ``j2`` is a Jinja2-*like* flavour: it
+shares the delimiter set with the canonical Jinja2 library
+(``{% python-stmt %}`` replaces ``//;``, ``{{ python-expr }}`` replaces
+backticks, and ``{# comment #}`` is a comment that is stripped from
+output) but the embedded language is full Python -- no Jinja2 expression
+sub-language (no filter pipes, no ``is``-tests, no macros, no
+``extends``/``block``/``include`` etc.). Indent, block-opener (trailing
+``:``), and sentinel-close rules are identical to genesis flavour.
+Whitespace modifiers ``{%-``, ``-%}``, ``{{-``, ``-}}`` are accepted as
+a syntactic no-op (no whitespace stripping). All three forms may span
+multiple physical lines; tracebacks land on the opener line.
 
 Legacy extensions
 -----------------
@@ -259,9 +262,9 @@ def parse_vpy(
     templates.
 
     ``syntax`` selects the directive flavour: ``"genesis"`` (default) uses
-    ``//;`` line directives and backtick inline expressions; ``"jinja2"``
-    uses ``{% %}``, ``{{ }}``, ``{# #}`` with full Python inside the
-    delimiters.
+    ``//;`` line directives and backtick inline expressions; ``"j2"`` is
+    the Jinja2-like flavour (``{% %}``, ``{{ }}``, ``{# #}`` delimiters
+    with full Python inside).
     """
     _check_extension(path, allowed)
 
@@ -269,13 +272,13 @@ def parse_vpy(
         with open(path, "r", encoding="utf-8") as fh:
             raw_lines = fh.readlines()
         out_lines = _parse_vpy_genesis(path, raw_lines, comment + ";")
-    elif syntax == "jinja2":
+    elif syntax == "j2":
         with open(path, "r", encoding="utf-8") as fh:
             source = fh.read()
-        out_lines = _parse_vpy_jinja2(path, source)
+        out_lines = _parse_vpy_j2(path, source)
     else:
         raise ValueError(
-            f"parse_vpy: unknown syntax {syntax!r}; expected 'genesis' or 'jinja2'"
+            f"parse_vpy: unknown syntax {syntax!r}; expected 'genesis' or 'j2'"
         )
 
     return "\n".join(out_lines) + ("\n" if out_lines else "")
@@ -357,7 +360,7 @@ def _parse_vpy_genesis(
 
 
 # ---------------------------------------------------------------------------
-# Jinja2-flavour scanner
+# j2 (Jinja2-like) flavour scanner
 # ---------------------------------------------------------------------------
 
 def _emit_call(pieces: List, indent: int) -> str:
@@ -456,8 +459,8 @@ def _scan_python_close(
 _J2_END_KEYWORDS = frozenset({"endfor", "endif", "endwhile"})
 
 
-def _parse_vpy_jinja2(path: str, source: str) -> List[str]:
-    """Jinja2-flavour stream scanner. Returns out_lines."""
+def _parse_vpy_j2(path: str, source: str) -> List[str]:
+    """j2 (Jinja2-like) flavour stream scanner. Returns out_lines."""
     out_lines: List[str] = []
     # Indent state (mirrors genesis-mode tracking).
     emit_indent = 0

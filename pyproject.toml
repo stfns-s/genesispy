@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesispy"
-version = "0.2.0"
+version = "0.2.1"
 description = "Genesis Chip Generator, Python port of Genesis2"
 requires-python = ">=3.12"
 dependencies = [
@@ -16,10 +16,14 @@ dependencies = [
 dev = [
     "pytest>=7",
 ]
+import-j2 = [
+    "jinja2>=3.1",
+]
 
 [project.scripts]
 genesispy = "genesispy.cli:main"
 gvpy = "genesispy.gvpy_cli:main"
+genesispy-jinja2j2 = "genesispy.tools.jinja2j2:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

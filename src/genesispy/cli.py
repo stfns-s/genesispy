@@ -309,14 +309,18 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "-j2", "--jinja2",
+        "-j2", "--j2",
         action="store_true",
         default=False,
         help=(
-            "Parse templates with Jinja2 delimiters: '{%% stmt %%}' replaces "
-            "'//; stmt', '{{ expr }}' replaces backticks, and '{# comment #}' "
-            "is a stripped comment. Embedded code is full Python (no Jinja2 "
-            "expression-language layer)."
+            "Parse templates with the j2 (Jinja2-like) flavour. Shares "
+            "delimiters with stock Jinja2 -- '{%% stmt %%}' replaces "
+            "'//; stmt', '{{ expr }}' replaces backticks, '{# comment #}' "
+            "is a stripped comment -- but with expanded semantics: the "
+            "embedded language is full Python (no filter pipes, no "
+            "'is'-tests, no macro/block/extends). Stock Jinja2 sources "
+            "do not parse here as-is; see 'genesispy-jinja2j2' to port "
+            "them."
         ),
     )
     parser.add_argument(

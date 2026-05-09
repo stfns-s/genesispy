@@ -21,7 +21,7 @@ $(OUT): $(TOP).vpy
 gen-j2: $(OUT_J2)
 
 $(OUT_J2): $(SRC_J2)
-	$(GVPY) --jinja2 --gvpy-strict --mname $(TOP) \
+	$(GVPY) --j2 --gvpy-strict --mname $(TOP) \
 	    --parameter WIDTH=$(WIDTH) --parameter DEPTH=$(DEPTH) \
 	    $< > $@
 
@@ -72,7 +72,7 @@ endif
 help:
 	@echo "gvpy demo targets:"
 	@echo "  gen     - run gvpy on $(TOP).vpy (writes $(OUT))"
-	@echo "  gen-j2  - run gvpy --jinja2 on $(SRC_J2) (writes $(OUT_J2))"
+	@echo "  gen-j2  - run gvpy --j2 on $(SRC_J2) (writes $(OUT_J2))"
 	@echo "  vlint   - lint $(OUT) (VERILINT=slang|verilator; default verilator)"
 	@echo "  lint    - alias for vlint"
 	@echo "  sim     - run simulation on $(OUT) (SIMULATOR=xrun|vcs|vlog|verilator|iverilog; default verilator)"

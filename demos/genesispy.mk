@@ -92,7 +92,7 @@ $(VLOG_VF): $(VLIST)
 gen-j2: $(VLIST_J2) $(VLOG_VF_J2)
 
 $(VLIST_J2): $(SRC_FILES_J2) $(CONFIG_DEP)
-	$(GENESISPY) --jinja2 $(GEN_INPUT_FLAGS) --top $(TOP) $(CONFIG_FLAG) \
+	$(GENESISPY) --j2 $(GEN_INPUT_FLAGS) --top $(TOP) $(CONFIG_FLAG) \
 	    --srcpath $(SRCDIR_J2) --outputdir $(OUTPUTDIR_J2) $(EXTRA_FLAGS)
 
 $(VLOG_VF_J2): $(VLIST_J2)
@@ -155,7 +155,7 @@ ifndef HELP_LOCAL
 help:
 	@echo "genesispy demo targets:"
 	@echo "  gen     - elaborate $(TOP) from genesis_src/$(INPUTS) (default)"
-	@echo "  gen-j2  - elaborate $(TOP) from $(SRCDIR_J2)/$(INPUTS) using --jinja2 (outputs under $(OUTPUTDIR_J2)/)"
+	@echo "  gen-j2  - elaborate $(TOP) from $(SRCDIR_J2)/$(INPUTS) using --j2 (outputs under $(OUTPUTDIR_J2)/)"
 	@echo "  pylint  - py_compile generated Python modules"
 	@echo "  vlint   - lint generated Verilog (VERILINT=slang|verilator; default verilator)"
 	@echo "  lint    - run pylint + vlint"

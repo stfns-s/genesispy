@@ -114,7 +114,7 @@ def write_module(
     is stamped onto the generated class. ``allowed`` is forwarded to
     :func:`parse_vpy` for input-extension validation (defaults to the
     built-in ``.vpy``/``.svpy`` set). ``syntax`` selects the directive
-    flavour (``"genesis"`` or ``"jinja2"``).
+    flavour (``"genesis"`` or ``"j2"``).
     """
     os.makedirs(output_dir, exist_ok=True)
     body = parse_vpy(vpy_path, allowed, syntax=syntax, comment=comment)

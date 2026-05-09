@@ -29,9 +29,9 @@ def test_init_from_namespace_defaults():
     assert m.syntax == "genesis"
 
 
-def test_jinja2_flag_sets_syntax():
-    m = _make_manager(["--jinja2"])
-    assert m.syntax == "jinja2"
+def test_j2_flag_sets_syntax():
+    m = _make_manager(["--j2"])
+    assert m.syntax == "j2"
 
 
 def test_init_propagates_cli_values():

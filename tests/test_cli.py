@@ -39,7 +39,7 @@ def test_defaults():
     assert ns.synth_dir is None
     assert ns.verif_dir is None
     assert ns.stdout is False
-    assert ns.jinja2 is False
+    assert ns.j2 is False
 
 
 def test_stdout_flag():
@@ -47,14 +47,14 @@ def test_stdout_flag():
     assert ns.stdout is True
 
 
-def test_jinja2_flag():
-    ns = parse_args(["--jinja2"])
-    assert ns.jinja2 is True
+def test_j2_flag():
+    ns = parse_args(["--j2"])
+    assert ns.j2 is True
 
 
-def test_jinja2_short_flag():
+def test_j2_short_flag():
     ns = parse_args(["-j2"])
-    assert ns.jinja2 is True
+    assert ns.j2 is True
 
 
 def test_input_multi():
