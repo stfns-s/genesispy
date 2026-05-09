@@ -331,7 +331,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--version",
+        "-v", "--version",
         action="version",
         version=f"genesispy {__version__}",
     )

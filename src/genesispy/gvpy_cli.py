@@ -262,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("-h", "--help", action="help")
     parser.add_argument(
-        "--version",
+        "-v", "--version",
         action="version",
         version=f"gvpy {__version__}",
     )
