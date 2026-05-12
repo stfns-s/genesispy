@@ -15,11 +15,11 @@ def test_priority_ordering():
     # Matches Perl Genesis2: CFG < XML < CMDLN.
     # Numeric values: CFG=10, XML=20, CMDLN=30.
     assert int(Priority.EXTERNAL_CONFIG) == 10
-    assert int(Priority.EXTERNAL_XML) == 20
+    assert int(Priority.EXTERNAL_PARAM_FILE) == 20
     assert int(Priority.CMD_LINE) == 30
     assert (
         Priority.EXTERNAL_CONFIG
-        < Priority.EXTERNAL_XML
+        < Priority.EXTERNAL_PARAM_FILE
         < Priority.CMD_LINE
     )
 
@@ -188,13 +188,13 @@ def test_xml_explicit_null_distinguishable_from_absent(tmp_path):
 
     # Explicit null: present, value None.
     assert ch.exists_configuration("EXPLICIT_NULL") is True
-    assert ch.get_xml_param_val("EXPLICIT_NULL") is None
+    assert ch.get_param_val("EXPLICIT_NULL") is None
 
     # Truly absent name: not present.
     assert ch.exists_configuration("NEVER_SET") is False
 
 
-def test_get_xml_param_val_malformed_parameter_returns_none(tmp_path):
+def test_get_param_val_malformed_parameter_returns_none(tmp_path):
     """A Parameter with no value-bearing key is treated as missing."""
     json_path = tmp_path / "c.json"
     json_path.write_text(
@@ -202,7 +202,7 @@ def test_get_xml_param_val_malformed_parameter_returns_none(tmp_path):
     )
     ch = ConfigHandler(_make_manager())
     ch.read_json(str(json_path))
-    assert ch.get_xml_param_val("X") is None
+    assert ch.get_param_val("X") is None
 
 
 def test_read_json_wraps_decode_error(tmp_path):
@@ -230,7 +230,7 @@ def test_json_overrides_cfg(tmp_path):
 
     ch = ConfigHandler(_make_manager())
     ch.read_json(str(json_path))
-    assert ch.get_xml_param_val("WIDTH") == 4
+    assert ch.get_param_val("WIDTH") == 4
     ch.read_cfg(str(cfg_path))
     assert ch.get_cfg_param_val("WIDTH") == 16
     # JSON outranks .cfg (matches Perl Genesis2).
@@ -251,7 +251,7 @@ def test_cmdln_overrides_json_overrides_cfg(tmp_path):
     ch.read_json(str(json_path))
     ch.read_cfg(str(cfg_path))
     assert ch.get_configuration("X") == 99
-    assert ch.get_xml_param_val("X") == 1
+    assert ch.get_param_val("X") == 1
     assert ch.get_cfg_param_val("X") == 2
     assert ch.get_cmdln_param_val("X") == 99
 

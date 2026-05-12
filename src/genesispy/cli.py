@@ -106,7 +106,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "Write a HierarchyTop snapshot of the elaborated module tree. "
             "Produces three files: FILE (full), small_<basename(FILE)> "
             "(no ImmutableParameters), tiny_<basename(FILE)> "
-            "(only user-overridden params, priority >= EXTERNAL_XML). "
+            "(only user-overridden params, priority >= EXTERNAL_PARAM_FILE). "
             "Requires elaboration; skipped under --parse-only."
         ),
     )

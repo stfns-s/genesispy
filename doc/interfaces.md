@@ -143,14 +143,14 @@ class ConfigHandler:
     # ``top_inst`` -- port of Perl ConfigHandler.pm::WriteXml /
     # extract_stats. Emits three sibling files in dirname(path):
     # ``path`` (full), ``small_<basename>`` (no ImmutableParameters),
-    # ``tiny_<basename>`` (priority >= EXTERNAL_XML only). ``top_inst``
+    # ``tiny_<basename>`` (priority >= EXTERNAL_PARAM_FILE only). ``top_inst``
     # is required; passing None raises GenesisPyError.
     def write_json(self, path: str, top_inst: "UniqueModule") -> None: ...
 
     # Legacy name; underlying store is JSON-only. Returns None for absence
     # OR for an explicit null value; use exists_configuration to
     # disambiguate.
-    def get_xml_param_val(self, name: str) -> object | None: ...
+    def get_param_val(self, name: str) -> object | None: ...
     def get_cfg_param_val(self, name: str) -> object | None: ...
     def get_cmdln_param_val(self, name: str) -> object | None: ...
 
@@ -179,7 +179,7 @@ class ConfigHandler:
     # Variant returning ``(value, priority)`` so callers can stamp the
     # winning source's priority onto a UniqueModule param. Used by
     # UniqueModule.parameter() so the resulting _params['priority']
-    # reflects EXTERNAL_XML / EXTERNAL_CONFIG / CMD_LINE rather than
+    # reflects EXTERNAL_PARAM_FILE / EXTERNAL_CONFIG / CMD_LINE rather than
     # the declaration default (drives the --jsonout tiny variant).
     def get_configuration_with_priority(
         self, name: str, *, instance_path: tuple[str, ...] | None = None,

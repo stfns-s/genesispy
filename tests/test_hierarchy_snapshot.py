@@ -115,12 +115,12 @@ def test_tiny_keeps_only_user_overrides() -> None:
     children = snap["HierarchyTop"]["SubInstances"]
     by_name = {c["InstanceName"]: c for c in children}
 
-    # u_a: WIDTH (CMD_LINE) and DEBUG (INHERITANCE) both >= EXTERNAL_XML.
+    # u_a: WIDTH (CMD_LINE) and DEBUG (INHERITANCE) both >= EXTERNAL_PARAM_FILE.
     # Pre-#81 fix DEBUG was dropped via the immut bucket.
     assert {p["Name"] for p in by_name["u_a"]["Parameters"]} == {"WIDTH", "DEBUG"}
     assert "ImmutableParameters" not in by_name["u_a"]
 
-    # u_c: WIDTH at EXTERNAL_CONFIG (< EXTERNAL_XML) -> empty -> pruned.
+    # u_c: WIDTH at EXTERNAL_CONFIG (< EXTERNAL_PARAM_FILE) -> empty -> pruned.
     assert "u_c" not in by_name
 
 

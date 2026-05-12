@@ -21,7 +21,7 @@ class StubConfigHandler:
         self._values: Dict[str, Any] = dict(values or {})
 
     # Match doc/interfaces.md ConfigHandler API surface used by UniqueModule.
-    def get_xml_param_val(self, name: str) -> Any:
+    def get_param_val(self, name: str) -> Any:
         return None
 
     def get_cfg_param_val(self, name: str) -> Any:

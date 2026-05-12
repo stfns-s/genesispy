@@ -72,7 +72,7 @@ def test_include_dispatches_json(tmp_path):
 
     ch = _ch()
     ch.read_cfg(str(cfg_p))
-    assert ch.get_xml_param_val("BAR") == 22
+    assert ch.get_param_val("BAR") == 22
 
 
 def test_include_dispatches_uppercase_extension(tmp_path):
@@ -85,7 +85,7 @@ def test_include_dispatches_uppercase_extension(tmp_path):
 
     ch = _ch()
     ch.read_cfg(str(cfg_p))
-    assert ch.get_xml_param_val("BAZ") == 33
+    assert ch.get_param_val("BAZ") == 33
 
 
 def test_include_dispatches_cfg(tmp_path):
@@ -100,7 +100,7 @@ def test_include_dispatches_cfg(tmp_path):
 
 
 def test_include_json_then_json_merges(tmp_path):
-    """Repeated JSON includes deep-merge into the same `_xml_db`."""
+    """Repeated JSON includes deep-merge into the same `_param_db`."""
     json_a = tmp_path / "a.json"
     json_a.write_text(json.dumps({
         "HierarchyTop": {"Parameters": [{"Name": "FROM_A", "__Val__": 1}]}
@@ -117,8 +117,8 @@ def test_include_json_then_json_merges(tmp_path):
 
     ch = _ch()
     ch.read_cfg(str(cfg_p))
-    assert ch.get_xml_param_val("FROM_A") == 1
-    assert ch.get_xml_param_val("FROM_B") == 2
+    assert ch.get_param_val("FROM_A") == 1
+    assert ch.get_param_val("FROM_B") == 2
 
 
 # --------------------------------------------------------------------------
@@ -147,4 +147,4 @@ def test_include_relative_json_resolves_via_cfgpath(tmp_path):
 
     ch = _ch_with_cfg_path([str(cfgs)])
     ch.read_cfg(str(outer))
-    assert ch.get_xml_param_val("S") == 5
+    assert ch.get_param_val("S") == 5
