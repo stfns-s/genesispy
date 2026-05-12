@@ -26,7 +26,7 @@ def read_json(path: str) -> dict:
     The JSON file's top-level object is expected to have a single root key
     (mirroring a Genesis2-style config root), e.g. ``{"HierarchyTop":
     {...}}``. The returned dict is stored as-is in
-    ``ConfigHandler._xml_db``; no structural translation is performed.
+    ``ConfigHandler._param_db``; no structural translation is performed.
     """
     if not os.path.isfile(path):
         raise FileNotFoundError(path)

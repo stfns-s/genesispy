@@ -3,7 +3,7 @@
 Combines three configuration sources with a priority hierarchy:
 
 * ``.cfg`` Python script configuration (lowest, ``EXTERNAL_CONFIG``)
-* JSON configuration (``EXTERNAL_XML`` -- legacy enum name)
+* JSON parameter file (``EXTERNAL_PARAM_FILE``)
 * command-line ``-parameter NAME=VAL`` overrides (highest)
 
 Higher-priority sources override lower ones when
@@ -11,8 +11,7 @@ Higher-priority sources override lower ones when
 
 XML support has been factored out to ``genesispy.tools.xml_json``; convert
 legacy ``.xml`` configs to JSON via ``genesispy-xml2json`` before feeding
-them to genesispy. The internal store is still named ``_xml_db`` for
-historical reasons.
+them to genesispy.
 """
 
 from __future__ import annotations
@@ -37,14 +36,14 @@ if TYPE_CHECKING:  # pragma: no cover
 class Priority(IntEnum):
     """Configuration priority ladder used by ``get_configuration``.
 
-    Order matches Perl Genesis2: ``CMDLN > XML (JSON) > CFG``
-    (CMD_LINE=30, EXTERNAL_XML=20, EXTERNAL_CONFIG=10). Numerics are
+    Order matches Perl Genesis2: ``CMDLN > PARAM_FILE > CFG``
+    (CMD_LINE=30, EXTERNAL_PARAM_FILE=20, EXTERNAL_CONFIG=10). Numerics are
     spaced by 10 to leave room for future tiers.
     """
 
     DECLARATION = 5
     EXTERNAL_CONFIG = 10    # values from read_cfg / configure()
-    EXTERNAL_XML = 20       # values from read_json (legacy name)
+    EXTERNAL_PARAM_FILE = 20  # values from read_json
     CMD_LINE = 30           # values from -parameter NAME=VAL
     INHERITANCE = 40        # parent-kwarg pass via override_param
     IMMUTABLE = 50          # force_param: pinned, top-of-ladder
@@ -169,14 +168,14 @@ _PARAM_VALUE_KEYS = frozenset(
     {"__Val__", "__ArrayType__", "__HashType__"}
 )
 
-# Sentinel returned by _xml_find_param when no matching Parameter exists.
+# Sentinel returned by _find_param when no matching Parameter exists.
 # A separate sentinel lets callers tell "absent" apart from "explicitly
 # set to JSON null", which the priority resolution in get_configuration
 # previously collapsed.
 _MISSING: Any = object()
 
 
-def _xml_find_param(node: Any, name: str) -> Any:
+def _find_param(node: Any, name: str) -> Any:
     """Recursively search the JSON-native db tree for a Parameter element
     with ``Name == name`` and return its value (``__Val__`` /
     ``__ArrayType__`` / ``__HashType__``). Returns :data:`_MISSING` when
@@ -199,12 +198,12 @@ def _xml_find_param(node: Any, name: str) -> Any:
         for k, v in node.items():
             if k in _PARAM_VALUE_KEYS:
                 continue
-            r = _xml_find_param(v, name)
+            r = _find_param(v, name)
             if r is not _MISSING:
                 return r
     elif isinstance(node, list):
         for v in node:
-            r = _xml_find_param(v, name)
+            r = _find_param(v, name)
             if r is not _MISSING:
                 return r
     return _MISSING
@@ -216,7 +215,7 @@ def _deep_merge(dst: dict, src: dict) -> dict:
     Dicts merge key-by-key; matching list values concatenate; everything
     else in ``src`` overwrites ``dst``. Used by ConfigHandler.read_json
     (also reachable via ``include('foo.json')`` from a ``.cfg``) so a
-    sequence of include() calls accumulates into the same `_xml_db`
+    sequence of include() calls accumulates into the same `_param_db`
     rather than clobbering prior reads.
     """
     for k, v in src.items():
@@ -241,7 +240,7 @@ class ConfigHandler:
         self.debug = 0
 
         # Backing stores.
-        self._xml_db: dict = {}
+        self._param_db: dict = {}
         self._cfg_db: dict[str, dict] = {}
         self._cmdln_db: dict[str, dict] = {}
         # Hierarchical (instance_path, param_name) -> entry. Populated by
@@ -311,7 +310,7 @@ class ConfigHandler:
     def read_json(self, path: str) -> None:
         """Read a JSON config file and merge it into the in-memory database.
 
-        Repeated calls deep-merge into ``_xml_db`` (matching dicts merge
+        Repeated calls deep-merge into ``_param_db`` (matching dicts merge
         key-by-key; matching lists concatenate).
         """
         try:
@@ -324,10 +323,10 @@ class ConfigHandler:
                 location=f"{path}:{exc.lineno}",
             ) from exc
         self._json_in_filenames.append(path)
-        if not self._xml_db:
-            self._xml_db = new_db
+        if not self._param_db:
+            self._param_db = new_db
         else:
-            _deep_merge(self._xml_db, new_db)
+            _deep_merge(self._param_db, new_db)
 
     def write_json(self, path: str, top_inst: Any = None) -> None:
         """Serialise the elaborated module tree at ``top_inst`` as a
@@ -339,7 +338,7 @@ class ConfigHandler:
         * ``path``                       -- full snapshot
         * ``small_<basename(path)>``     -- omits ``ImmutableParameters``
         * ``tiny_<basename(path)>``      -- only user-overridden params
-                                            (priority >= EXTERNAL_XML)
+                                            (priority >= EXTERNAL_PARAM_FILE)
 
         ``top_inst`` is required (``Manager._top_inst`` after
         :meth:`Manager.gen_verilog`). Passing ``None`` raises
@@ -424,19 +423,19 @@ class ConfigHandler:
     # ------------------------------------------------------------------ #
     # Per-source value lookup                                            #
     # ------------------------------------------------------------------ #
-    def get_xml_param_val(self, name: str) -> Optional[object]:
+    def get_param_val(self, name: str) -> Optional[object]:
         """Return the JSON-config-sourced value for ``name``, or None.
 
         Legacy name: the underlying store is now JSON-only. A returned
         ``None`` may mean either "not found" or "found and explicitly
         null" -- callers that need to distinguish should use
-        :meth:`_xml_lookup` (sentinel-aware) or
+        :meth:`_param_lookup` (sentinel-aware) or
         :meth:`exists_configuration`.
         """
-        val = self._xml_lookup(name)
+        val = self._param_lookup(name)
         return None if val is _MISSING else val
 
-    def _xml_lookup(self, name: str) -> Any:
+    def _param_lookup(self, name: str) -> Any:
         """Return the JSON-config-sourced value for ``name``, or
         :data:`_MISSING`.
 
@@ -444,9 +443,9 @@ class ConfigHandler:
         :meth:`exists_configuration` to disambiguate explicit JSON null
         from absence.
         """
-        if not self._xml_db:
+        if not self._param_db:
             return _MISSING
-        return _xml_find_param(self._xml_db, name)
+        return _find_param(self._param_db, name)
 
     def get_cfg_param_val(self, name: str) -> Optional[object]:
         """Return the .cfg-sourced value for ``name``, or None."""
@@ -611,9 +610,9 @@ class ConfigHandler:
         if cfg is not None:
             candidates.append((cfg["priority"], cfg["value"]))
 
-        xml_val = self._xml_lookup(name)
-        if xml_val is not _MISSING:
-            candidates.append((int(Priority.EXTERNAL_XML), xml_val))
+        param_val = self._param_lookup(name)
+        if param_val is not _MISSING:
+            candidates.append((int(Priority.EXTERNAL_PARAM_FILE), param_val))
 
         if not candidates:
             return None, None
@@ -639,7 +638,7 @@ class ConfigHandler:
                 return True
         if name in self._cmdln_db or name in self._cfg_db:
             return True
-        return self._xml_lookup(name) is not _MISSING
+        return self._param_lookup(name) is not _MISSING
 
     def remove_configuration(self, name: str) -> None:
         """Remove ``name`` from the .cfg database (XML and cmdln untouched).
@@ -681,9 +680,9 @@ class ConfigHandler:
         else:
             out.append("  (empty)")
         out.append("")
-        out.append("--- JSON (priority EXTERNAL_XML) ---")
-        if self._xml_db:
-            out.append(pprint.pformat(self._xml_db, width=100))
+        out.append("--- JSON (priority EXTERNAL_PARAM_FILE) ---")
+        if self._param_db:
+            out.append(pprint.pformat(self._param_db, width=100))
         else:
             out.append("  (empty)")
         out.append("")
@@ -715,7 +714,7 @@ def extract_stats(top_inst: Any, *, variant: str = "full") -> dict:
       ImmutableParameters and the full subinstance tree.
     * ``"small"`` -- Parameters and full subinstance tree; no
       ImmutableParameters.
-    * ``"tiny"``  -- only Parameters with priority >= EXTERNAL_XML
+    * ``"tiny"``  -- only Parameters with priority >= EXTERNAL_PARAM_FILE
       (JSON, CLI, parent-kwargs, and force-pinned overrides;
       ``.cfg`` ``configure(...)`` overrides at ``EXTERNAL_CONFIG`` are
       excluded by design — mirrors Perl
@@ -781,14 +780,14 @@ def _split_params(
     live: list[dict] = []
     immut: list[dict] = []
     decl = int(Priority.DECLARATION)
-    ext_xml = int(Priority.EXTERNAL_XML)
+    ext_param = int(Priority.EXTERNAL_PARAM_FILE)
     for name, p in params.items():
         prio = int(p.get("priority", 0))
         state = p.get("state")
         # NeverUsed filter: declared but never read/overridden.
         if prio <= decl and state == "DEFINED":
             continue
-        if variant == "tiny" and prio < ext_xml:
+        if variant == "tiny" and prio < ext_param:
             continue
         item: dict[str, Any] = {"Name": name, "Val": p.get("value")}
         doc = p.get("doc")

@@ -298,7 +298,7 @@ A parameter's value is determined in the following order (lowest to highest):
 (Genesis2 had a sixth tier, `ImmutableParameters` in JSON, that pinned values past the parent's kwargs.
 genesispy does not honour the priority elevation: values nested under `ImmutableParameters` in input JSON
 are still read (the lookup recurses structurally and matches on `Name`), but they sit at the same
-`EXTERNAL_XML` tier as `Parameters`, so parent kwargs and CLI overrides still beat them.)
+`EXTERNAL_PARAM_FILE` tier as `Parameters`, so parent kwargs and CLI overrides still beat them.)
 
 **Example:** trace the value of parameter `COND` on the elaborated sub-instance `top.wallace_2` (the
 `wallace_2` instance created by `unique_inst('wallace', 'wallace_2', N=2)` in `top.vpy`). Each row below sets
@@ -396,7 +396,7 @@ the demo falls back to in-source defaults. With them, you get a different RTL.
 - `WALLACES_WIDTHS` is an `"__ArrayType__": [...]` -- a plain JSON list, fed into `top.vpy`'s outer loop. (The
   double-underscored sentinels prevent collisions with user hash keys.)
 - Each `wallace_<N>` entry under `SubInstances` carries `ImmutableParameters` (the `N` override -- read at
-  `EXTERNAL_XML`, same tier as `Parameters`; the per-instance kwargs from `unique_inst('wallace',
+  `EXTERNAL_PARAM_FILE`, same tier as `Parameters`; the per-instance kwargs from `unique_inst('wallace',
   'wallace_<N>', N=<N>)` in `top.vpy` set the same value at the `INHERITANCE` tier),
   `Parameters` (`COND`, `ParamHash`, plus showcase keys like `ParWithMin`, `ParamComplexStruct`),
   and a `UniqueModuleName` (`wallace_unq1` ... `wallace_unq5`).
@@ -482,7 +482,7 @@ elaborate group: it skips the parse phase and runs only the elaborate step.
   first.
 - `--jsonout FILE` -- write a `HierarchyTop` snapshot of the elaborated module tree (port of Perl
   `-hierarchy`). Emits three files in `dirname(FILE)`: `FILE` (full), `small_<basename(FILE)>` (no
-  `ImmutableParameters`), `tiny_<basename(FILE)>` (only params with priority `>= EXTERNAL_XML` -- JSON, CLI,
+  `ImmutableParameters`), `tiny_<basename(FILE)>` (only params with priority `>= EXTERNAL_PARAM_FILE` -- JSON, CLI,
   parent-kwargs, and force-pinned; `.cfg` `configure(...)` overrides at `EXTERNAL_CONFIG` are excluded by
   design, matching Perl `ConfigHandler.pm::extract_stats`). Requires elaboration; errors if no top instance
   was built.
@@ -570,7 +570,7 @@ behaviour-affecting incompatibilities -- unique-module hash, JSON-only configs (
 - **`--jsonout`** (Perl `-hierarchy`) -- same three-file output (`<f>` / `small_<f>` / `tiny_<f>`) and same
   `HierarchyTop` schema, but emitted as JSON (use `genesispy-json2xml` for XML). The `tiny` variant filters by
   `priority
-  >= EXTERNAL_XML`; genesispy's flat-key config lookup cannot replicate Perl's `inherit_param`-aware priority
+  >= EXTERNAL_PARAM_FILE`; genesispy's flat-key config lookup cannot replicate Perl's `inherit_param`-aware priority
   assignment, so the `tiny` set may be a strict superset of Perl's (params Perl tags as inherited may appear
   as user-overrides in genesispy).
 
