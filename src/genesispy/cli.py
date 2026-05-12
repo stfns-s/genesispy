@@ -220,6 +220,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Also emit the unprocessed Verilog into raw_dir (./genesis_raw/ by default; relocated under --use-tmp).",
     )
     parser.add_argument(
+        "--raw-dir",
+        dest="raw_dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Override the raw_dir location (default: ./genesis_raw). "
+            "Mutually exclusive with --use-tmp/--keep-tmp. Orthogonal to "
+            "--gen-raw: without --gen-raw the directory is still removed "
+            "after elaboration."
+        ),
+    )
+    parser.add_argument(
         "--use-tmp",
         dest="use_tmp",
         action="store_true",
@@ -470,6 +482,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         parser.error("--parse-only and --generate-only are mutually exclusive")
     if args.keep_tmp:
         args.use_tmp = True
+    if args.raw_dir is not None and args.use_tmp:
+        parser.error("--raw-dir is mutually exclusive with --use-tmp/--keep-tmp")
     # -sv is shorthand for '--extension .vpy=.sv'. If the user already passed
     # any explicit .vpy mapping with a different output extension, raise; if
     # they passed exactly .vpy=.sv it's a redundant no-op.

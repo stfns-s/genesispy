@@ -44,6 +44,11 @@ class Manager:
     sources_path: list[str]
     includes_path: list[str]
     output_dir: str
+    # Scratch directory for generated .py files and (when --gen-raw is set)
+    # raw Verilog dumps. Defaults to "./genesis_raw"; overridden by --raw-dir
+    # DIR; relocated under <tmp_scratch>/genesis_raw when --use-tmp is set
+    # (--raw-dir and --use-tmp are mutually exclusive). Removed by
+    # flush_outputs/clean unless --gen-raw kept it on disk.
     raw_dir: str
     synth_dir: str
     verif_dir: str

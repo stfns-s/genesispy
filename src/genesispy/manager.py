@@ -99,7 +99,7 @@ class Manager:
                 )
         else:
             self._tmp_scratch = None
-            self.raw_dir = "genesis_raw"
+            self.raw_dir = getattr(args, "raw_dir", None) or "genesis_raw"
 
         # errors._LOG_FH is a process global: one Manager per process, same
         # single-threading caveat as cache.MODULE_CACHE.
