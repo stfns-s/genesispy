@@ -31,6 +31,7 @@ def test_defaults():
     assert ns.generate_only is False
     assert ns.no_module_cache is False
     assert ns.gen_raw is False
+    assert ns.raw_dir is None
     assert ns.use_tmp is False
     assert ns.keep_tmp is False
     assert ns.clean is False
@@ -163,6 +164,21 @@ def test_no_module_cache_flag():
 def test_gen_raw_flag():
     ns = parse_args(["--gen-raw"])
     assert ns.gen_raw is True
+
+
+def test_raw_dir_override():
+    ns = parse_args(["--raw-dir", "/tmp/some_raw"])
+    assert ns.raw_dir == "/tmp/some_raw"
+
+
+def test_raw_dir_mutex_use_tmp():
+    with pytest.raises(SystemExit):
+        parse_args(["--raw-dir", "/tmp/x", "--use-tmp"])
+
+
+def test_raw_dir_mutex_keep_tmp():
+    with pytest.raises(SystemExit):
+        parse_args(["--raw-dir", "/tmp/x", "--keep-tmp"])
 
 
 def test_synthtop():

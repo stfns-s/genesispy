@@ -468,6 +468,9 @@ elaborate group: it skips the parse phase and runs only the elaborate step.
   pipes, no `is`-tests, no macro/block/extends). Stock Jinja2 sources do not parse here as-is; see
   `genesispy-jinja2j2` (section 1, "Porting stock Jinja2 templates").
 - `--gen-raw` -- also emit unprocessed Verilog into `<raw_dir>/`.
+- `--raw-dir DIR` -- override the raw_dir location (default `./genesis_raw`). Mutually exclusive with
+  `--use-tmp`/`--keep-tmp`. Orthogonal to `--gen-raw`: without `--gen-raw` the directory is still removed
+  after elaboration.
 - `--use-tmp` -- place the raw directory under a `/tmp` scratch dir.
 - `--keep-tmp` -- keep the `/tmp` scratch dir after exit (implies `--use-tmp`).
 
