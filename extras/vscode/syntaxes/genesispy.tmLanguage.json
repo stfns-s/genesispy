@@ -1,0 +1,84 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Genesispy",
+  "scopeName": "source.genesispy",
+  "patterns": [
+    { "include": "#genesispy-sentinel" },
+    { "include": "#genesispy-line" },
+    { "include": "#genesispy-inline" },
+    { "include": "#j2-sentinel" },
+    { "include": "#j2-stmt" },
+    { "include": "#j2-comment" },
+    { "include": "#sv-templated-decls" },
+    { "include": "source.systemverilog" }
+  ],
+  "repository": {
+    "sv-templated-decls": {
+      "comment": "Keyword fallback for declarations whose name is backtick/{{ }} templated (e.g. `module \\`mname\\``). The SystemVerilog grammar's region rules require literal identifiers and skip these lines; this rule restores keyword colour. Scope mirrors the Verilog grammar's `storage.type.module.verilog` so theming matches .v files.",
+      "patterns": [
+        {
+          "match": "\\b(macromodule|module|endmodule)\\b",
+          "name": "storage.type.module.verilog"
+        },
+        {
+          "match": "\\b(interface|endinterface|program|endprogram|package|endpackage|class|endclass|function|endfunction|task|endtask|modport|generate|endgenerate)\\b",
+          "name": "storage.type.systemverilog"
+        }
+      ]
+    },
+    "genesispy-sentinel": {
+      "match": "(^\\s*)(//;\\s*#.*)$",
+      "captures": {
+        "2": { "name": "comment.line.double-slash.sentinel.genesispy" }
+      }
+    },
+    "genesispy-line": {
+      "begin": "^(\\s*)(//;)(?!\\s*#)",
+      "beginCaptures": {
+        "2": { "name": "punctuation.section.embedded.begin.genesispy" }
+      },
+      "end": "$",
+      "contentName": "meta.embedded.line.python",
+      "patterns": [
+        { "include": "source.python" }
+      ]
+    },
+    "genesispy-inline": {
+      "begin": "(?<!\\\\)(`)(?!(timescale|default_nettype|include|ifdef|if|ifndef|else|endif)\\b)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.section.embedded.begin.genesispy" }
+      },
+      "end": "(?<!\\\\)(`)",
+      "endCaptures": {
+        "1": { "name": "punctuation.section.embedded.end.genesispy" }
+      },
+      "contentName": "meta.embedded.line.python",
+      "patterns": [
+        { "include": "source.python" }
+      ]
+    },
+    "j2-sentinel": {
+      "match": "{%-?\\s*#[^%]*%}",
+      "name": "comment.block.sentinel.genesispy"
+    },
+    "j2-stmt": {
+      "begin": "({%-?)(?!\\s*#)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.section.embedded.begin.genesispy" }
+      },
+      "end": "(-?%})",
+      "endCaptures": {
+        "1": { "name": "punctuation.section.embedded.end.genesispy" }
+      },
+      "contentName": "meta.embedded.block.python",
+      "patterns": [
+        { "include": "source.python" }
+      ]
+    },
+    "j2-comment": {
+      "begin": "{#",
+      "end": "#}",
+      "name": "comment.block.j2.genesispy"
+    }
+  }
+}

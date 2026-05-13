@@ -41,8 +41,8 @@ class Manager:
     cfg_handler: "ConfigHandler | None"
     top: str | None
     debug: int
-    sources_path: list[str]
-    includes_path: list[str]
+    src_path: list[str]
+    inc_path: list[str]
     output_dir: str
     # Scratch directory for generated .py files and (when --gen-raw is set)
     # raw Verilog dumps. Defaults to "./genesis_raw"; overridden by --raw-dir
@@ -63,21 +63,22 @@ class Manager:
     # instance name ("foo") or a dotted instance path ("top.foo.bar"); the
     # walker matches `path == synth_top or path.startswith(synth_top+".")`.
     # None means SynthTop=undef (Perl default) -> every emitted file is
-    # tagged 'verif'. Set from --synthtop.
+    # tagged 'verif'. Set from --synth-top.
     synth_top: str | None
     # Every directory touched during elaboration: appended to by
     # find_file() and _resolve_cfg_path(); consumed by
-    # output_writer.write_pathfile (the --pathfile output). Plain list
+    # output_writer.write_pathfile (the --path output). Plain list
     # of absolute directory paths in append order, deduped at read time.
     touched_dirs: list[str]
     # Search path for `.cfg` config files; consumed by
-    # output_writer.write_pathfile alongside sources_path /
-    # includes_path. Set from --cfgpath.
+    # output_writer.write_pathfile alongside src_path /
+    # inc_path. Set from --cfg-path.
     cfg_path: list[str]
-    # Flavor override for emitted Verilog ('synth', 'verif', or None for
-    # auto). Read by output_writer when tagging files. Set from --flavor.
-    flavor: str | None
-    # If True, also write raw (pre-flavor-tagging) Verilog under raw_dir.
+    # Output-type override for emitted Verilog ('synth', 'verif', or None
+    # for auto). Read by output_writer when tagging files. Set from
+    # --out-type.
+    out_type: str | None
+    # If True, also write raw (pre-out_type-tagging) Verilog under raw_dir.
     # Set from --gen-raw.
     gen_raw: bool
     # Override path for the `.depend` file; None falls back to
@@ -100,7 +101,7 @@ class Manager:
     comment: str
     # Original argparse.Namespace as parsed by cli.parse_args(). Engine
     # classes (ConfigHandler) read late-bound flags directly off this
-    # (e.g. args.unqstyle, args.parameter).
+    # (e.g. args.unq_style, args.parameter).
     args: "argparse.Namespace"
 
     def __init__(self, args: argparse.Namespace) -> None: ...
@@ -142,8 +143,9 @@ class ConfigHandler:
     # Writes a HierarchyTop snapshot of the elaborated module tree at
     # ``top_inst`` -- port of Perl ConfigHandler.pm::WriteXml /
     # extract_stats. Emits three sibling files in dirname(path):
-    # ``path`` (full), ``small_<basename>`` (no ImmutableParameters),
-    # ``tiny_<basename>`` (priority >= EXTERNAL_PARAM_FILE only). ``top_inst``
+    # ``path`` (full), ``<stem>-small<ext>`` (no ImmutableParameters),
+    # ``<stem>-tiny<ext>`` (priority >= EXTERNAL_PARAM_FILE only), where
+    # ``<stem>``/``<ext>`` come from splitext(basename(path)). ``top_inst``
     # is required; passing None raises GenesisPyError.
     def write_json(self, path: str, top_inst: "UniqueModule") -> None: ...
 
@@ -180,14 +182,14 @@ class ConfigHandler:
     # winning source's priority onto a UniqueModule param. Used by
     # UniqueModule.parameter() so the resulting _params['priority']
     # reflects EXTERNAL_PARAM_FILE / EXTERNAL_CONFIG / CMD_LINE rather than
-    # the declaration default (drives the --jsonout tiny variant).
+    # the declaration default (drives the --json-out tiny variant).
     def get_configuration_with_priority(
         self, name: str, *, instance_path: tuple[str, ...] | None = None,
     ) -> tuple[object | None, int | None]: ...
 
     # Module uniquification style ('numeric' | 'param'); read by
     # UniqueModule.generate to dispatch unique_inst vs unique_inst_param.
-    unq_style: str  # default 'numeric', from --unqstyle CLI flag
+    unq_style: str  # default 'numeric', from --unq-style CLI flag
     def set_unq_style(self, style: str) -> None: ...
 ```
 
@@ -215,7 +217,7 @@ class UniqueModule:
 
     # Source instance for clones; None on non-clones. Set by
     # _new_as_clone, read by ConfigHandler.extract_stats to emit
-    # CloneOf.InstancePath in --jsonout snapshots.
+    # CloneOf.InstancePath in --json-out snapshots.
     _clone_of: "UniqueModule | None"
 
     # parameters

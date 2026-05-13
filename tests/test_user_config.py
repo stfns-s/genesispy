@@ -33,16 +33,16 @@ class _RealishManager:
     def __init__(
         self, top: str = "Top", synth_dir: str = "genesis_synth"
     ) -> None:
-        # ConfigHandler reads ``args.parameter`` and ``args.unqstyle``.
+        # ConfigHandler reads ``args.parameter`` and ``args.unq_style``.
         class _Args:
             parameter: list = []
-            unqstyle = None
+            unq_style = None
 
         self.args = _Args()
         self.top = top
         self.debug = 0
-        self.sources_path: list = []
-        self.includes_path: list = []
+        self.src_path: list = []
+        self.inc_path: list = []
         self.output_dir = synth_dir
         self.raw_dir = synth_dir
         self.synth_dir = synth_dir
@@ -54,7 +54,7 @@ class _RealishManager:
             if os.path.exists(name):
                 return name
             raise FileNotFoundError(name)
-        search = paths if paths is not None else (self.sources_path + self.includes_path)
+        search = paths if paths is not None else (self.src_path + self.inc_path)
         for d in search:
             cand = os.path.join(d, name)
             if os.path.exists(cand):
@@ -126,7 +126,7 @@ def test_get_configuration_honours_scoped_cli_override() -> None:
     import argparse
     mgr = _RealishManager()
     # Re-init ConfigHandler with a scoped --parameter on the top.
-    mgr.args = argparse.Namespace(parameter=["Top.WIDTH=64"], unqstyle=None)
+    mgr.args = argparse.Namespace(parameter=["Top.WIDTH=64"], unq_style=None)
     mgr.cfg_handler = ConfigHandler(mgr)
     top = _Top(mgr)
     top._instance_name = "Top"  # path segments derive from instance name
@@ -196,7 +196,7 @@ def test_include_resolves_relative_via_includepath(tmp_path) -> None:
         "//; configure('X', 99)\n"
     )
     mgr = _RealishManager()
-    mgr.includes_path = [str(inc_dir)]
+    mgr.inc_path = [str(inc_dir)]
     top = _Top(mgr)
     with user_config.context(mgr, top):
         user_config._include("frag.vpy")
@@ -205,7 +205,7 @@ def test_include_resolves_relative_via_includepath(tmp_path) -> None:
 
 def test_include_relative_not_on_includepath_raises(tmp_path) -> None:
     mgr = _RealishManager()
-    mgr.includes_path = [str(tmp_path / "nowhere")]
+    mgr.inc_path = [str(tmp_path / "nowhere")]
     top = _Top(mgr)
     with user_config.context(mgr, top):
         with pytest.raises(FileNotFoundError):

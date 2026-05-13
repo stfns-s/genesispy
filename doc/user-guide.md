@@ -240,7 +240,7 @@ Bare names bound automatically inside every generated `execute()` body:
 - **`synonym(name)`**: register an additional name for the current unique module; the same Verilog body is
   also written under `<name>.v`.
 - **`include(path)`**: parse another `.vpy` and run its body inside the current module's `execute()`
-  namespace. Mirrors Genesis2 `//;include("file.vpy")`. Resolves `path` against `--includepath`.
+  namespace. Mirrors Genesis2 `//;include("file.vpy")`. Resolves `path` against `--inc-path`.
 - **`pinclude(path)`**: gvpy-only raw-Python include. Available as a bare name when running under the `gvpy`
   entry point; bound to `None` in standard `genesispy` runs (calling it raises `TypeError`).
 
@@ -287,7 +287,7 @@ A parameter's value is determined in the following order (lowest to highest):
 
 1. **In-source default** -- the second argument to `parameter('NAME', default)` in the `.vpy` file. Used when
    nothing else fires.
-2. **JSON config** (`--json`) -- per-instance overrides scoped by instance path. Beats the in-source default.
+2. **JSON config** (`--json-cfg`) -- per-instance overrides scoped by instance path. Beats the in-source default.
    Legacy XML configs convert via `genesispy-xml2json`.
 3. **`.cfg` Python configs** (`--cfg`) -- call `configure(name, value)`. Beats JSON.
 4. **CLI `--parameter NAME=VALUE`** (or `-p`, same in gvpy now) -- beats everything passed in files.
@@ -427,7 +427,7 @@ Inspect `genesis_synth/top.v` to see the unrolled instance sequence the loops in
 ## 3. CLI reference: `genesispy`
 
 ```
-genesispy --input top.vpy --input child.vpy --top top --json config.json
+genesispy --input top.vpy --input child.vpy --top top --json-cfg config.json
 # or short:
 genesispy -i top.vpy -i child.vpy -t top -j config.json
 ```
@@ -437,7 +437,7 @@ genesispy -i top.vpy -i child.vpy -t top -j config.json
 > helper `genesispy-json2xml` is provided for symmetry. See section 5
 > (Migrating from Genesis2) for the conversion notes.
 
-Flags are grouped by pipeline phase. `--generate-only` is named for historical reasons but lives in the
+Flags are grouped by pipeline phase. `--gen-only` is named for historical reasons but lives in the
 elaborate group: it skips the parse phase and runs only the elaborate step.
 
 ### General
@@ -448,20 +448,20 @@ elaborate group: it skips the parse phase and runs only the elaborate step.
 - `--log FILE` -- tee error/warning messages to `FILE` (in addition to stderr).
 - `--clean` -- delete generated files and exit.
 - `-t`, `--top NAME` -- name of the top module.
-- `--synthtop PATH` -- synthesis-top instance: a top-level instance name (e.g. `core`) or dotted instance path
+- `--synth-top PATH` -- synthesis-top instance: a top-level instance name (e.g. `core`) or dotted instance path
   (e.g. `top.core`) bounding the synth cone. Instances at or under this path emit to `genesis_synth/`, all
   others to `genesis_verif/`. When omitted (Genesis2 default), every emitted file goes to `genesis_verif/`.
 
 ### Generate (`.vpy` -> `.py`)
 
 - `-i`, `--input FILE` -- source `.vpy` file to process. Repeatable.
-- `-l`, `--inputlist FILE` -- listfile of inputs (bare paths or GNU directives
-  `--input/--inputlist/--srcpath/--includepath`; inline `# ...` comments allowed; recursive). Repeatable.
-- `--srcpath DIR` -- `.vpy`/source search directory (consulted by `--input`). Repeatable.
-- `--includepath DIR` -- search directory for `--input` resolution and for `include(...)` calls inside `.vpy`
+- `-l`, `--input-list FILE` -- listfile of inputs (bare paths or GNU directives
+  `--input/--input-list/--src-path/--inc-path`; inline `# ...` comments allowed; recursive). Repeatable.
+- `--src-path DIR` -- `.vpy`/source search directory (consulted by `--input`). Repeatable.
+- `--inc-path DIR` -- search directory for `--input` resolution and for `include(...)` calls inside `.vpy`
   bodies. Repeatable.
-- `--pythonpath DIR` -- prepend `DIR` to `sys.path` before parsing. Repeatable.
-- `--pymodule NAME` -- import a Python module before parsing. Repeatable.
+- `--py-path DIR` -- prepend `DIR` to `sys.path` before parsing. Repeatable.
+- `--py-import NAME` -- import a Python module before parsing. Repeatable.
 - `--parse-only` -- run only the parse phase (`.vpy` -> `.py`); skip elaboration.
 - `-j2`, `--j2` -- parse templates with the j2 (Jinja2-like) flavour. Shares delimiters with stock Jinja2
   (`{% %}` / `{{ }}` / `{# #}`) but with expanded semantics: the embedded language is full Python (no filter
@@ -476,37 +476,37 @@ elaborate group: it skips the parse phase and runs only the elaborate step.
 
 ### Elaborate (`.py` -> Verilog)
 
-- `--generate-only` -- skip the parse phase; expect generated `.py` files in `raw_dir`. (Despite the name,
+- `--gen-only` -- skip the parse phase; expect generated `.py` files in `raw_dir`. (Despite the name,
   this runs the elaborate step only.)
-- `-j`, `--json FILE` -- input JSON configuration file. Legacy XML configs: convert with `genesispy-xml2json`
+- `-j`, `--json-cfg FILE` -- input JSON configuration file. Legacy XML configs: convert with `genesispy-xml2json`
   first.
-- `--jsonout FILE` -- write a `HierarchyTop` snapshot of the elaborated module tree (port of Perl
-  `-hierarchy`). Emits three files in `dirname(FILE)`: `FILE` (full), `small_<basename(FILE)>` (no
-  `ImmutableParameters`), `tiny_<basename(FILE)>` (only params with priority `>= EXTERNAL_PARAM_FILE` -- JSON, CLI,
+- `--json-out FILE` -- write a `HierarchyTop` snapshot of the elaborated module tree (port of Perl
+  `-hierarchy`). Emits three files in `dirname(FILE)`: `FILE` (full), `<stem>-small<ext>` (no
+  `ImmutableParameters`), `<stem>-tiny<ext>` (only params with priority `>= EXTERNAL_PARAM_FILE` -- JSON, CLI,
   parent-kwargs, and force-pinned; `.cfg` `configure(...)` overrides at `EXTERNAL_CONFIG` are excluded by
   design, matching Perl `ConfigHandler.pm::extract_stats`). Requires elaboration; errors if no top instance
   was built.
 - `--cfg FILE` -- input Python config script (uses `configure(name, value)`). Repeatable.
-- `--cfgpath DIR` -- search directory for `--cfg`/`--json` and for `include(...)` calls inside `.cfg` files.
+- `--cfg-path DIR` -- search directory for `--cfg`/`--json-cfg` and for `include(...)` calls inside `.cfg` files.
   Repeatable.
 - `-p`, `--parameter NAME=VALUE` (or `PATH.NAME=VALUE`) -- command-line parameter override. Plain `NAME=VALUE`
   applies to any instance whose body calls `parameter('NAME', ...)`. Dotted form (e.g. `top.child2.x=2`)
   applies only to the instance at that exact full path; rightmost dot separates path from name. Repeatable.
 - `--no-module-cache` -- disable the unique-module dedup cache (forces fresh modules).
-- `--unqstyle numeric|param` -- module uniquification style (default: `numeric`). Controls `generate(...)`
+- `--unq-style numeric|param` -- module uniquification style (default: `numeric`). Controls `generate(...)`
   dispatch.
-- `--flavor synth|verif|both` -- which output flavour to emit (default: `both`).
-- `--outputdir DIR` -- output directory (default: `genesis_synth`). When set, also supplies the default for
+- `--out-type synth|verif|both` -- which output flavour to emit (default: `both`).
+- `--out-dir DIR` -- output directory (default: `genesis_synth`). When set, also supplies the default for
   `--synth-dir` and `--verif-dir`.
-- `--synth-dir DIR` -- directory for synth-tagged Verilog (default: `--outputdir` if set, else
+- `--synth-dir DIR` -- directory for synth-tagged Verilog (default: `--out-dir` if set, else
   `genesis_synth`).
-- `--verif-dir DIR` -- directory for verif-tagged Verilog (default: `--outputdir` if set, else
+- `--verif-dir DIR` -- directory for verif-tagged Verilog (default: `--out-dir` if set, else
   `genesis_verif`).
 - `--extension EXT_IN=EXT_OUT` -- pair an input template extension with its emitted-Verilog
   extension (may be repeated). Defaults: `.vpy=.v`, `.svpy=.sv`. User entries override defaults;
   e.g. `--extension .vpy=.sv` or `--extension .tvpy=.tv`. Leading dots are added on either side
   if missing; both sides are case-folded.
-- `-sv`, `--systemverilog` -- shorthand for `--extension .vpy=.sv`. Errors out if combined with
+- `-sv`, `--system-verilog` -- shorthand for `--extension .vpy=.sv`. Errors out if combined with
   a conflicting `--extension .vpy=...` entry.
 - `--comment PREFIX` -- line-comment prefix of the target output language (default: `//`). Sets both the
   template directive sentinel (`<comment>;` replaces `//;` in genesis flavour) and the prefix used by the
@@ -515,7 +515,7 @@ elaborate group: it skips the parse phase and runs only the elaborate step.
   `.vlist`/`.depend`/clean script and removes the raw dir on exit.
 - `--product FILE` -- write Genesis2-style product file lists `FILE.synth` and `FILE.verif`.
 - `--depend FILE` -- override the dependency-list output path (default: `<top>.depend`).
-- `--pathfile FILE` -- write the list of directories touched during elaboration to `FILE`.
+- `--path FILE` -- write the list of directories touched during elaboration to `FILE`.
 
 ## 4. `gvpy` flat-preprocessor mode
 
@@ -556,19 +556,21 @@ behaviour-affecting incompatibilities -- unique-module hash, JSON-only configs (
 - **File extension** -- `.vp` -> `.vpy`, `.svp` -> `.svpy`. Configurable via the repeatable
   `--extension EXT_IN=EXT_OUT` flag (e.g. `--extension .tvpy=.tv` to register a custom pair, or
   `--extension .vpy=.sv` to redirect the default).
-- **`--suffix` removed** -- replaced by `--extension`. `-sv`/`--systemverilog` is preserved as
+- **`--suffix` removed** -- replaced by `--extension`. `-sv`/`--system-verilog` is preserved as
   a shorthand for `--extension .vpy=.sv`.
 - **Config input** -- XML support removed from the core CLI; convert legacy XML once with `genesispy-xml2json
-  in.xml out.json` and pass `--json out.json`. The reverse helper `genesispy-json2xml` is provided for
+  in.xml out.json` and pass `--json-cfg out.json`. The reverse helper `genesispy-json2xml` is provided for
   symmetry.
 - **`//;` body language** -- Perl -> Python.
 - **`--cfg` config files** -- Perl `eval` -> Python `exec()` (trusted-input, full `__builtins__` exposed --
   mirrors Perl `do FILE`). Files are plain Python; `.py` is preferred over `.cfg`.
 - **CLI flag style** -- GNU `--input`/`-i`, `--top`/`-t`, ... (Genesis2 used Perl-style `-input`, `-top`).
-- **`--inputlist` listfile syntax** -- GNU directives only (`--input/--inputlist/--srcpath/--includepath`);
+- **`--input-list` listfile syntax** -- GNU directives only (`--input/--input-list/--src-path/--inc-path`);
   Genesis2 used `-input/-inputlist/-srcpath/-incpath`. Bare paths default to `--input`.
-- **`--jsonout`** (Perl `-hierarchy`) -- same three-file output (`<f>` / `small_<f>` / `tiny_<f>`) and same
-  `HierarchyTop` schema, but emitted as JSON (use `genesispy-json2xml` for XML). The `tiny` variant filters by
+- **`--json-out`** (Perl `-hierarchy`) -- same three-file output and same `HierarchyTop` schema, but emitted
+  as JSON (use `genesispy-json2xml` for XML). Sibling filenames diverge from Perl: Perl emits
+  `<f>`/`small_<f>`/`tiny_<f>`; genesispy splits `<f>` into `<stem><ext>` and emits
+  `<stem><ext>`/`<stem>-small<ext>`/`<stem>-tiny<ext>`. The `tiny` variant filters by
   `priority
   >= EXTERNAL_PARAM_FILE`; genesispy's flat-key config lookup cannot replicate Perl's `inherit_param`-aware priority
   assignment, so the `tiny` set may be a strict superset of Perl's (params Perl tags as inherited may appear
@@ -579,10 +581,10 @@ behaviour-affecting incompatibilities -- unique-module hash, JSON-only configs (
 A `genesispy` run produces:
 
 - `genesis_raw/<stem>.py` -- generated Python module per `.vpy` input.
-- `genesis_synth/<module>.v` -- elaborated Verilog for instances at or under `--synthtop`. (Empty when
-  `--synthtop` is omitted.)
+- `genesis_synth/<module>.v` -- elaborated Verilog for instances at or under `--synth-top`. (Empty when
+  `--synth-top` is omitted.)
 - `genesis_verif/<module>.v` -- elaborated Verilog for instances outside the synth cone (everything when
-  `--synthtop` is omitted, mirroring Genesis2's `SynthTop=undef` default).
+  `--synth-top` is omitted, mirroring Genesis2's `SynthTop=undef` default).
 - `<outputdir>/<top>.vlist` -- full compile-order file list (every emitted `.v`, regardless of synth/verif
   tag).
 - `<outputdir>/<top>.vlist.verif` -- emitted only when at least one verif-tagged file exists; lists verif +

@@ -113,7 +113,7 @@ def test_include_namespace_includes_include_and_pinclude(tmp_path, monkeypatch):
                 setattr(self, attr, lambda *a, **kw: None)
 
     class _StubMgr:
-        includes_path: list[str] = []
+        inc_path: list[str] = []
         def find_file(self, path, search):
             return path
 

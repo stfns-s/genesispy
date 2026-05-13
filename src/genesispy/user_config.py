@@ -141,7 +141,7 @@ def _include(path: str) -> None:
         resolved = path
     else:
         mgr = _current_manager()
-        resolved = mgr.find_file(path, list(mgr.includes_path) + ["."])
+        resolved = mgr.find_file(path, list(mgr.inc_path) + ["."])
     syntax = getattr(_active_manager, "syntax", "genesis")
     comment = getattr(_active_manager, "comment", "//")
     src = parse_vpy(resolved, syntax=syntax, comment=comment)

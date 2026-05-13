@@ -253,9 +253,9 @@ class ConfigHandler:
         self._json_out_filename: Optional[str] = None
         self._cfg_in_filenames: list[str] = []
 
-        # Module uniquification style. Read from manager.args.unqstyle if
+        # Module uniquification style. Read from manager.args.unq_style if
         # present, default 'numeric'. Mirrors Perl ConfigHandler.UnqStyle.
-        self.unq_style: str = manager.args.unqstyle or "numeric"
+        self.unq_style: str = manager.args.unq_style or "numeric"
         self._validate_unq_style(self.unq_style)
 
         # Parse ``manager.args.parameter`` if present (list of NAME=VALUE).
@@ -333,30 +333,31 @@ class ConfigHandler:
         ``HierarchyTop`` snapshot (Perl ``ConfigHandler.pm::WriteXml`` /
         ``extract_stats`` port).
 
-        Writes three sibling files in the directory of ``path``:
+        Writes three sibling files in the directory of ``path``. Given
+        ``path = "<dir>/<stem><ext>"``:
 
-        * ``path``                       -- full snapshot
-        * ``small_<basename(path)>``     -- omits ``ImmutableParameters``
-        * ``tiny_<basename(path)>``      -- only user-overridden params
-                                            (priority >= EXTERNAL_PARAM_FILE)
+        * ``<dir>/<stem><ext>``           -- full snapshot
+        * ``<dir>/<stem>-small<ext>``     -- omits ``ImmutableParameters``
+        * ``<dir>/<stem>-tiny<ext>``      -- only user-overridden params
+                                             (priority >= EXTERNAL_PARAM_FILE)
 
         ``top_inst`` is required (``Manager._top_inst`` after
         :meth:`Manager.gen_verilog`). Passing ``None`` raises
-        :class:`GenesisPyError`; ``--jsonout`` outside an elaborated flow
+        :class:`GenesisPyError`; ``--json-out`` outside an elaborated flow
         is unsupported.
         """
         if top_inst is None:
             raise errors.GenesisPyError(
-                "--jsonout requires an elaborated module tree; "
+                "--json-out requires an elaborated module tree; "
                 "run gen_verilog first"
             )
         self._json_out_filename = path
         directory = os.path.dirname(path)
-        base = os.path.basename(path)
+        stem, ext = os.path.splitext(os.path.basename(path))
         for variant, fname in (
             ("full", path),
-            ("small", os.path.join(directory, f"small_{base}")),
-            ("tiny", os.path.join(directory, f"tiny_{base}")),
+            ("small", os.path.join(directory, f"{stem}-small{ext}")),
+            ("tiny", os.path.join(directory, f"{stem}-tiny{ext}")),
         ):
             tree = extract_stats(top_inst, variant=variant)
             json_io.write_json(tree, fname)

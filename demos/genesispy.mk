@@ -7,7 +7,7 @@
 #
 # A per-demo Makefile sets:
 #   TOP         := top
-#   INPUTS      := top.vpy ...   # bare names; resolved via --srcpath genesis_src
+#   INPUTS      := top.vpy ...   # bare names; resolved via --src-path genesis_src
 #   JSON_CONFIG := config.json   # optional
 # then `include ../genesispy.mk`.
 #
@@ -30,7 +30,7 @@ ifeq ($(wildcard genesis_src/.),)
 $(error genesispy.mk: expected sources under ./genesis_src/ -- did you forget to move them?)
 endif
 ifneq ($(strip $(JSON_CONFIG)),)
-CONFIG_FLAG := --json $(JSON_CONFIG)
+CONFIG_FLAG := --json-cfg $(JSON_CONFIG)
 CONFIG_DEP  := $(JSON_CONFIG)
 else
 CONFIG_FLAG :=
@@ -83,7 +83,7 @@ gen: $(VLIST) $(VLOG_VF)
 
 $(VLIST): $(SRC_FILES) $(CONFIG_DEP)
 	$(GENESISPY) $(GEN_INPUT_FLAGS) --top $(TOP) $(CONFIG_FLAG) \
-	    --srcpath genesis_src --outputdir $(OUTPUTDIR) $(EXTRA_FLAGS)
+	    --src-path genesis_src --out-dir $(OUTPUTDIR) $(EXTRA_FLAGS)
 
 # Genesis2-style product list at demo root (mirrors $(VLIST)).
 $(VLOG_VF): $(VLIST)
@@ -93,7 +93,7 @@ gen-j2: $(VLIST_J2) $(VLOG_VF_J2)
 
 $(VLIST_J2): $(SRC_FILES_J2) $(CONFIG_DEP)
 	$(GENESISPY) --j2 $(GEN_INPUT_FLAGS) --top $(TOP) $(CONFIG_FLAG) \
-	    --srcpath $(SRCDIR_J2) --outputdir $(OUTPUTDIR_J2) $(EXTRA_FLAGS)
+	    --src-path $(SRCDIR_J2) --out-dir $(OUTPUTDIR_J2) $(EXTRA_FLAGS)
 
 $(VLOG_VF_J2): $(VLIST_J2)
 	cp $(VLIST_J2) $(VLOG_VF_J2)

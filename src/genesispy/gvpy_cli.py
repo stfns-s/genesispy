@@ -27,7 +27,7 @@ import sys
 from typing import Any, Iterable
 
 from genesispy import __version__, cache, user_config
-from genesispy.cli import _comment_arg
+from genesispy.cli import _add_deprecated_alias, _comment_arg
 from genesispy.config_handler import ConfigHandler
 from genesispy.errors import ParameterError
 from genesispy.extensions import build_extension_map, parse_extension_spec
@@ -56,13 +56,13 @@ class _GvpyManager:
     def __init__(self, args: argparse.Namespace, incdirs: list[str]) -> None:
         # Patch attrs consumed by ConfigHandler/UniqueModule/output_writer
         # that gvpy's narrower argparse doesn't define.
-        if not hasattr(args, "unqstyle"):
-            args.unqstyle = None
+        if not hasattr(args, "unq_style"):
+            args.unq_style = None
         self.args = args
         self.top: str | None = args.mname
         self.debug = 0
-        self.sources_path: list[str] = list(incdirs)
-        self.includes_path: list[str] = list(incdirs)
+        self.src_path: list[str] = list(incdirs)
+        self.inc_path: list[str] = list(incdirs)
         self.cfg_path: list[str] = []
         self.output_dir = ""
         self.raw_dir = ""
@@ -74,7 +74,7 @@ class _GvpyManager:
         self.syntax = "j2" if getattr(args, "j2", False) else "genesis"
         self.comment = getattr(args, "comment", "//")
         self.no_module_cache = False
-        self.flavor = "both"
+        self.out_type = "both"
         self.gen_raw = False
         self.depend_file: str | None = None
         self.touched_dirs: list[str] = []
@@ -86,13 +86,13 @@ class _GvpyManager:
         return None
 
     def find_file(self, name: str, paths: list[str] | None = None) -> str:
-        # Diverges from Manager.find_file: cwd always appended, includes_path-only,
+        # Diverges from Manager.find_file: cwd always appended, inc_path-only,
         # raises FileNotFoundError (gvpy main's handler keys off built-ins).
         if os.path.isabs(name):
             if os.path.exists(name):
                 return name
             raise FileNotFoundError(name)
-        search = paths if paths is not None else self.includes_path
+        search = paths if paths is not None else self.inc_path
         for d in [*search, "."]:
             cand = os.path.join(d, name)
             if os.path.exists(cand):
@@ -272,16 +272,26 @@ def main(argv: list[str] | None = None) -> int:
         help="Top module name (default: input filename stem).",
     )
     parser.add_argument(
-        "--libdirs",
+        "--py-path",
+        dest="py_path",
         action="append",
         default=[],
         help="Comma-separated dirs to add to sys.path (may be repeated).",
     )
+    _add_deprecated_alias(
+        parser, "--libdirs", "--py-path", dest="py_path",
+        kind="append", prog=PROG,
+    )
     parser.add_argument(
-        "--incdirs",
+        "--inc-path",
+        dest="inc_path",
         action="append",
         default=[],
         help="Comma-separated dirs for include()/pinclude() search.",
+    )
+    _add_deprecated_alias(
+        parser, "--incdirs", "--inc-path", dest="inc_path",
+        kind="append", prog=PROG,
     )
     parser.add_argument(
         "-p",
@@ -292,24 +302,9 @@ def main(argv: list[str] | None = None) -> int:
         metavar="NAME=VALUE",
         help="Set a flat parameter (consulted by parameter()).",
     )
-    class _DefparamAction(argparse.Action):
-        _warned = False
-
-        def __call__(self, parser, namespace, values, option_string=None):
-            if not _DefparamAction._warned:
-                sys.stderr.write(
-                    f"{PROG}: warning: --defparam is deprecated; "
-                    "use --parameter/-p instead.\n"
-                )
-                _DefparamAction._warned = True
-            getattr(namespace, self.dest).append(values)
-
-    parser.add_argument(
-        "--defparam",
-        action=_DefparamAction,
-        dest="parameter",
-        metavar="NAME=VALUE",
-        help=argparse.SUPPRESS,
+    _add_deprecated_alias(
+        parser, "--defparam", "-p/--parameter", dest="parameter",
+        kind="append", prog=PROG, metavar="NAME=VALUE",
     )
     parser.add_argument(
         "--comment",
@@ -356,8 +351,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
 
-    libdirs = _flatten_csv(args.libdirs) or ["./"]
-    incdirs = _flatten_csv(args.incdirs) or ["./"]
+    libdirs = _flatten_csv(args.py_path) or ["./"]
+    incdirs = _flatten_csv(args.inc_path) or ["./"]
     for d in libdirs:
         if d not in sys.path:
             sys.path.insert(0, d)

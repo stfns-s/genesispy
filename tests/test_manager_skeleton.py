@@ -19,8 +19,8 @@ def test_init_from_namespace_defaults():
     m = _make_manager([])
     assert m.top is None
     assert m.debug == 0
-    assert m.sources_path == []
-    assert m.includes_path == []
+    assert m.src_path == []
+    assert m.inc_path == []
     assert m.output_dir == "genesis_synth"
     assert m.raw_dir == "genesis_raw"
     assert m.synth_dir == "genesis_synth"
@@ -39,34 +39,34 @@ def test_init_propagates_cli_values():
         [
             "--top", "core",
             "--debug", "2",
-            "--srcpath", "src",
-            "--includepath", "inc",
-            "--outputdir", "out",
+            "--src-path", "src",
+            "--inc-path", "inc",
+            "--out-dir", "out",
         ]
     )
     assert m.top == "core"
     assert m.debug == 2
-    assert m.sources_path == ["src"]
-    assert m.includes_path == ["inc"]
+    assert m.src_path == ["src"]
+    assert m.inc_path == ["inc"]
     assert m.output_dir == "out"
 
 
-def test_find_file_in_sources_path(tmp_path):
+def test_find_file_in_src_path(tmp_path):
     src = tmp_path / "src"
     src.mkdir()
     f = src / "hello.vpy"
     f.write_text("x")
-    m = _make_manager(["--srcpath", str(src)])
+    m = _make_manager(["--src-path", str(src)])
     found = m.find_file("hello.vpy")
     assert os.path.abspath(found) == os.path.abspath(str(f))
 
 
-def test_find_file_in_includes_path(tmp_path):
+def test_find_file_in_inc_path(tmp_path):
     inc = tmp_path / "inc"
     inc.mkdir()
     f = inc / "h.vh"
     f.write_text("x")
-    m = _make_manager(["--includepath", str(inc)])
+    m = _make_manager(["--inc-path", str(inc)])
     assert os.path.abspath(m.find_file("h.vh")) == os.path.abspath(str(f))
 
 

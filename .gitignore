@@ -4,6 +4,7 @@
 build/
 dist/
 *.whl
+*.vsix
 
 # Bytecode
 __pycache__/

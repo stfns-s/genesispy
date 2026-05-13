@@ -6,29 +6,38 @@ import os
 
 import pytest
 
-from genesispy.cli import parse_args
+from genesispy.cli import _reset_deprecation_warnings, parse_args
+
+
+@pytest.fixture(autouse=True)
+def _reset_warnings():
+    """Each test starts with the deprecation-warning guard cleared."""
+    _reset_deprecation_warnings()
+    yield
+    _reset_deprecation_warnings()
 
 
 def test_defaults():
     ns = parse_args([])
     assert ns.input == []
-    assert ns.inputlist == []
+    assert ns.input_list == []
     assert ns.top is None
-    assert ns.synthtop is None
+    assert ns.synth_top is None
     assert ns.parameter == []
     assert ns.cfg == []
-    assert ns.cfgpath == []
-    assert ns.srcpath == []
-    assert ns.includepath == []
-    assert ns.pythonpath == []
-    assert ns.pymodule == []
-    assert ns.flavor == "both"
+    assert ns.cfg_path == []
+    assert ns.src_path == []
+    assert ns.inc_path == []
+    assert ns.py_path == []
+    assert ns.py_import == []
+    assert ns.out_type == "both"
     assert ns.product is None
+    assert ns.vf_out is None
     assert ns.depend is None
-    assert ns.pathfile is None
+    assert ns.path is None
     assert ns.log is None
     assert ns.parse_only is False
-    assert ns.generate_only is False
+    assert ns.gen_only is False
     assert ns.no_module_cache is False
     assert ns.gen_raw is False
     assert ns.raw_dir is None
@@ -36,7 +45,7 @@ def test_defaults():
     assert ns.keep_tmp is False
     assert ns.clean is False
     assert ns.debug == 0
-    assert ns.outputdir is None
+    assert ns.out_dir is None
     assert ns.synth_dir is None
     assert ns.verif_dir is None
     assert ns.stdout is False
@@ -68,10 +77,10 @@ def test_input_short_flag():
     assert ns.input == ["a.vpy", "b.vpy"]
 
 
-def test_short_flag_json():
+def test_short_flag_json_cfg():
     ns = parse_args(["-t", "my_top", "-j", "in.json"])
     assert ns.top == "my_top"
-    assert ns.json == "in.json"
+    assert ns.json_cfg == "in.json"
 
 
 def test_xml_flag_rejected():
@@ -95,12 +104,18 @@ def test_cfg_multi():
     assert ns.cfg == ["x.cfg", "y.cfg"]
 
 
+def test_cfg_alias_py_cfg():
+    # --py-cfg is a peer spelling of --cfg; no deprecation warning, same dest.
+    ns = parse_args(["--py-cfg", "x.cfg", "--cfg", "y.cfg"])
+    assert ns.cfg == ["x.cfg", "y.cfg"]
+
+
 def test_paths():
     ns = parse_args(
-        ["--srcpath", "src1", "--srcpath", "src2", "--includepath", "inc1"]
+        ["--src-path", "src1", "--src-path", "src2", "--inc-path", "inc1"]
     )
-    assert ns.srcpath == ["src1", "src2"]
-    assert ns.includepath == ["inc1"]
+    assert ns.src_path == ["src1", "src2"]
+    assert ns.inc_path == ["inc1"]
 
 
 def test_clean_flag():
@@ -118,25 +133,30 @@ def test_debug_short_flag():
     assert ns.debug == 5
 
 
-def test_outputdir():
-    ns = parse_args(["--outputdir", "build/foo"])
-    assert ns.outputdir == "build/foo"
+def test_out_dir():
+    ns = parse_args(["--out-dir", "build/foo"])
+    assert ns.out_dir == "build/foo"
 
 
 @pytest.mark.parametrize("p", ["synth", "verif", "both"])
-def test_flavor_choices(p):
-    ns = parse_args(["--flavor", p])
-    assert ns.flavor == p
+def test_out_type_choices(p):
+    ns = parse_args(["--out-type", p])
+    assert ns.out_type == p
 
 
-def test_flavor_invalid():
+def test_out_type_invalid():
     with pytest.raises(SystemExit):
-        parse_args(["--flavor", "nope"])
+        parse_args(["--out-type", "nope"])
 
 
 def test_product_takes_filename():
     ns = parse_args(["--product", "build/manifest"])
     assert ns.product == "build/manifest"
+
+
+def test_vf_out_takes_filename():
+    ns = parse_args(["--vf-out", "build/manifest"])
+    assert ns.vf_out == "build/manifest"
 
 
 def test_keep_tmp_implies_use_tmp():
@@ -145,15 +165,15 @@ def test_keep_tmp_implies_use_tmp():
     assert ns.keep_tmp is True
 
 
-def test_parse_generate_mutually_exclusive():
+def test_parse_gen_mutually_exclusive():
     with pytest.raises(SystemExit):
-        parse_args(["--parse-only", "--generate-only"])
+        parse_args(["--parse-only", "--gen-only"])
 
 
 def test_phase_flags():
     ns = parse_args(["--parse-only"])
     assert ns.parse_only is True
-    assert ns.generate_only is False
+    assert ns.gen_only is False
 
 
 def test_no_module_cache_flag():
@@ -181,43 +201,43 @@ def test_raw_dir_mutex_keep_tmp():
         parse_args(["--raw-dir", "/tmp/x", "--keep-tmp"])
 
 
-def test_synthtop():
-    ns = parse_args(["--synthtop", "des_top"])
-    assert ns.synthtop == "des_top"
+def test_synth_top():
+    ns = parse_args(["--synth-top", "des_top"])
+    assert ns.synth_top == "des_top"
 
 
-def test_depend_pathfile_log():
-    ns = parse_args(["--depend", "d.dep", "--pathfile", "p.list", "--log", "l.log"])
+def test_depend_path_log():
+    ns = parse_args(["--depend", "d.dep", "--path", "p.list", "--log", "l.log"])
     assert ns.depend == "d.dep"
-    assert ns.pathfile == "p.list"
+    assert ns.path == "p.list"
     assert ns.log == "l.log"
 
 
-def test_cfgpath_multi():
-    ns = parse_args(["--cfgpath", "cfg1", "--cfgpath", "cfg2"])
-    assert ns.cfgpath == ["cfg1", "cfg2"]
+def test_cfg_path_multi():
+    ns = parse_args(["--cfg-path", "cfg1", "--cfg-path", "cfg2"])
+    assert ns.cfg_path == ["cfg1", "cfg2"]
 
 
-def test_pythonpath_pymodule():
-    ns = parse_args(["--pythonpath", "lib", "--pymodule", "myhelper"])
-    assert ns.pythonpath == ["lib"]
-    assert ns.pymodule == ["myhelper"]
+def test_py_path_py_import():
+    ns = parse_args(["--py-path", "lib", "--py-import", "myhelper"])
+    assert ns.py_path == ["lib"]
+    assert ns.py_import == ["myhelper"]
 
 
-def test_unqstyle_default():
+def test_unq_style_default():
     ns = parse_args([])
-    assert ns.unqstyle == "numeric"
+    assert ns.unq_style == "numeric"
 
 
 @pytest.mark.parametrize("style", ["numeric", "param"])
-def test_unqstyle_choices(style):
-    ns = parse_args(["--unqstyle", style])
-    assert ns.unqstyle == style
+def test_unq_style_choices(style):
+    ns = parse_args(["--unq-style", style])
+    assert ns.unq_style == style
 
 
-def test_unqstyle_invalid():
+def test_unq_style_invalid():
     with pytest.raises(SystemExit):
-        parse_args(["--unqstyle", "bogus"])
+        parse_args(["--unq-style", "bogus"])
 
 
 def test_help_exits():
@@ -241,21 +261,21 @@ def test_version_exits():
 def test_inputlist_basic(tmp_path):
     lf = tmp_path / "files.list"
     lf.write_text("a.vpy\nb.vpy\n")
-    ns = parse_args(["--inputlist", str(lf)])
+    ns = parse_args(["--input-list", str(lf)])
     assert ns.input == ["a.vpy", "b.vpy"]
 
 
 def test_inputlist_short_flag(tmp_path):
     lf = tmp_path / "x.list"
     lf.write_text("a.vpy\n")
-    ns = parse_args(["-l", str(lf)])
+    ns = parse_args(["-f", str(lf)])
     assert ns.input == ["a.vpy"]
 
 
 def test_inputlist_interleave_with_input(tmp_path):
     lf = tmp_path / "x.list"
     lf.write_text("c.vpy\n")
-    ns = parse_args(["-i", "a.vpy", "--inputlist", str(lf), "-i", "b.vpy"])
+    ns = parse_args(["-i", "a.vpy", "--input-list", str(lf), "-i", "b.vpy"])
     # -i entries first (in argparse order), then listfile contents.
     assert ns.input == ["a.vpy", "b.vpy", "c.vpy"]
 
@@ -263,7 +283,7 @@ def test_inputlist_interleave_with_input(tmp_path):
 def test_inputlist_inline_comment(tmp_path):
     lf = tmp_path / "x.list"
     lf.write_text("a.vpy  # a comment\n# full line\n\nb.vpy\n")
-    ns = parse_args(["--inputlist", str(lf)])
+    ns = parse_args(["--input-list", str(lf)])
     assert ns.input == ["a.vpy", "b.vpy"]
 
 
@@ -272,60 +292,60 @@ def test_inputlist_hash_in_filename(tmp_path):
     # by whitespace. `foo#bar` is a literal filename.
     lf = tmp_path / "x.list"
     lf.write_text("foo#bar.vpy\nbaz.vpy #comment\n  #indented full-line\n")
-    ns = parse_args(["--inputlist", str(lf)])
+    ns = parse_args(["--input-list", str(lf)])
     assert ns.input == ["foo#bar.vpy", "baz.vpy"]
 
 
 def test_inputlist_directives(tmp_path):
     lf = tmp_path / "x.list"
     lf.write_text(
-        "--srcpath src1\n"
-        "--includepath inc1\n"
+        "--src-path src1\n"
+        "--inc-path inc1\n"
         "--input a.vpy b.vpy\n"
     )
-    ns = parse_args(["--inputlist", str(lf)])
+    ns = parse_args(["--input-list", str(lf)])
     assert ns.input == ["a.vpy", "b.vpy"]
-    assert ns.srcpath == ["src1"]
-    assert ns.includepath == ["inc1"]
+    assert ns.src_path == ["src1"]
+    assert ns.inc_path == ["inc1"]
 
 
 def test_inputlist_recursive(tmp_path):
     inner = tmp_path / "inner.list"
     inner.write_text("inner.vpy\n")
     outer = tmp_path / "outer.list"
-    outer.write_text(f"--inputlist {inner}\nouter.vpy\n")
-    ns = parse_args(["--inputlist", str(outer)])
+    outer.write_text(f"--input-list {inner}\nouter.vpy\n")
+    ns = parse_args(["--input-list", str(outer)])
     assert ns.input == ["inner.vpy", "outer.vpy"]
 
 
 def test_inputlist_cycle(tmp_path):
     a = tmp_path / "a.list"
     b = tmp_path / "b.list"
-    a.write_text(f"--inputlist {b}\n")
-    b.write_text(f"--inputlist {a}\n")
+    a.write_text(f"--input-list {b}\n")
+    b.write_text(f"--input-list {a}\n")
     with pytest.raises(SystemExit):
-        parse_args(["--inputlist", str(a)])
+        parse_args(["--input-list", str(a)])
 
 
 def test_inputlist_symlink_cycle(tmp_path):
     # Cycle detection must use realpath; abspath bypasses symlink loops.
     real = tmp_path / "real.list"
     link = tmp_path / "link.list"
-    real.write_text(f"--inputlist {link}\n")
+    real.write_text(f"--input-list {link}\n")
     os.symlink(real, link)
     with pytest.raises(SystemExit):
-        parse_args(["--inputlist", str(link)])
+        parse_args(["--input-list", str(link)])
 
 
 def test_inputlist_missing_file(tmp_path):
     with pytest.raises(SystemExit):
-        parse_args(["--inputlist", str(tmp_path / "does_not_exist.list")])
+        parse_args(["--input-list", str(tmp_path / "does_not_exist.list")])
 
 
 def test_inputlist_empty_warns(tmp_path, capsys):
     lf = tmp_path / "empty.list"
     lf.write_text("# only a comment\n\n")
-    parse_args(["--inputlist", str(lf)])
+    parse_args(["--input-list", str(lf)])
     captured = capsys.readouterr()
     assert "contributed no inputs" in captured.err
 
@@ -333,7 +353,7 @@ def test_inputlist_empty_warns(tmp_path, capsys):
 def test_inputlist_duplicate_warns(tmp_path, capsys):
     lf = tmp_path / "dup.list"
     lf.write_text("a.vpy\na.vpy\n")
-    ns = parse_args(["--inputlist", str(lf)])
+    ns = parse_args(["--input-list", str(lf)])
     assert ns.input == ["a.vpy", "a.vpy"]  # kept
     captured = capsys.readouterr()
     assert "duplicate path" in captured.err
@@ -344,26 +364,25 @@ def test_inputlist_multiple(tmp_path):
     b = tmp_path / "b.list"
     a.write_text("from_a.vpy\n")
     b.write_text("from_b.vpy\n")
-    ns = parse_args(["--inputlist", str(a), "--inputlist", str(b)])
+    ns = parse_args(["--input-list", str(a), "--input-list", str(b)])
     assert ns.input == ["from_a.vpy", "from_b.vpy"]
 
 
 def test_inputlist_absolute_path(tmp_path):
     lf = tmp_path / "abs.list"
     lf.write_text("/tmp/abs.vpy\nrel.vpy\n")
-    ns = parse_args(["--inputlist", str(lf)])
+    ns = parse_args(["--input-list", str(lf)])
     assert ns.input == ["/tmp/abs.vpy", "rel.vpy"]
 
 
 @pytest.mark.parametrize(
     "rejected",
-    # Flags whose first letter is NOT a short-flag (so argparse can't
-    # silently re-parse them as `-X est`, e.g. `-clean` -> `-c lean`).
-    ["-clean", "-version", "-help", "-cfg", "-srcpath", "-includepath",
-     "-outputdir", "-unqstyle", "-flavor", "-xmlout", "-jsonout"],
+    # Single-dash long flags must not parse (argparse-style; we use GNU long flags).
+    ["-clean", "-version", "-help", "-cfg", "-src-path", "-inc-path",
+     "-out-dir", "-unq-style", "-out-type", "-xmlout", "-json-out"],
 )
 def test_single_dash_long_flags_rejected(rejected):
-    """Genesis2-style single-dash long flags must no longer parse."""
+    """Single-dash long flags must not parse."""
     with pytest.raises(SystemExit):
         parse_args([rejected, "x"])
 
@@ -388,25 +407,23 @@ def test_strip_inline_comment_quote_aware():
     )
 
 
-# Review 11 #190 -- --jsonout help must not reference a nonexistent --gen flag.
-def test_jsonout_help_does_not_reference_nonexistent_gen_flag():
-    """`--jsonout`'s help string cites a `--gen` flag that does not exist.
-
-    The actual mutually-exclusive switches are `--parse-only` and
-    `--generate-only`; the bare `--gen` is leftover prose. This is
-    user-visible drift on `genesispy --help`.
-    """
+def test_json_out_help_does_not_reference_nonexistent_gen_flag():
+    """``--json-out``'s help string must not cite a nonexistent ``--gen``."""
     from genesispy.cli import _build_parser
 
     parser = _build_parser()
-    actions = {a.dest: a for a in parser._actions}
-    help_text = (actions["jsonout"].help or "")
+    # Pick the primary action (the one whose help isn't suppressed).
+    primary = next(
+        a for a in parser._actions
+        if a.dest == "json_out" and a.help and a.help != "==SUPPRESS=="
+    )
+    help_text = primary.help or ""
     assert "--gen" not in help_text, (
-        f"--jsonout help references nonexistent flag --gen: {help_text!r}"
+        f"--json-out help references nonexistent flag --gen: {help_text!r}"
     )
     # Positive: should reference the real switch it errors against.
     assert "parse-only" in help_text.lower(), (
-        f"--jsonout help should reference --parse-only: {help_text!r}"
+        f"--json-out help should reference --parse-only: {help_text!r}"
     )
 
 
@@ -461,3 +478,123 @@ def test_main_comment_flag_rewrites_directive_and_banner(tmp_path, capsys):
     assert "# Genesis-Py generated module:" in out
     assert "// Genesis-Py" not in out
     assert "#; for" not in out
+
+
+# ---------------------------------------------------------------------------
+# Deprecated-alias compatibility
+# ---------------------------------------------------------------------------
+# Each old long-form spelling is preserved as a hidden alias that emits a
+# one-time deprecation warning to stderr and populates the same Namespace
+# attribute as the new spelling. The aliases are absent from --help.
+
+@pytest.mark.parametrize(
+    "old, new, attr, value",
+    [
+        # --inputlist tested separately because it reads a real file.
+        ("--synthtop", "--synth-top", "synth_top", "top.foo"),
+        ("--json", "-j/--json-cfg", "json_cfg", "x.json"),
+        ("--cfgpath", "--cfg-path", "cfg_path", "cfg1"),
+        ("--srcpath", "--src-path", "src_path", "src1"),
+        ("--includepath", "--inc-path", "inc_path", "inc1"),
+        ("--pythonpath", "--py-path", "py_path", "lib"),
+        ("--pymodule", "--py-import", "py_import", "myhelper"),
+        ("--flavor", "--out-type", "out_type", "synth"),
+        ("--jsonout", "--json-out", "json_out", "out.json"),
+        ("--outputdir", "--out-dir", "out_dir", "build"),
+        ("--pathfile", "--path", "path", "p.list"),
+        ("--unqstyle", "--unq-style", "unq_style", "param"),
+    ],
+)
+def test_deprecated_long_alias_works_and_warns(old, new, attr, value, capsys):
+    ns = parse_args([old, value])
+    captured = capsys.readouterr()
+    # New attribute populated.
+    assert getattr(ns, attr) == value or getattr(ns, attr) == [value]
+    # Warning fired naming the new spelling.
+    assert old in captured.err
+    assert new in captured.err
+    assert "deprecated" in captured.err
+
+
+def test_deprecated_short_l_alias_works_and_warns(tmp_path, capsys):
+    lf = tmp_path / "x.list"
+    lf.write_text("a.vpy\n")
+    ns = parse_args(["-l", str(lf)])
+    captured = capsys.readouterr()
+    assert ns.input == ["a.vpy"]
+    assert "-l is deprecated" in captured.err
+    assert "-f/--input-list" in captured.err
+
+
+def test_deprecated_inputlist_alias_works_and_warns(tmp_path, capsys):
+    lf = tmp_path / "x.list"
+    lf.write_text("a.vpy\n")
+    ns = parse_args(["--inputlist", str(lf)])
+    captured = capsys.readouterr()
+    assert ns.input == ["a.vpy"]
+    assert "--inputlist is deprecated" in captured.err
+    assert "-f/--input-list" in captured.err
+
+
+def test_deprecated_generate_only_works_and_warns(capsys):
+    ns = parse_args(["--generate-only"])
+    captured = capsys.readouterr()
+    assert ns.gen_only is True
+    assert "--generate-only is deprecated" in captured.err
+    assert "--gen-only" in captured.err
+
+
+def test_deprecated_systemverilog_works_and_warns(capsys):
+    ns = parse_args(["--systemverilog"])
+    captured = capsys.readouterr()
+    assert ns.system_verilog is True
+    assert "--systemverilog is deprecated" in captured.err
+    assert "-sv/--system-verilog" in captured.err
+
+
+def test_deprecation_warns_once_per_flag(capsys):
+    # Repeating the same deprecated flag must warn exactly once.
+    parse_args(["--srcpath", "A", "--srcpath", "B"])
+    captured = capsys.readouterr()
+    assert captured.err.count("--srcpath is deprecated") == 1
+
+
+def test_new_flag_no_warning(capsys):
+    parse_args(["--src-path", "A"])
+    captured = capsys.readouterr()
+    assert "deprecated" not in captured.err
+
+
+def test_listfile_deprecated_directives(tmp_path, capsys):
+    """Deprecated directive spellings inside an --input-list file still work
+    and emit a one-time stderr warning per spelling."""
+    lf = tmp_path / "x.list"
+    lf.write_text(
+        "--srcpath src1\n"
+        "--includepath inc1\n"
+        "--input a.vpy\n"
+    )
+    ns = parse_args(["--input-list", str(lf)])
+    captured = capsys.readouterr()
+    assert ns.input == ["a.vpy"]
+    assert ns.src_path == ["src1"]
+    assert ns.inc_path == ["inc1"]
+    assert "--srcpath is deprecated" in captured.err
+    assert "--includepath is deprecated" in captured.err
+
+
+def test_deprecated_aliases_hidden_from_help():
+    """Deprecated aliases must not appear anywhere in --help output."""
+    from genesispy.cli import _build_parser
+
+    parser = _build_parser()
+    help_text = parser.format_help()
+    for hidden in (
+        "--inputlist", "--synthtop", "--cfgpath", "--srcpath",
+        "--includepath", "--pythonpath", "--pymodule", "--flavor",
+        "--jsonout", "--outputdir", "--pathfile", "--unqstyle",
+        "--systemverilog", "--generate-only",
+    ):
+        assert hidden not in help_text, (
+            f"deprecated alias {hidden!r} leaked into --help output"
+        )

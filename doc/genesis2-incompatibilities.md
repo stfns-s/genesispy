@@ -3,7 +3,7 @@
 This document lists the subtle, behavior-affecting differences between genesispy and Perl Genesis2.
 Superficial changes that follow inevitably from a Perl-to-Python port (`//;` body language, `.vp`/`.svp` ->
 `.vpy`/`.svpy`, `.cfg` running under trusted-input `exec()` instead of `eval`, GNU-style CLI flags, new flags such
-as `--suffix`, `--flavor`, `--synth-dir`, `--verif-dir`) are covered in the user's guide and omitted here.
+as `--suffix`, `--out-type`, `--synth-dir`, `--verif-dir`) are covered in the user's guide and omitted here.
 
 The items below are the ones a porting user is most likely to encounter.
 
@@ -52,4 +52,14 @@ emit both as separate unique modules even though the bodies are byte-identical.
 
 The parity test suite compares emitted Verilog as a *set* of files rather than a multiset, so the extra Perl
 duplicates do not register as a parity failure.
+
+## 4. `--json-out` sibling-file names
+
+**Where:** `config_handler.py:write_json`
+
+Perl Genesis2 `-hierarchy FILE` writes `FILE`, `small_<basename(FILE)>`, and `tiny_<basename(FILE)>` --
+underscore-prefixed siblings. genesispy `--json-out FILE` instead splits the basename with `os.path.splitext`
+and writes `FILE`, `<stem>-small<ext>`, and `<stem>-tiny<ext>`. For example, `--json-out hier.json` produces
+`hier.json`, `hier-small.json`, `hier-tiny.json`. The content of each variant is unchanged; only the filenames
+differ.
 

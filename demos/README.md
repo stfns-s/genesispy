@@ -39,7 +39,7 @@ Common overrides:
 
 - `VERILINT=verilator|slang` (default `verilator`)
 - `SIMULATOR=verilator|vcs|vlog|iverilog|xrun` (default `verilator`)
-- `JSON_CONFIG=<file>` -- passed as `--json` to `genesispy`
+- `JSON_CONFIG=<file>` -- passed as `--json-cfg` to `genesispy`
 - `CFG_CONFIG=<file>` -- passed as `--cfg`; composes with `JSON_CONFIG`. JSON has higher priority for keys
   set in both
 - `EXTRA_FLAGS=...` -- passed verbatim to `genesispy`
@@ -69,10 +69,10 @@ The same Wallace core elaborated across an array of widths. Demonstrates multi-v
 produces several unique modules plus clones -- and the layered config sources. Entry: `genesis_src/top.vpy`. Three
 config files are at the demo root:
 
-- `config.json` -- primary; passed via `--json`.
+- `config.json` -- primary; passed via `--json-cfg`.
 - `config.xml` -- legacy form, kept for parity. Convert once with `genesispy-xml2json in.xml out.json` (the shared
   `genesispy.mk` has a `%.json: %.xml` rule that runs this automatically).
-- `config.py` -- low-priority `.cfg` fallback. Both `--json` and CLI `--parameter` take priority over it; it
+- `config.py` -- low-priority `.cfg` fallback. Both `--json-cfg` and CLI `--parameter` take priority over it; it
   applies under JSON when both are passed.
 
 The local `Makefile` overrides `help` to document the supported invocations; run `make help` for the live version.

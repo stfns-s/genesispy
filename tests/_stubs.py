@@ -77,8 +77,8 @@ class StubManager:
         self.top: Optional[str] = None
         self.synth_top: Optional[str] = None
         self.debug: int = debug
-        self.sources_path: list = []
-        self.includes_path: list = []
+        self.src_path: list = []
+        self.inc_path: list = []
         self.cfg_path: list = []
         self.output_dir: str = ""
         self.raw_dir: str = ""
@@ -89,9 +89,9 @@ class StubManager:
             extension_map if extension_map is not None else DEFAULT_EXTENSION_MAP
         )
         # Required by ConfigHandler/UniqueModule/output_writer consumers.
-        self.args = types.SimpleNamespace(parameter=[], unqstyle=None)
+        self.args = types.SimpleNamespace(parameter=[], unq_style=None)
         self.no_module_cache: bool = False
-        self.flavor: str = "both"
+        self.out_type: str = "both"
         self.gen_raw: bool = False
         self.depend_file: Optional[str] = None
         self.touched_dirs: list = []
@@ -109,10 +109,10 @@ class StubManager:
         return None
 
 
-def args_namespace(parameter=None, unqstyle: Optional[str] = None) -> types.SimpleNamespace:
+def args_namespace(parameter=None, unq_style: Optional[str] = None) -> types.SimpleNamespace:
     """Return a ``SimpleNamespace(args=SimpleNamespace(...))`` shim suitable
     as the ``manager`` argument to :class:`genesispy.config_handler.ConfigHandler`."""
-    args = types.SimpleNamespace(parameter=list(parameter or []), unqstyle=unqstyle)
+    args = types.SimpleNamespace(parameter=list(parameter or []), unq_style=unq_style)
     return types.SimpleNamespace(args=args)
 
 

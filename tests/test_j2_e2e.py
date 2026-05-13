@@ -101,7 +101,7 @@ class _StubMgr:
         self.debug = 0
         self.top = None
         self.synth_top = None
-        self.flavor = "both"
+        self.out_type = "both"
         self.no_module_cache = True
         self.gen_raw = False
         self.touched_dirs: list = []

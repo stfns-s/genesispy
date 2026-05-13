@@ -12,7 +12,7 @@ from genesispy import config_handler
 
 class _Args:
     parameter = []
-    unqstyle = None
+    unq_style = None
 
 
 class _Mgr:

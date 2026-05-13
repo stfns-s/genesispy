@@ -39,20 +39,20 @@ class Manager:
         # ``default=`` for every flag; direct attribute access is safe.
         self.args = args
         self.top = args.top
-        # synth_top default = None (Perl SynthTop=undef): without --synthtop,
+        # synth_top default = None (Perl SynthTop=undef): without --synth-top,
         # every emitted file is tagged 'verif'.  Mirrors Manager.pm:89.
-        self.synth_top = args.synthtop
+        self.synth_top = args.synth_top
         self.debug = int(args.debug)
-        self.sources_path = list(args.srcpath)
-        self.includes_path = list(args.includepath)
-        self.cfg_path = list(args.cfgpath)
+        self.src_path = list(args.src_path)
+        self.inc_path = list(args.inc_path)
+        self.cfg_path = list(args.cfg_path)
 
-        outputdir_arg = args.outputdir
+        out_dir_arg = args.out_dir
         synth_dir_arg = args.synth_dir
         verif_dir_arg = args.verif_dir
-        self.output_dir = outputdir_arg or "genesis_synth"
-        self.synth_dir = synth_dir_arg or outputdir_arg or "genesis_synth"
-        self.verif_dir = verif_dir_arg or outputdir_arg or "genesis_verif"
+        self.output_dir = out_dir_arg or "genesis_synth"
+        self.synth_dir = synth_dir_arg or out_dir_arg or "genesis_synth"
+        self.verif_dir = verif_dir_arg or out_dir_arg or "genesis_verif"
         # build_extension_map raises ValueError on conflicts among args.extensions;
         # surface as GenesisPyError so the CLI prints a clean message.
         try:
@@ -64,29 +64,31 @@ class Manager:
 
         self.input_files = list(args.input)
         self.parameter_overrides = list(args.parameter)
-        self.json_in = args.json
-        self.json_out = args.jsonout
+        self.json_cfg = args.json_cfg
+        self.json_out = args.json_out
         self.cfg_files = list(args.cfg)
-        self.flavor = args.flavor
+        self.out_type = args.out_type
         # Genesis2 -product: when set, write FILE.synth + FILE.verif lists.
         self.product_file = args.product
+        # --vf-out: same lists, written as FILE.synth.vf + FILE.verif.vf.
+        self.vf_out = args.vf_out
         self.depend_file = args.depend
-        self.pathfile = args.pathfile
+        self.path_file = args.path
         self.log_file = args.log
         self.parse_only = args.parse_only
-        self.generate_only = args.generate_only
+        self.gen_only = args.gen_only
         self.no_module_cache = args.no_module_cache
         self.gen_raw = args.gen_raw
         self.use_tmp = args.use_tmp
         self.keep_tmp = args.keep_tmp
-        self.python_paths = list(args.pythonpath)
-        self.pymodules = list(args.pymodule)
+        self.py_paths = list(args.py_path)
+        self.py_imports = list(args.py_import)
         self.clean_flag = args.clean
         self.stdout_mode = args.stdout
         self.syntax = "j2" if getattr(args, "j2", False) else "genesis"
         self.comment = getattr(args, "comment", "//")
 
-        # Track every directory touched during elaboration for --pathfile.
+        # Track every directory touched during elaboration for --path.
         self.touched_dirs: List[str] = []
 
         # Resolve raw_dir; --use-tmp relocates it under a fresh /tmp scratch.
@@ -107,15 +109,15 @@ class Manager:
             errors.set_log_file(self.log_file)
 
         # User-supplied Python search paths and helper modules.
-        for d in self.python_paths:
+        for d in self.py_paths:
             if d and d not in sys.path:
                 sys.path.insert(0, d)
-        for name in self.pymodules:
+        for name in self.py_imports:
             try:
                 importlib.import_module(name)
             except ImportError as exc:
                 raise GenesisPyError(
-                    f"--pymodule: failed to import {name!r}: {exc}"
+                    f"--py-import: failed to import {name!r}: {exc}"
                 ) from exc
 
         self.cfg_handler = None
@@ -135,10 +137,10 @@ class Manager:
             self.touched_dirs.append(d)
 
     def _resolve_cfg_path(self, name: str) -> str:
-        """Resolve a --cfg/--json input against ``--cfgpath`` dirs.
+        """Resolve a --cfg/--json-cfg input against ``--cfg-path`` dirs.
 
         Absolute paths and existing relative paths are returned unchanged
-        (after being recorded). Otherwise the cfgpath list is searched in
+        (after being recorded). Otherwise the cfg-path list is searched in
         order.
         """
         if os.path.isabs(name) or os.path.exists(name):
@@ -164,7 +166,7 @@ class Manager:
             raise ParseError(f"find_file: file not found: {name}")
 
         if paths is None:
-            candidates = [*self.sources_path, *self.includes_path, "."]
+            candidates = [*self.src_path, *self.inc_path, "."]
         else:
             candidates = list(paths)
 
@@ -185,12 +187,12 @@ class Manager:
     def _discover_generated_modules(self) -> None:
         """Populate ``_generated_modules`` from existing .py files in raw_dir.
 
-        Used by ``--generate-only`` so the elaboration phase can run without
+        Used by ``--gen-only`` so the elaboration phase can run without
         re-parsing .vpy sources.
         """
         if not os.path.isdir(self.raw_dir):
             raise GenesisPyError(
-                f"--generate-only: raw_dir {self.raw_dir!r} does not exist."
+                f"--gen-only: raw_dir {self.raw_dir!r} does not exist."
             )
         for fname in os.listdir(self.raw_dir):
             if fname.endswith(".py"):
@@ -371,8 +373,8 @@ class Manager:
                 raise GenesisPyError(f"{label} failed: {exc}") from exc
 
         ch = _wrap("ConfigHandler init", ConfigHandler, self)
-        if self.json_in:
-            _wrap("read_json", ch.read_json, self._resolve_cfg_path(self.json_in))
+        if self.json_cfg:
+            _wrap("read_json", ch.read_json, self._resolve_cfg_path(self.json_cfg))
         for cfg in self.cfg_files:
             _wrap(f"read_cfg ({cfg})", ch.read_cfg, self._resolve_cfg_path(cfg))
         # Command-line --parameter overrides are ingested by ConfigHandler
@@ -395,7 +397,7 @@ class Manager:
     def flush_outputs(self) -> None:
         """Write the in-memory Verilog cache to disk + lists + clean script.
 
-        Also dumps the resolved configuration tree to ``--jsonout`` if
+        Also dumps the resolved configuration tree to ``--json-out`` if
         passed.
 
         When ``--stdout`` is set, the Verilog cache is concatenated to
@@ -416,8 +418,12 @@ class Manager:
             output_writer.write_clean_script(self)
             if self.product_file:
                 output_writer.write_product_lists(self, written, self.product_file)
-            if self.pathfile:
-                output_writer.write_pathfile(self, self.pathfile)
+            if self.vf_out:
+                output_writer.write_product_lists(
+                    self, written, self.vf_out, vf=True
+                )
+            if self.path_file:
+                output_writer.write_pathfile(self, self.path_file)
 
         if self.cfg_handler is not None:
             if self.json_out:
@@ -480,7 +486,7 @@ class Manager:
             return 0
 
         try:
-            if not self.generate_only:
+            if not self.gen_only:
                 self.parse_files()
             else:
                 self._discover_generated_modules()

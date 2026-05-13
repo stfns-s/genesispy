@@ -147,7 +147,7 @@ def flush_to_disk(manager) -> Dict[str, List[str]]:
     """
     synth_dir = manager.synth_dir
     verif_dir = manager.verif_dir
-    flavor = manager.flavor
+    flavor = manager.out_type
     gen_raw = manager.gen_raw
     raw_dir = manager.raw_dir
 
@@ -264,7 +264,7 @@ def write_file_lists(manager, written: Dict[str, List[str]]) -> Dict[str, str]:
         out["verif_vlist"] = verif_vlist
 
     # Depfile: '<vlist>: <input1.vpy> <input2.vpy> ...'
-    sources = list(manager.sources_path)
+    sources = list(manager.src_path)
     depend_override = manager.depend_file
     depend_path = depend_override or os.path.join(output_dir, f"{top}.depend")
     deps_str = " ".join(_portable_path(s) for s in sources)
@@ -402,20 +402,24 @@ def clean_outputs(manager) -> None:
 
 
 def write_product_lists(
-    manager, written: Dict[str, List[str]], base: str
+    manager, written: Dict[str, List[str]], base: str, *, vf: bool = False,
 ) -> Dict[str, str]:
-    """Write Genesis2-style product lists ``base.synth`` and ``base.verif``.
+    """Write Genesis2-style product lists.
 
-    ``base`` may already carry an extension; we replace it with ``.synth``
-    / ``.verif`` (matching ``Manager.pm:1303``).  Per Perl
-    ``Manager.pm:1393-1394``, ``synth_and_verif`` files appear in *both*
-    lists.
+    Without ``vf``: produces ``base.synth`` and ``base.verif`` (matches
+    ``Manager.pm:1303``). With ``vf=True``: produces ``base.synth.vf`` and
+    ``base.verif.vf``, the Genesis2 ``.vf`` extension for product lists.
+    Contents are identical to the non-vf form; only the filename suffix
+    differs. Per Perl ``Manager.pm:1393-1394``, ``synth_and_verif`` files
+    appear in *both* lists.
     """
     stem, ext = os.path.splitext(base)
     if not ext:
         stem = base
-    synth_path = stem + ".synth"
-    verif_path = stem + ".verif"
+    synth_suffix = ".synth.vf" if vf else ".synth"
+    verif_suffix = ".verif.vf" if vf else ".verif"
+    synth_path = stem + synth_suffix
+    verif_path = stem + verif_suffix
 
     synth_paths = written.get("synth", [])
     verif_paths = written.get("verif", [])
@@ -434,7 +438,7 @@ def write_product_lists(
 def write_pathfile(manager, path: str) -> str:
     """Write the list of directories touched during elaboration to ``path``."""
     dirs: List[str] = []
-    for attr in ("sources_path", "includes_path", "cfg_path"):
+    for attr in ("src_path", "inc_path", "cfg_path"):
         for d in getattr(manager, attr):
             ad = os.path.abspath(d)
             if ad not in dirs:

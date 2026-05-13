@@ -35,8 +35,8 @@ def manager(tmp_path):
     m.raw_dir = str(tmp_path / "raw")
     m.synth_dir = str(tmp_path / "synth")
     m.verif_dir = str(tmp_path / "verif")
-    m.sources_path = [str(tmp_path / "src" / "foo.vpy"),
-                      str(tmp_path / "src" / "bar.vpy")]
+    m.src_path = [str(tmp_path / "src" / "foo.vpy"),
+                  str(tmp_path / "src" / "bar.vpy")]
     return m
 
 
@@ -155,7 +155,7 @@ def test_flush_warns_on_synth_verif_collision(
     cache.OUTFILE_TAGS["alu.v"] = "verif"
     manager.synth_dir = manager.output_dir if use_output_dir else ""
     manager.verif_dir = manager.output_dir if use_output_dir else ""
-    manager.flavor = flavor
+    manager.out_type = flavor
     output_writer.flush_to_disk(manager)
     err = capsys.readouterr().err
     assert "alu.v" in err and "overwrite" in err
@@ -165,7 +165,7 @@ def test_flush_gen_raw_writes_all_files_regardless_of_flavor(manager):
     """``--gen-raw`` dumps the full elaborated set into raw_dir regardless of --flavor."""
     _populate_cache()  # 2 synth + 1 verif
     manager.gen_raw = True
-    manager.flavor = "synth"  # would otherwise drop the verif file
+    manager.out_type = "synth"  # would otherwise drop the verif file
     written = output_writer.flush_to_disk(manager)
 
     # Main output respects the filter.
@@ -399,3 +399,41 @@ def test_stub_manager_has_documented_attrs():
     for attr in ("synth_top", "synth_dir", "verif_dir", "raw_dir",
                  "output_dir", "extension_map", "top", "cfg_handler"):
         assert hasattr(s, attr), f"StubManager missing {attr!r}"
+
+
+# --------------------------------------------------------------------------- #
+# write_product_lists -- --product (.synth/.verif) and --vf-out (.synth.vf/.verif.vf)
+# --------------------------------------------------------------------------- #
+
+
+def test_write_product_lists_default_suffixes(manager, tmp_path):
+    """Default (--product) form writes ``.synth`` and ``.verif``."""
+    _populate_cache()
+    written = output_writer.flush_to_disk(manager)
+    base = str(tmp_path / "manifest")
+    out = output_writer.write_product_lists(manager, written, base)
+    assert out["synth"] == base + ".synth"
+    assert out["verif"] == base + ".verif"
+    assert os.path.isfile(out["synth"])
+    assert os.path.isfile(out["verif"])
+
+
+def test_write_product_lists_vf_suffixes(manager, tmp_path):
+    """vf=True writes ``.synth.vf`` / ``.verif.vf`` with identical content."""
+    _populate_cache()
+    written = output_writer.flush_to_disk(manager)
+    base = str(tmp_path / "manifest")
+
+    plain = output_writer.write_product_lists(manager, written, base)
+    vf = output_writer.write_product_lists(manager, written, base, vf=True)
+
+    assert vf["synth"] == base + ".synth.vf"
+    assert vf["verif"] == base + ".verif.vf"
+    assert os.path.isfile(vf["synth"])
+    assert os.path.isfile(vf["verif"])
+
+    # Content of the .vf variants must match the non-.vf variants byte-for-byte.
+    with open(plain["synth"]) as fa, open(vf["synth"]) as fb:
+        assert fa.read() == fb.read()
+    with open(plain["verif"]) as fa, open(vf["verif"]) as fb:
+        assert fa.read() == fb.read()

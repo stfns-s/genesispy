@@ -160,7 +160,7 @@ def test_synonym_emitted_as_sibling_stub() -> None:
 
 def test_write_json_requires_top_inst(tmp_path) -> None:
     import types
-    args = types.SimpleNamespace(parameter=[], unqstyle=None)
+    args = types.SimpleNamespace(parameter=[], unq_style=None)
     ch = ConfigHandler(types.SimpleNamespace(args=args))
     with pytest.raises(GenesisPyError):
         ch.write_json(str(tmp_path / "out.json"), top_inst=None)
@@ -169,15 +169,15 @@ def test_write_json_requires_top_inst(tmp_path) -> None:
 def test_write_json_emits_three_files(tmp_path) -> None:
     import types
     top = _make_tree()
-    args = types.SimpleNamespace(parameter=[], unqstyle=None)
+    args = types.SimpleNamespace(parameter=[], unq_style=None)
     ch = ConfigHandler(types.SimpleNamespace(args=args))
 
     out = tmp_path / "hier.json"
     ch.write_json(str(out), top_inst=top)
 
     full = json.loads(out.read_text())
-    small = json.loads((tmp_path / "small_hier.json").read_text())
-    tiny = json.loads((tmp_path / "tiny_hier.json").read_text())
+    small = json.loads((tmp_path / "hier-small.json").read_text())
+    tiny = json.loads((tmp_path / "hier-tiny.json").read_text())
 
     full_a = next(
         c for c in full["HierarchyTop"]["SubInstances"]

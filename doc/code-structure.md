@@ -96,21 +96,21 @@ the emitter without touching the engine.
 Stage by stage:
 
 **Argument parsing & listfile expansion.** `cli.parse_args` builds the GNU flag set; `cli._expand_listfiles`
-recursively expands `--inputlist FILE` files containing `--input` / `--inputlist` / `--srcpath` /
-`--includepath` directives (bare paths default to `--input`).
+recursively expands `--input-list FILE` files containing `--input` / `--input-list` / `--src-path` /
+`--inc-path` directives (bare paths default to `--input`).
 
 **Manager construction.** `Manager.__init__` resolves `raw_dir` (`./genesis_raw` by default; relocated under a
-`/tmp/genesispy_*` scratch with `--use-tmp`), applies user `--pythonpath` / `--pymodule`, records
-`output_suffix` (default `.v`; `--systemverilog` is shorthand for `.sv`), and prepares the yet-unbuilt
+`/tmp/genesispy_*` scratch with `--use-tmp`), applies user `--py-path` / `--py-import`, records
+`output_suffix` (default `.v`; `--system-verilog` is shorthand for `.sv`), and prepares the yet-unbuilt
 `cfg_handler`.
 
 **Parse phase.** `Manager.parse_files` iterates the input list and calls `emitter.write_module(path, raw_dir)`
 for each; the emitter parses the `.vpy`, wraps it in a class deriving from `UniqueModule` + `UserMixin`,
 writes `<raw_dir>/<stem>.py`, and registers a generated-line -> `.vpy`-line map. Skipped under
-`--generate-only` (which calls `Manager._discover_generated_modules` instead, expecting `.py` files already
+`--gen-only` (which calls `Manager._discover_generated_modules` instead, expecting `.py` files already
 present in `raw_dir`). Terminal under `--parse-only`.
 
-**Elaboration phase.** `Manager.gen_verilog` builds the `cfg_handler` (reads any `--json` / `--cfg` /
+**Elaboration phase.** `Manager.gen_verilog` builds the `cfg_handler` (reads any `--json-cfg` / `--cfg` /
 `--parameter` overrides), imports the generated `.py` for the top module via `Manager.load_top_module`,
 instantiates it (`top = TopModule(manager)`), enters `user_config.context(manager, top)`, and calls
 `top.execute()`. Recursion happens inside `execute()`: each `unique_inst` / `instantiate` / `generate*` call
@@ -124,11 +124,11 @@ under every registered synonym name (from `clone_inst` / `synonym`).
 
 **Flush phase.** `Manager.flush_outputs` calls into `output_writer`: `flush_to_disk` walks
 `OUTFILE_CONTENT_CACHE`, splits each file into `genesis_synth/` or `genesis_verif/` based on a synth/verif
-heuristic (filterable with `--flavor synth|verif|both`), and writes only when content differs from disk. Then
+heuristic (filterable with `--out-type synth|verif|both`), and writes only when content differs from disk. Then
 `write_file_lists` emits `.vlist` and `.depend`, `write_clean_script` emits `genesispy_clean.sh`, optional
-`write_product_lists` and `write_pathfile` handle `--product` and `--pathfile`. With `--stdout` the cache is
+`write_product_lists` and `write_pathfile` handle `--product` and `--path`. With `--stdout` the cache is
 concatenated to stdout instead and the list/clean-script writers are skipped. Resolved configuration is
-optionally dumped via `cfg_handler.write_json` when `--jsonout` is set.
+optionally dumped via `cfg_handler.write_json` when `--json-out` is set.
 
 **Clean.** `Manager.clean` (driven by `--clean`) calls `output_writer.clean_outputs` and removes `raw_dir`. It
 runs as a short-circuit before parsing -- `--clean` exits before any `.vpy` is touched.
@@ -212,32 +212,32 @@ Legacy XML configs convert via `genesispy-xml2json`. Full `ConfigHandler` API: s
 - `genesis_raw/<stem>.py` -- generated Python intermediates. Persist by default in `./genesis_raw/`.
   `--use-tmp` relocates them under `/tmp/genesispy_*` (auto-cleaned at exit; `--keep-tmp` preserves the
   scratch). `--gen-raw` additionally writes the emitted Verilog into `raw_dir` for inspection.
-- Optional `--jsonout FILE` -- resolved configuration tree.
+- Optional `--json-out FILE` -- resolved configuration tree.
 - Optional `--product FILE` (Genesis2 compat) -- writes `FILE.synth` and `FILE.verif` product lists.
-- Optional `--pathfile FILE` -- directories touched during elaboration.
+- Optional `--path FILE` -- directories touched during elaboration.
 
 ## 8. Control surfaces
 
 Selected flags (`genesispy --help` is authoritative for the full list, including
-`--synthtop`, `--outputdir`, `--synth-dir`, `--verif-dir`, `--cfg`, `--cfgpath`,
-`--depend`, `--pathfile`, `--debug`, `--log`):
+`--synth-top`, `--out-dir`, `--synth-dir`, `--verif-dir`, `--cfg`, `--cfg-path`,
+`--depend`, `--path`, `--debug`, `--log`):
 
 | Flag                          | Effect                                                                        |
 |-------------------------------|-------------------------------------------------------------------------------|
 | `--clean`                     | Delete outputs and `raw_dir`; skip parse/elaboration.                         |
 | `--parse-only`                | Stop after parsing `.vpy` -> `.py`.                                            |
-| `--generate-only`             | Skip parse; expect `genesis_raw/*.py` already present, then elaborate.        |
+| `--gen-only`             | Skip parse; expect `genesis_raw/*.py` already present, then elaborate.        |
 | `--no-module-cache`           | Disable `MODULE_CACHE` (every `unique_inst` re-elaborates).                   |
 | `--use-tmp` / `--keep-tmp`    | Move `raw_dir` to `/tmp/genesispy_*`; optionally preserve the scratch.        |
 | `--gen-raw`                   | Also write emitted Verilog into `raw_dir` for inspection.                     |
 | `--stdout`                    | Concatenate the Verilog cache to stdout; skip `.vlist`/`.depend`/clean script.|
-| `--flavor synth|verif|both`   | Filter outputs by flavour.                                                    |
-| `--unqstyle numeric|param`    | Selects `generate(...)` dispatch (numeric suffix vs. param-encoded names).    |
-| `--inputlist FILE`            | Recursively expand a listfile of `--input` / `--srcpath` / `--includepath`.   |
+| `--out-type synth|verif|both`   | Filter outputs by flavour.                                                    |
+| `--unq-style numeric|param`    | Selects `generate(...)` dispatch (numeric suffix vs. param-encoded names).    |
+| `--input-list FILE`            | Recursively expand a listfile of `--input` / `--src-path` / `--inc-path`.   |
 | `--suffix EXT`                | Override emitted Verilog extension (default `.v`).                            |
-| `--systemverilog` / `-sv`     | Shorthand for `--suffix sv`. Mutually exclusive with `--suffix`.              |
+| `--system-verilog` / `-sv`     | Shorthand for `--suffix sv`. Mutually exclusive with `--suffix`.              |
 | `--product FILE`              | Write `FILE.synth` / `FILE.verif` (Genesis2 semantics).                       |
-| `--jsonout`                   | Dump resolved configuration tree.                                             |
+| `--json-out`                   | Dump resolved configuration tree.                                             |
 
 ## 9. `gvpy` CLI
 
