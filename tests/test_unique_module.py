@@ -218,7 +218,11 @@ def test_unique_inst_post_dedup_rolls_back_grandchild_registrations() -> None:
     """Post-dedup must clear grandchild registrations, not just direct synonyms.
 
     Discarded second Foo's nested ununique_inst(Bar, ...) would otherwise
-    leave orphan Bar_unqN entries in MODULE_CACHE / OUTFILE_CONTENT_CACHE.
+    leave orphan Bar entries in MODULE_CACHE / OUTFILE_CONTENT_CACHE.
+    (Post Cluster E: ununique_inst emits a bare ``Bar`` name on first call
+    and aliases on a matching second call, so the second invocation never
+    journals a separate write — but the rollback discipline still has to
+    hold for the first one if Foo itself is post-dedup discarded.)
     """
 
     class Bar(UniqueModule):
@@ -235,10 +239,11 @@ def test_unique_inst_post_dedup_rolls_back_grandchild_registrations() -> None:
     b = top.unique_inst(Foo, "u_b", WIDTH=8)
     # Same eff_post -> post-dedup hit on Foo.
     assert b.get_unique_module_name() == a.get_unique_module_name()
-    bar_keys = [k for k in cache.MODULE_CACHE if k.startswith("Bar_unq")]
+    bar_keys = [k for k in cache.MODULE_CACHE if k == "Bar" or k.startswith("Bar_unq")]
     assert len(bar_keys) == 1, f"orphan Bar registration: {bar_keys}"
     bar_outfiles = [
-        k for k in cache.OUTFILE_CONTENT_CACHE if k.startswith("Bar_unq")
+        k for k in cache.OUTFILE_CONTENT_CACHE
+        if k == "Bar.v" or k.startswith("Bar_unq")
     ]
     assert len(bar_outfiles) == 1, f"orphan Bar outfile: {bar_outfiles}"
 
@@ -255,11 +260,16 @@ def test_clone_inst_shares_unique_module_name() -> None:
     assert "u_clone" not in src.get_synonyms()
 
 
-def test_ununique_inst_always_fresh() -> None:
+def test_ununique_inst_preserves_bare_base_name_matching_params() -> None:
+    """Post Cluster E: ununique_inst preserves the bare base name and
+    aliases identical-params follow-ups to the same emitted module
+    (mirrors Perl UnUniquifiedModules behaviour in UniqueModule.pm:1610).
+    """
     top = Top(StubManager())
     a = top.ununique_inst(Leaf, "u_a", WIDTH=8)
     b = top.ununique_inst(Leaf, "u_b", WIDTH=8)
-    assert a.get_unique_module_name() != b.get_unique_module_name()
+    assert a.get_unique_module_name() == "Leaf"
+    assert b.get_unique_module_name() == "Leaf"
 
 
 # ---------------------------------------------------------------- emit/exec

@@ -7,7 +7,7 @@ import os
 import pytest
 
 from genesispy.cli import parse_args
-from genesispy.errors import ParseError
+from genesispy.reporting import ParseError
 from genesispy.manager import Manager
 
 
@@ -96,6 +96,37 @@ def test_find_file_missing_absolute_raises(tmp_path):
     m = _make_manager([])
     with pytest.raises(ParseError):
         m.find_file(str(tmp_path / "nope.vpy"))
+
+
+def test_resolve_module_class_walks_inc_path(tmp_path):
+    """resolve_module_class falls back to inc_path when input list misses.
+
+    Mirrors Perl's @INC scan in load_base_module (UniqueModule.pm). Required
+    so that bare-name `synonym(src, trgt)` (Cluster A) and `unique_inst` by
+    string name can find `.vpy` sources that the user placed on `--inc-path`
+    instead of `--input`.
+    """
+    inc = tmp_path / "inc"
+    inc.mkdir()
+    (inc / "lib_mod.vpy").write_text("module lib_mod;\nendmodule\n")
+    raw = tmp_path / "raw"
+    m = _make_manager(
+        [
+            "--inc-path", str(inc),
+            "--raw-dir", str(raw),
+        ]
+    )
+    cls = m.resolve_module_class("lib_mod")
+    assert cls is not None
+    assert cls.__name__ == "lib_mod"
+
+
+def test_resolve_module_class_missing_raises(tmp_path):
+    """Missing module (not on inputs, not on inc_path) still raises."""
+    from genesispy.reporting import GenesisPyError
+    m = _make_manager(["--raw-dir", str(tmp_path / "raw")])
+    with pytest.raises(GenesisPyError, match="not found"):
+        m.resolve_module_class("nonexistent_xyz")
 
 
 def test_execute_returns_zero(capsys):

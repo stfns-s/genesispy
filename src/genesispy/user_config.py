@@ -22,7 +22,7 @@ on exit::
 
 Single-threaded; the context is a plain module global. Concurrent
 elaboration would also need to revisit ``cache.py``, ``runtime.LINE_MAP``,
-and ``errors._LOG_FH``.
+and ``reporting._LOG_FH``.
 
 Notes
 -----
@@ -177,6 +177,6 @@ def _get_synthtop_path() -> str:
 
 def error(msg: str) -> None:
     """Raise a fatal Genesis2 error (mirrors Perl ``error()``)."""
-    from .errors import error as _err
+    from .reporting import error as _err
 
     _err(msg, fatal=True)

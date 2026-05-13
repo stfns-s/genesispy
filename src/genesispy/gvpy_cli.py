@@ -27,9 +27,10 @@ import sys
 from typing import Any, Iterable
 
 from genesispy import __version__, cache, user_config
+from genesispy import reporting
 from genesispy.cli import _add_deprecated_alias, _comment_arg
 from genesispy.config_handler import ConfigHandler
-from genesispy.errors import ParameterError
+from genesispy.reporting import ParameterError
 from genesispy.extensions import build_extension_map, parse_extension_spec
 from genesispy.template.aliases import alias_prelude_source
 from genesispy.template.parser import parse_vpy
@@ -129,7 +130,7 @@ class _GvpyManager:
         if existing is not None:
             return existing
         src_cls = self.resolve_module_class(src_name)
-        new_cls = type(target_name, (src_cls,), {})
+        new_cls = type(target_name, (src_cls,), {"_synonym_for": src_name})
         self._synonym_classes[key] = new_cls
         return new_cls
 
@@ -363,13 +364,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         mgr = _GvpyManager(args, incdirs)
     except ParameterError as exc:
-        sys.stderr.write(f"{PROG}: {exc}\n")
+        reporting.error(f"{PROG}: {exc}", fatal=False)
         return 2
     # ConfigHandler.__init__ has already ingested args.parameter into
     # _cmdln_db / _cmdln_scoped_db; no further seeding required.
 
     if not args.files:
-        sys.stderr.write(f"{PROG}: no input files\n")
+        reporting.error(f"{PROG}: no input files", fatal=False)
         return 2
 
     from genesispy.template.runtime import remap_traceback
@@ -379,7 +380,9 @@ def main(argv: list[str] | None = None) -> int:
         try:
             _process(fname, mgr, args, incdirs)
         except Exception as exc:  # surface the source location
-            sys.stderr.write(f"{PROG}: error processing {fname}: {exc}\n")
+            reporting.error(
+                f"{PROG}: error processing {fname}: {exc}", fatal=False
+            )
             sys.stderr.write(remap_traceback(exc))
             rc = 1
     return rc

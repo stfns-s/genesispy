@@ -87,6 +87,21 @@ Common modes:
 
 `lint`, `sim`, and `clean` work as in the shared `genesispy.mk`.
 
+### `generation_examples`
+
+Five small tops illustrating the instance-generation primitives
+(`unique_inst`, `ununique_inst`, `generate_w_name`,
+`synonym`+`generate_base`, `clone_inst`) side-by-side. Each serves a
+different purpose -- distinct uniquified modules per parameter set, a
+single shared module under many instances, renaming the emitted
+module, registering a synonym up front, or duplicating an
+already-elaborated module without re-running its body. One top module
+per pattern under `genesis_src/ex<N>_<style>.vpy`, sharing a single
+`pll.vpy` leaf. `make gen` elaborates all five into
+`genesis_synth_ex<N>/`; `make ex<N>_<style>` runs just one. See the
+demo's own `README.md` for source listings, commands, and the expected
+Verilog output for each example.
+
 ### `random_logic`
 
 Nested parametric one-hot mux. Generates six unique modules from hardcoded loops over signal and mux widths. No config.

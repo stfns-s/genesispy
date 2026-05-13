@@ -27,9 +27,21 @@ from typing import Any
 SIMPLE_ALIASES: tuple[tuple[str, str], ...] = (
     ("parameter",            "parameter"),
     ("define_param",         "define_param"),
+    ("doc_param",            "doc_param"),
+    ("param_range",          "param_range"),
+    ("exists_param",         "exists_param"),
+    ("get_top_param",        "get_top_param"),
+    ("list_params",          "list_params"),
     ("synonym",              "synonym"),
     ("instantiate",          "instantiate"),
     ("emit",                 "emit"),
+    ("error",                "error"),
+    ("warning",              "warning"),
+    ("get_subinst",          "get_subinst"),
+    ("exists_subinst",       "exists_subinst"),
+    ("get_subinst_array",    "get_subinst_array"),
+    ("get_instance_obj",     "get_instance_obj"),
+    ("search_subinst",       "search_subinst"),
     ("unique_inst",          "unique_inst"),
     ("unique_inst_param",    "unique_inst_param"),
     ("clone_inst",           "clone_inst"),
@@ -60,12 +72,35 @@ def alias_prelude_source(indent: str = "        ") -> str:
     importable in the generated module's namespace (the emitter arranges
     both via the generated module's import block).
     """
-    lines = [f"{indent}{alias} = self.{attr}" for alias, attr in SIMPLE_ALIASES]
+    lines: list[str] = []
+    for alias, attr in SIMPLE_ALIASES:
+        if alias == "synonym":
+            # Perl synonym is two-form: synonym(name) mirrors the outfile
+            # under a new name (Python's instance-level semantics), while
+            # synonym(src, trgt) creates a class-level template synonym
+            # (Perl semantics). Dispatcher picks by arity.
+            lines.append(f"{indent}def synonym(*_args):")
+            lines.append(f"{indent}    if len(_args) == 1:")
+            lines.append(f"{indent}        return self.synonym(_args[0])")
+            lines.append(f"{indent}    if len(_args) == 2:")
+            lines.append(f"{indent}        return self._manager.synonym_class(*_args)")
+            lines.append(f"{indent}    raise TypeError(")
+            lines.append(
+                f"{indent}        'synonym() takes 1 or 2 positional arguments; '"
+            )
+            lines.append(f"{indent}        f'got {{len(_args)}}'")
+            lines.append(f"{indent}    )")
+        else:
+            lines.append(f"{indent}{alias} = self.{attr}")
     # Genesis2 short-name quartet — kept here so _include's alias_dict matches.
     lines.append(f"{indent}mname = StrCallable(self._unique_module_name)")
     lines.append(f"{indent}iname = StrCallable(self._instance_name)")
     lines.append(f"{indent}bname = StrCallable(self._module_name)")
-    lines.append(f"{indent}sname = StrCallable(self._unique_module_name)")
+    # sname tracks Perl get_source_name: pre-synonym source-template name.
+    lines.append(
+        f"{indent}sname = StrCallable("
+        f"getattr(type(self), '_synonym_for', None) or self._module_name)"
+    )
     lines.append(f"{indent}include = _gpy_user_config._include")
     lines.append(f'{indent}pinclude = getattr(self, "pinclude", None)')
     return "\n".join(lines) + "\n"
@@ -82,14 +117,31 @@ def alias_dict(self_obj: Any) -> dict[str, Any]:
     from genesispy import user_config as _uc
     from .runtime import StrCallable
 
-    out: dict[str, Any] = {alias: getattr(self_obj, attr) for alias, attr in SIMPLE_ALIASES}
+    # All SIMPLE_ALIASES except synonym (handled as a dispatcher below).
+    out: dict[str, Any] = {
+        alias: getattr(self_obj, attr)
+        for alias, attr in SIMPLE_ALIASES
+        if alias != "synonym"
+    }
+
+    # synonym dispatcher: 1-arg = outfile mirror, 2-arg = class rename
+    # (Perl-compat). Same semantics as alias_prelude_source's emitted def.
+    def synonym(*args: Any) -> Any:
+        if len(args) == 1:
+            return self_obj.synonym(args[0])
+        if len(args) == 2:
+            return self_obj._manager.synonym_class(*args)
+        raise TypeError(
+            f"synonym() takes 1 or 2 positional arguments; got {len(args)}"
+        )
+    out["synonym"] = synonym
+
     # Reuse populated StrCallables when present; synthesise otherwise so
     # _include works before the emitter prelude has run.
     for short, src_attr in (
         ("mname", "_unique_module_name"),
         ("iname", "_instance_name"),
         ("bname", "_module_name"),
-        ("sname", "_unique_module_name"),
     ):
         existing = getattr(self_obj, short, None)
         if isinstance(existing, StrCallable):
@@ -97,6 +149,18 @@ def alias_dict(self_obj: Any) -> dict[str, Any]:
         else:
             base = getattr(self_obj, src_attr, None)
             out[short] = StrCallable(base) if base is not None else None
+
+    # sname is synonym-aware: read the @property (or a pre-populated
+    # StrCallable on a test stub) rather than falling back to the
+    # post-uniquification _unique_module_name.
+    existing_sname = getattr(self_obj, "sname", None)
+    if isinstance(existing_sname, StrCallable):
+        out["sname"] = existing_sname
+    elif existing_sname is not None:
+        out["sname"] = StrCallable(existing_sname)
+    else:
+        out["sname"] = None
+
     out["include"] = _uc._include
     out["pinclude"] = getattr(self_obj, "pinclude", None)
     return out

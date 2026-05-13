@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from genesispy.errors import ParseError
+from genesispy.reporting import ParseError
 from genesispy.template.parser import parse_vpy
 
 

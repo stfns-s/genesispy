@@ -232,3 +232,40 @@ def test_regfile(tmp_path: Path, syntax: str) -> None:
     assert "module top()" in body
     assert "DataOut1" in body
     assert "DataOut2" in body
+
+
+def test_generation_examples(tmp_path: Path) -> None:
+    """Five tops sharing one pll.vpy, each via a different generation
+    primitive. No j2 twin in this demo, so only the default flavour runs.
+    """
+    demo_dir = DEMOS / "generation_examples"
+    src_dst = tmp_path / "genesis_src"
+    shutil.copytree(demo_dir / "genesis_src", src_dst)
+
+    cases = [
+        ("ex1_unique",   {"ex1_unique.v",   "pll_unq1.v", "pll_unq2.v", "pll_unq3.v"}),
+        ("ex2_ununique", {"ex2_ununique.v", "pll.v"}),
+        ("ex3_genwname", {"ex3_genwname.v", "my_pll.v"}),
+        ("ex4_synonym",  {"ex4_synonym.v",  "my_pll.v"}),
+        ("ex5_clone",    {"ex5_clone.v",    "pll_unq1.v"}),
+    ]
+
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        for top, want in cases:
+            cache.clear_all()
+            out_dir = f"genesis_synth_{top.split('_')[0]}"
+            argv = [
+                "--input", f"{top}.vpy",
+                "--input", "pll.vpy",
+                "--top", top,
+                "--srcpath", "genesis_src",
+                "--out-dir", out_dir,
+            ]
+            rc = Manager(parse_args(argv)).execute()
+            assert rc == 0, f"{top}: genesispy returned {rc}"
+            got = {p.name for p in (tmp_path / out_dir).iterdir() if p.suffix == ".v"}
+            assert want <= got, f"{top}: expected {want}, got {got}"
+    finally:
+        os.chdir(cwd)

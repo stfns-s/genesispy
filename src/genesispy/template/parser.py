@@ -72,7 +72,7 @@ import json
 import os
 from typing import Iterable, List, Optional
 
-from genesispy.errors import ParseError
+from genesispy.reporting import ParseError
 from genesispy.extensions import DEFAULT_EXTENSION_MAP
 
 

@@ -42,6 +42,8 @@ import sys
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+from genesispy import reporting
+
 try:
     import jinja2
     from jinja2 import nodes as j2nodes
@@ -564,9 +566,10 @@ def _build_argparser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[List[str]] = None) -> int:
     if jinja2 is None:
-        sys.stderr.write(
+        reporting.error(
             "genesispy-jinja2j2 requires the optional 'jinja2' dependency. "
-            "Install with: pip install 'genesispy[import-j2]'\n"
+            "Install with: pip install 'genesispy[import-j2]'",
+            fatal=False,
         )
         return 2
 
@@ -580,26 +583,29 @@ def main(argv: Optional[List[str]] = None) -> int:
             with open(args.input, "r") as fh:
                 source = fh.read()
         except OSError as e:
-            sys.stderr.write(f"genesispy-jinja2j2: {e}\n")
+            reporting.error(f"genesispy-jinja2j2: {e}", fatal=False)
             return 2
         in_label = args.input
 
     try:
         result, issues = convert(source, strict=args.strict)
     except _Unmappable as e:
-        sys.stderr.write(f"{in_label}:{e.line}:{e.col}: cannot port: {e.reason}\n")
+        reporting.error(
+            f"{in_label}:{e.line}:{e.col}: cannot port: {e.reason}",
+            fatal=False,
+        )
         return 1
 
     for iss in issues:
         sys.stderr.write(
-            f"{in_label}:{iss.line}:{iss.col}: warning: {iss.reason}\n"
+            f"  {in_label}:{iss.line}:{iss.col}: {iss.reason}\n"
         )
 
     if args.check:
         if issues:
-            sys.stderr.write(
+            reporting.warning(
                 f"genesispy-jinja2j2: {len(issues)} unmappable construct(s) "
-                f"in {in_label}\n"
+                f"in {in_label}"
             )
             return 1
         return 0
@@ -611,9 +617,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             fh.write(result)
 
     if issues and not args.strict:
-        sys.stderr.write(
+        reporting.info(
             f"genesispy-jinja2j2: {len(issues)} manual fixup(s) needed in "
-            f"{args.output or '<stdout>'}\n"
+            f"{args.output or '<stdout>'}"
         )
     return 0
 

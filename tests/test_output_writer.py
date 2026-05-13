@@ -406,34 +406,32 @@ def test_stub_manager_has_documented_attrs():
 # --------------------------------------------------------------------------- #
 
 
-def test_write_product_lists_default_suffixes(manager, tmp_path):
-    """Default (--product) form writes ``.synth`` and ``.verif``."""
+def test_write_product_lists_no_extension(manager, tmp_path):
+    """--product FILE with no extension writes FILE / FILE.synth / FILE.verif."""
     _populate_cache()
     written = output_writer.flush_to_disk(manager)
     base = str(tmp_path / "manifest")
     out = output_writer.write_product_lists(manager, written, base)
+    # Cluster J2: triple-file output (master + synth + verif).
+    assert out["master"] == base
     assert out["synth"] == base + ".synth"
     assert out["verif"] == base + ".verif"
-    assert os.path.isfile(out["synth"])
-    assert os.path.isfile(out["verif"])
+    for k in ("master", "synth", "verif"):
+        assert os.path.isfile(out[k])
 
 
-def test_write_product_lists_vf_suffixes(manager, tmp_path):
-    """vf=True writes ``.synth.vf`` / ``.verif.vf`` with identical content."""
+def test_write_product_lists_with_extension(manager, tmp_path):
+    """--product FILE.ext writes FILE.ext / FILE.synth.ext / FILE.verif.ext.
+
+    Mirrors Perl Manager.pm:1302-1319 (last-dot extension split).
+    """
     _populate_cache()
     written = output_writer.flush_to_disk(manager)
-    base = str(tmp_path / "manifest")
-
-    plain = output_writer.write_product_lists(manager, written, base)
-    vf = output_writer.write_product_lists(manager, written, base, vf=True)
-
-    assert vf["synth"] == base + ".synth.vf"
-    assert vf["verif"] == base + ".verif.vf"
-    assert os.path.isfile(vf["synth"])
-    assert os.path.isfile(vf["verif"])
-
-    # Content of the .vf variants must match the non-.vf variants byte-for-byte.
-    with open(plain["synth"]) as fa, open(vf["synth"]) as fb:
-        assert fa.read() == fb.read()
-    with open(plain["verif"]) as fa, open(vf["verif"]) as fb:
-        assert fa.read() == fb.read()
+    base = str(tmp_path / "manifest.vf")
+    out = output_writer.write_product_lists(manager, written, base)
+    stem = str(tmp_path / "manifest")
+    assert out["master"] == base
+    assert out["synth"] == stem + ".synth.vf"
+    assert out["verif"] == stem + ".verif.vf"
+    for k in ("master", "synth", "verif"):
+        assert os.path.isfile(out[k])

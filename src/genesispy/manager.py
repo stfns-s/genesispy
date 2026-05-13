@@ -23,8 +23,8 @@ import sys
 import tempfile
 from typing import Dict, List, Optional, Type
 
-from . import cache, errors
-from .errors import GenesisPyError, ParseError, error, warning
+from . import cache, reporting
+from .reporting import GenesisPyError, ParseError, error, warning
 from .extensions import build_extension_map
 
 
@@ -68,10 +68,23 @@ class Manager:
         self.json_out = args.json_out
         self.cfg_files = list(args.cfg)
         self.out_type = args.out_type
-        # Genesis2 -product: when set, write FILE.synth + FILE.verif lists.
-        self.product_file = args.product
-        # --vf-out: same lists, written as FILE.synth.vf + FILE.verif.vf.
-        self.vf_out = args.vf_out
+        # Perl ``-product FILE.ext`` produces three files:
+        #   FILE.ext (master), FILE.synth.ext, FILE.verif.ext
+        # ``--vf-out FILE`` is a permanent alias for ``--product FILE.vf``
+        # (auto-appends .vf if missing). The two flags are mutually
+        # exclusive.
+        if args.product is not None and args.vf_out is not None:
+            raise GenesisPyError(
+                "--product and --vf-out are mutually exclusive; "
+                "--vf-out FILE is shorthand for --product FILE.vf."
+            )
+        if args.vf_out is not None:
+            vf = args.vf_out
+            if not vf.endswith(".vf"):
+                vf = vf + ".vf"
+            self.product_file = vf
+        else:
+            self.product_file = args.product
         self.depend_file = args.depend
         self.path_file = args.path
         self.log_file = args.log
@@ -103,10 +116,10 @@ class Manager:
             self._tmp_scratch = None
             self.raw_dir = getattr(args, "raw_dir", None) or "genesis_raw"
 
-        # errors._LOG_FH is a process global: one Manager per process, same
+        # reporting._LOG_FH is a process global: one Manager per process, same
         # single-threading caveat as cache.MODULE_CACHE.
         if self.log_file:
-            errors.set_log_file(self.log_file)
+            reporting.set_log_file(self.log_file)
 
         # User-supplied Python search paths and helper modules.
         for d in self.py_paths:
@@ -319,6 +332,33 @@ class Manager:
                     break
 
         if py_path is None:
+            # Fallback: search inc_path for `<name><ext>` over every registered
+            # input extension. Mirrors Perl's @INC scan in load_base_module
+            # (UniqueModule.pm:load_base_module). Without this, calling
+            # `unique_inst("foo", ...)` from a `.vpy` body fails when
+            # `foo.vpy` is only on `--inc-path` and never named on the CLI.
+            search_paths = list(self.inc_path) + ["."]
+            for in_ext in self.extension_map.keys():
+                candidate = f"{name}{in_ext}"
+                try:
+                    path = self.find_file(candidate, search_paths)
+                except (FileNotFoundError, GenesisPyError):
+                    continue
+                from .template import emitter
+
+                out_suffix = self._output_suffix_for(path)
+                py_path = emitter.write_module(
+                    path,
+                    self.raw_dir,
+                    output_suffix=out_suffix,
+                    allowed=frozenset(self.extension_map.keys()),
+                    syntax=self.syntax,
+                    comment=self.comment,
+                )
+                self._generated_modules[name] = py_path
+                break
+
+        if py_path is None:
             raise GenesisPyError(
                 f"Module {name!r} not found among inputs "
                 f"{sorted(self._generated_modules)}"
@@ -352,7 +392,7 @@ class Manager:
                 f"synonym_class: cannot alias {target_name!r} to {src_name!r}; "
                 f"{target_name!r} already registered to a different class."
             )
-        new_cls = type(target_name, (src_cls,), {})
+        new_cls = type(target_name, (src_cls,), {"_synonym_for": src_name})
         self._loaded_classes[target_name] = new_cls
         return new_cls
 
@@ -418,10 +458,6 @@ class Manager:
             output_writer.write_clean_script(self)
             if self.product_file:
                 output_writer.write_product_lists(self, written, self.product_file)
-            if self.vf_out:
-                output_writer.write_product_lists(
-                    self, written, self.vf_out, vf=True
-                )
             if self.path_file:
                 output_writer.write_pathfile(self, self.path_file)
 

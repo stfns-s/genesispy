@@ -26,7 +26,7 @@ import runpy
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
-from . import errors, json_io
+from . import reporting, json_io
 from ._scalars import coerce_scalar as _coerce_scalar
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -95,7 +95,7 @@ def _parse_cmdln_param(
     empty name, or empty path segment).
     """
     if "=" not in spec:
-        raise errors.ParameterError(
+        raise reporting.ParameterError(
             f"Malformed -parameter spec '{spec}': expected NAME=VALUE"
         )
     lhs, _, val = spec.partition("=")
@@ -103,18 +103,18 @@ def _parse_cmdln_param(
     if ":" in lhs:
         # Perl supports NAME:TYPE=VAL; not yet ported. Reject explicitly
         # rather than silently strip a trailing ':'.
-        raise errors.ParameterError(
+        raise reporting.ParameterError(
             f"Malformed -parameter spec '{spec}': "
             "colon not allowed in parameter spec "
             "(':TYPE' annotations not supported)"
         )
     if not lhs:
-        raise errors.ParameterError(
+        raise reporting.ParameterError(
             f"Malformed -parameter spec '{spec}': empty name"
         )
     segs, leaf = _split_dotted_name(lhs)
     if segs is None and "." in lhs:
-        raise errors.ParameterError(
+        raise reporting.ParameterError(
             f"Malformed -parameter spec '{spec}': empty path segment or empty name"
         )
     return segs, leaf, _coerce_scalar(val)
@@ -168,6 +168,12 @@ _PARAM_VALUE_KEYS = frozenset(
     {"__Val__", "__ArrayType__", "__HashType__"}
 )
 
+# Keys whose subtrees ``_find_param`` must not descend into. Genesis2
+# treats input ``ImmutableParameters`` as writeback-only metadata (see
+# ConfigHandler.pm:875-919); skipping the subtree on read keeps genesispy
+# in lockstep on input semantics.
+_FIND_PARAM_SKIP_KEYS = frozenset({"ImmutableParameters"})
+
 # Sentinel returned by _find_param when no matching Parameter exists.
 # A separate sentinel lets callers tell "absent" apart from "explicitly
 # set to JSON null", which the priority resolution in get_configuration
@@ -181,9 +187,12 @@ def _find_param(node: Any, name: str) -> Any:
     ``__ArrayType__`` / ``__HashType__``). Returns :data:`_MISSING` when
     no match is found or the Parameter has no value-bearing key.
 
-    Recursion skips the value-bearing keys so user data inside a
+    Recursion skips ``_PARAM_VALUE_KEYS`` so user data inside a
     ``__HashType__`` cannot accidentally shadow a real parameter via a
-    stray ``Name`` key.
+    stray ``Name`` key, and skips ``_FIND_PARAM_SKIP_KEYS``
+    (``ImmutableParameters``) so input values nested under that tag are
+    not picked up -- matches Genesis2, which reads only ``Parameters``
+    from input XML.
     """
     if isinstance(node, dict):
         nm = node.get("Name")
@@ -196,7 +205,7 @@ def _find_param(node: Any, name: str) -> Any:
                 return _unwrap_hash(node["__HashType__"])
             return _MISSING
         for k, v in node.items():
-            if k in _PARAM_VALUE_KEYS:
+            if k in _PARAM_VALUE_KEYS or k in _FIND_PARAM_SKIP_KEYS:
                 continue
             r = _find_param(v, name)
             if r is not _MISSING:
@@ -264,7 +273,7 @@ class ConfigHandler:
     @staticmethod
     def _validate_unq_style(style: str) -> None:
         if style not in ("numeric", "param"):
-            raise errors.GenesisPyError(
+            raise reporting.GenesisPyError(
                 f"Invalid unq_style {style!r}; expected 'numeric' or 'param'"
             )
 
@@ -289,7 +298,7 @@ class ConfigHandler:
             }
             if path is None:
                 if name in self._cmdln_db:
-                    raise errors.ParameterError(
+                    raise reporting.ParameterError(
                         f"Duplicate command-line parameter override "
                         f"of {name!r}"
                     )
@@ -298,7 +307,7 @@ class ConfigHandler:
                 key = (path, name)
                 if key in self._cmdln_scoped_db:
                     dotted = ".".join(path) + "." + name
-                    raise errors.ParameterError(
+                    raise reporting.ParameterError(
                         f"Duplicate command-line parameter override "
                         f"of {dotted!r}"
                     )
@@ -316,9 +325,9 @@ class ConfigHandler:
         try:
             new_db = json_io.read_json(path)
         except FileNotFoundError as exc:
-            raise errors.ConfigError(f"JSON config file not found: {path}") from exc
+            raise reporting.ConfigError(f"JSON config file not found: {path}") from exc
         except json.JSONDecodeError as exc:
-            raise errors.ConfigError(
+            raise reporting.ConfigError(
                 f"malformed JSON in {path}: {exc.msg}",
                 location=f"{path}:{exc.lineno}",
             ) from exc
@@ -347,7 +356,7 @@ class ConfigHandler:
         is unsupported.
         """
         if top_inst is None:
-            raise errors.GenesisPyError(
+            raise reporting.GenesisPyError(
                 "--json-out requires an elaborated module tree; "
                 "run gen_verilog first"
             )
@@ -376,7 +385,7 @@ class ConfigHandler:
         resolved = self.manager._resolve_cfg_path(path) or path
         ext = os.path.splitext(resolved)[1].lower()
         if ext == ".xml":
-            raise errors.ConfigError(
+            raise reporting.ConfigError(
                 f"include({path!r}): XML config files are no longer "
                 "accepted; convert with genesispy-xml2json first"
             )
@@ -399,9 +408,17 @@ class ConfigHandler:
         semantics. Do NOT pass untrusted ``.cfg`` paths.
         """
         if not os.path.isfile(path):
-            raise errors.ConfigError(f".cfg config file not found: {path}")
+            raise reporting.ConfigError(f".cfg config file not found: {path}")
         path = os.path.abspath(path)
         self._cfg_in_filenames.append(path)
+
+        # Perl's .cfg sandbox (ConfigHandler.pm:244-258) injects:
+        # configure, get_configuration, exists_configuration,
+        # remove_configuration, include, print_configuration,
+        # get_top_name, get_synthtop_path, error.
+        # genesispy adds `warning` (asymmetric extension, kept for
+        # `.vpy`/`.cfg` parity — see Cluster H).
+        from . import user_config as _uc
 
         cfg_namespace: dict[str, Any] = {
             "__name__": "__genesispy_cfg__",
@@ -412,14 +429,22 @@ class ConfigHandler:
             "exists_configuration": self.exists_configuration,
             "remove_configuration": self.remove_configuration,
             "include": self._include_dispatch,
-            "error": errors.error,
-            "warning": errors.warning,
+            "print_configuration": self.print_configuration,
+            "get_top_name": _uc._get_top_name,
+            "get_synthtop_path": _uc._get_synthtop_path,
+            "error": reporting.error,
+            "warning": reporting.warning,
         }
 
         with open(path, "r", encoding="utf-8") as fh:
             src = fh.read()
         code = compile(src, path, "exec")
-        exec(code, cfg_namespace)
+        # Active manager context lets injected ``get_top_name`` and
+        # ``get_synthtop_path`` reach back to the Manager. Module slot
+        # stays None (no UniqueModule is under elaboration during
+        # `.cfg` reading).
+        with _uc.context(self.manager, None):
+            exec(code, cfg_namespace)
 
     # ------------------------------------------------------------------ #
     # Per-source value lookup                                            #
@@ -504,7 +529,7 @@ class ConfigHandler:
         try:
             prio_int = int(prio)
         except (ValueError, TypeError) as exc:
-            raise errors.ParameterError(
+            raise reporting.ParameterError(
                 f"configure({name!r}, priority={prio!r}): "
                 f"priority must be an integer (or Priority enum value)"
             ) from exc
@@ -533,7 +558,7 @@ class ConfigHandler:
             if existing is not None and prio_int < existing["priority"]:
                 return
             if existing is not None:
-                errors.warning(
+                reporting.warning(
                     f"configure: redefinition of '{name}' "
                     f"(was set at {existing.get('source_file')!r}, "
                     f"now at {source_file!r})"
@@ -545,7 +570,7 @@ class ConfigHandler:
         if existing is not None and prio_int < existing["priority"]:
             return
         if existing is not None:
-            errors.warning(
+            reporting.warning(
                 f"configure: redefinition of '{leaf}' "
                 f"(was set at {existing.get('source_file')!r}, "
                 f"now at {source_file!r})"
@@ -650,7 +675,7 @@ class ConfigHandler:
         if segs is not None:
             key = (segs, leaf)
             if key in self._cfg_scoped_db:
-                errors.warning(
+                reporting.warning(
                     f"remove_configuration: removing previously "
                     f"configured '{name}' (was "
                     f"{self._cfg_scoped_db[key]['value']!r})"
@@ -658,7 +683,7 @@ class ConfigHandler:
                 del self._cfg_scoped_db[key]
                 return
         if name in self._cfg_db:
-            errors.warning(
+            reporting.warning(
                 f"remove_configuration: removing previously configured "
                 f"'{name}' (was {self._cfg_db[name]['value']!r})"
             )

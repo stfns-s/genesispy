@@ -35,7 +35,8 @@ def test_defaults():
     assert ns.vf_out is None
     assert ns.depend is None
     assert ns.path is None
-    assert ns.log is None
+    # Cluster J1: --log defaults to genesispy.log (lazy-opened; matches Perl).
+    assert ns.log == "genesispy.log"
     assert ns.parse_only is False
     assert ns.gen_only is False
     assert ns.no_module_cache is False

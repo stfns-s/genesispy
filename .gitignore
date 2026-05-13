@@ -29,6 +29,7 @@ htmlcov/
 # Test byproducts
 genesis_raw/
 genesis_synth/
+genesis_synth_ex*/
 genesis_verif/
 # Genesis2-style product list emitted at demo root by `make gen`.
 genesis_vlog.vf
@@ -53,3 +54,4 @@ transcript
 vsim.wlf
 # Verilator
 obj_dir/
+genesispy.log

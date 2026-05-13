@@ -50,7 +50,7 @@ def _ch_with_cfg_path(cfg_path):
 
 def test_include_xml_rejected(tmp_path):
     """XML configs are no longer accepted; convert via genesispy-xml2json."""
-    from genesispy.errors import ConfigError, GenesisPyError
+    from genesispy.reporting import ConfigError, GenesisPyError
 
     xml_p = tmp_path / "data.xml"
     xml_p.write_text("<HierarchyTop/>")

@@ -112,7 +112,12 @@ def test_alias_dict_binds_strcallable_shortnames() -> None:
     # Mimic a UniqueModule with the four shortnames already populated.
     class _ModStub:
         # SIMPLE_ALIASES targets (must exist as attrs even if no-op).
-        parameter = define_param = synonym = instantiate = emit = None
+        parameter = define_param = doc_param = param_range = None
+        exists_param = get_top_param = list_params = None
+        synonym = instantiate = emit = None
+        error = warning = None
+        get_subinst = exists_subinst = get_subinst_array = None
+        get_instance_obj = search_subinst = None
         unique_inst = unique_inst_param = clone_inst = ununique_inst = None
         generate = generate_w_name = None
         pinclude = None

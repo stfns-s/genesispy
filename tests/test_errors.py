@@ -1,10 +1,10 @@
-"""Tests for genesispy.errors."""
+"""Tests for genesispy.reporting."""
 
 from __future__ import annotations
 
 import pytest
 
-from genesispy.errors import (
+from genesispy.reporting import (
     ConfigError,
     ElaborationError,
     GenesisPyError,
@@ -59,7 +59,7 @@ def test_error_fatal_raises(capsys):
         error("kaboom")
     captured = capsys.readouterr()
     assert "kaboom" in captured.err
-    assert "ERROR" in captured.err
+    assert "error:" in captured.err
 
 
 def test_error_non_fatal_prints(capsys):
@@ -72,14 +72,14 @@ def test_warning_prints_to_stderr(capsys):
     warning("careful")
     captured = capsys.readouterr()
     assert "careful" in captured.err
-    assert "WARNING" in captured.err
+    assert "warning:" in captured.err
     assert captured.out == ""
 
 
 # Review 11 #179 -- error(cls=...) must raise the chosen subclass with its code.
 def test_error_dispatches_subclass_for_code(capsys):
     """`error("...", cls=ParseError)` must raise ParseError, preserving e.code."""
-    from genesispy.errors import error, ParseError
+    from genesispy.reporting import error, ParseError
 
     with pytest.raises(ParseError) as ei:
         error("oops", cls=ParseError)

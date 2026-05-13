@@ -62,6 +62,3 @@ PYTHONPATH=src pytest tests/
   contracts.
 - [doc/genesis2-incompatibilities.md](./doc/genesis2-incompatibilities.md)
   -- non-obvious behavior differences from Perl Genesis2.
-- [extras/vim/README.md](./extras/vim/README.md) and
-  [extras/emacs/README.md](./extras/emacs/README.md) -- editor support
-  for `.vpy` / `.svpy` / `.gvpy`.

@@ -25,7 +25,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DEMOS_ROOT = _REPO_ROOT / "demos"
 
 _DEMOS = ["regfile", "iterative_wallace_tree",
-          "many_iterative_wallace_trees", "random_logic"]
+          "many_iterative_wallace_trees", "random_logic",
+          "generation_examples"]
 
 
 def _collect(demo: str, suffixes):

@@ -13,7 +13,8 @@ import sys
 from typing import List, Optional, Sequence, Tuple
 
 from genesispy import __version__
-from genesispy.errors import warning
+from genesispy import reporting
+from genesispy.reporting import warning
 from genesispy.extensions import parse_extension_spec
 
 
@@ -45,10 +46,7 @@ def _emit_deprecation(prog: str, old: str, new: str) -> None:
     if old in _warned_aliases:
         return
     _warned_aliases.add(old)
-    print(
-        f"{prog}: warning: {old} is deprecated; use {new}",
-        file=sys.stderr,
-    )
+    reporting.warning(f"{prog}: {old} is deprecated; use {new}")
 
 
 class _DeprStoreAction(argparse.Action):
@@ -340,8 +338,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="FILE",
         help=(
-            "Write product file lists FILE.synth and FILE.verif "
-            "(Genesis2 -product semantics)."
+            "Write Perl-style product file lists. --product FILE.ext "
+            "produces three files: FILE.ext (all modules), "
+            "FILE.synth.ext (synth modules), FILE.verif.ext (verif "
+            "modules). Mirrors Perl Manager.pm:1302-1319."
         ),
     )
     g_out.add_argument(
@@ -350,8 +350,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="FILE",
         help=(
-            "Like --product but writes FILE.synth.vf and FILE.verif.vf "
-            "(Genesis2-style .vf product-list extension)."
+            "Permanent alias for --product FILE.vf (auto-appends .vf "
+            "if FILE doesn't already end in .vf). Mutually exclusive "
+            "with --product."
         ),
     )
     g_out.add_argument(
@@ -371,9 +372,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     g_out.add_argument(
         "--log",
-        default=None,
+        default="genesispy.log",
         metavar="FILE",
-        help="Tee error/warning messages to FILE (in addition to stderr).",
+        help=(
+            "Tee error/warning messages to FILE (default genesispy.log, "
+            "lazy-opened on first error/warning). Mirrors Perl LogFileName "
+            "(Manager.pm:103). Suppress by passing /dev/null."
+        ),
     )
     g_out.add_argument(
         "--json-out",

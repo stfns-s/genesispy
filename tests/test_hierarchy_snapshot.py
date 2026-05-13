@@ -12,7 +12,7 @@ from genesispy.config_handler import (
     Priority,
     extract_stats,
 )
-from genesispy.errors import GenesisPyError
+from genesispy.reporting import GenesisPyError
 from genesispy.unique_module import UniqueModule
 
 from ._stubs import StubManager

@@ -122,3 +122,56 @@ def test_make_clean(demo_copy: Path) -> None:
     assert not (demo_copy / "genesis_synth").exists()
     assert not (demo_copy / "genesis_verif").exists()
     assert not (demo_copy / "genesis_vlog.vf").exists()
+
+
+# generation_examples doesn't fit the single-TOP, single-output-dir
+# parametrization above: its Makefile recurses into five sub-makes, one per
+# example, each writing to its own genesis_synth_ex<N>/ output dir.
+_GEN_EX_EXPECTED = {
+    "ex1": {"ex1_unique.v", "pll_unq1.v", "pll_unq2.v", "pll_unq3.v"},
+    "ex2": {"ex2_ununique.v", "pll.v"},
+    "ex3": {"ex3_genwname.v", "my_pll.v"},
+    "ex4": {"ex4_synonym.v", "my_pll.v"},
+    "ex5": {"ex5_clone.v", "pll_unq1.v"},
+}
+
+
+def _copy_generation_examples(tmp_path: Path) -> Path:
+    src = DEMOS / "generation_examples"
+    dst = tmp_path / "generation_examples"
+    shutil.copytree(src, dst)
+    shutil.copy(DEMOS / "genesispy.mk", tmp_path / "genesispy.mk")
+    return dst
+
+
+def test_generation_examples_make(tmp_path: Path) -> None:
+    dst = _copy_generation_examples(tmp_path)
+    r = subprocess.run(
+        ["make", "gen"], cwd=dst, capture_output=True, text=True, timeout=300,
+    )
+    assert r.returncode == 0, f"make gen failed:\n{r.stdout}\n{r.stderr}"
+    for ex, want in _GEN_EX_EXPECTED.items():
+        d = dst / f"genesis_synth_{ex}"
+        assert d.is_dir(), f"missing output dir {d}"
+        got = {p.name for p in d.iterdir() if p.suffix == ".v"}
+        assert want <= got, f"{ex}: expected {want}, got {got}"
+
+    r = subprocess.run(
+        ["make", "clean"], cwd=dst, capture_output=True, text=True
+    )
+    assert r.returncode == 0, f"make clean failed:\n{r.stdout}\n{r.stderr}"
+    for ex in _GEN_EX_EXPECTED:
+        assert not (dst / f"genesis_synth_{ex}").exists()
+    assert not (dst / "genesis_vlog.vf").exists()
+
+
+def test_generation_examples_make_vlint(tmp_path: Path) -> None:
+    tool = _verilint()
+    if tool is None:
+        pytest.skip("neither slang nor verilator on PATH")
+    dst = _copy_generation_examples(tmp_path)
+    r = subprocess.run(
+        ["make", "vlint", f"VERILINT={tool}"],
+        cwd=dst, capture_output=True, text=True, timeout=300,
+    )
+    assert r.returncode == 0, f"make vlint ({tool}) failed:\n{r.stdout}\n{r.stderr}"

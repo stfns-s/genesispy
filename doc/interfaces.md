@@ -3,7 +3,7 @@
 Canonical contracts for the package in `genesispy/src/genesispy/`. These signatures are the load-bearing
 contract between modules; coordinate before changing them.
 
-## genesispy.errors
+## genesispy.reporting
 
 ```python
 # `code` is a stable string identifier on every subclass — assert on it
@@ -21,11 +21,15 @@ class ConfigError(GenesisPyError):      code = "config_error"
 class ParameterError(GenesisPyError):   code = "parameter_error"
 class ElaborationError(GenesisPyError): code = "elaboration_error"
 
+# Severity helpers. Coloring is TTY-gated by colorama (escapes stripped
+# when stderr isn't a tty; NO_COLOR honored). Each helper tees an
+# uncolored copy to the `--log` sink set via `set_log_file`.
 # `cls=` lets the call site preserve subclass discrimination at the
 # raise; default is GenesisPyError. fatal=False prints and returns.
 def error(msg: str, *, fatal: bool = True, cls: type = GenesisPyError) -> None: ...
 def warning(msg: str) -> None: ...
-# Open `path` as the `--log` sink; subsequent error()/warning() calls
+def info(msg: str) -> None: ...
+# Open `path` as the `--log` sink; subsequent info/warning/error calls
 # tee their output. Process-global state. Pass `None` to disable.
 def set_log_file(path: Optional[str]) -> None: ...
 ```
@@ -116,13 +120,22 @@ class Manager:
     def clean(self) -> None: ...
 
     # Look up a generated module class by name (string form is what
-    # user .vpy code passes to unique_inst / ununique_inst).
+    # user .vpy code passes to unique_inst / ununique_inst). Lookup order:
+    #   1. _loaded_classes cache,
+    #   2. _generated_modules cache,
+    #   3. CLI input_files (parse + emit on demand),
+    #   4. inc_path fallback over every registered input extension
+    #      (mirrors Perl @INC scan in load_base_module).
+    # Raises GenesisPyError on miss.
     def resolve_module_class(self, name: str) -> type: ...
 
     # Class-level synonym (mirrors Perl `synonym(src, target)`):
     # registers `target_name` as a dynamic subclass of `src_name`'s
     # generated class, so resolve_module_class(target_name) returns it
     # and ununique_inst derives unique names from `target_name`.
+    # Stamps the new class with `_synonym_for = src_name` so that
+    # UniqueModule.sname on instances of the synonym class returns
+    # the original source template name (Perl get_source_name parity).
     # Idempotent: re-registering the same (src, target) pair returns
     # the existing subclass; rebinding `target_name` to a different
     # `src_name` raises GenesisPyError.
@@ -168,6 +181,13 @@ class ConfigHandler:
     ) -> bool: ...
     def remove_configuration(self, name: str) -> None: ...
     def print_configuration(self) -> str: ...
+
+    # `.cfg` sandbox namespace (read_cfg-time, ConfigHandler.pm:244-258 parity):
+    # configure, get_configuration, exists_configuration, remove_configuration,
+    # include, print_configuration, get_top_name, get_synthtop_path, error,
+    # warning (Python extension over Perl, kept for `.vpy`/`.cfg` symmetry).
+    # `get_top_name` and `get_synthtop_path` reach Manager.top and synth_dir
+    # via the active manager context (user_config.context()).
 
     # Read-only shallow copies of the backing override stores. Used by
     # UniqueModule._scoped_*  helpers (cross-class internal access) and by
@@ -222,7 +242,26 @@ class UniqueModule:
 
     # parameters
     def define_param(self, name: str, default=None, **flags) -> None: ...
-    def parameter(self, name: str, default=None) -> object: ...
+    # parameter(): Perl-compat kwargs (UniqueModule.pm:1981) — force/doc
+    # plus min/max/step XOR list (range guard) plus opt store-only.
+    # Range checked at register-time AND on every subsequent override.
+    def parameter(
+        self, name: str, default=None, *,
+        force: bool = False,
+        doc: str | None = None,
+        min: object = None,
+        max: object = None,
+        step: object = None,
+        list: object = None,
+        opt: str | None = None,
+    ) -> object: ...
+    # Late-bind documentation / range; mirror older Perl APIs.
+    def doc_param(self, name: str, msg: str) -> None: ...
+    def param_range(
+        self, name: str, *,
+        min: object = None, max: object = None,
+        step: object = None, list_: object = None,
+    ) -> None: ...
     def get_param(self, name: str) -> object: ...
     def override_param(self, name: str, value: object) -> None: ...
 
@@ -234,6 +273,11 @@ class UniqueModule:
                           **params) -> "UniqueModule": ...
     def clone_inst(self, src_inst: "UniqueModule",
                    new_name: str) -> "UniqueModule": ...
+    # ununique_inst preserves the bare base name on first call (no `_unqN`).
+    # Second call for the same base name with identical resolved params
+    # aliases the previous instance under the new inst_name (Perl
+    # UnUniquifiedModules parity); differing params raises ElaborationError.
+    # Tracked via cache.UNUNIQUE_REGISTRY.
     def ununique_inst(self, module_cls: type | str, inst_name: str,
                       **params) -> "UniqueModule": ...
     def synonym(self, name: str) -> None: ...
@@ -242,6 +286,10 @@ class UniqueModule:
     def force_param(self, name: str, value: object) -> None: ...
     # {name: value} for all parameters (Perl get_mod_param_list, :2691).
     def get_mod_param_list(self) -> dict[str, object]: ...
+    # Perl-compat accessors (UniqueModule.pm:496/:550/:515).
+    def exists_param(self, name: str) -> bool: ...
+    def get_top_param(self, name: str) -> object: ...
+    def list_params(self) -> list[str]: ...  # sorted names, distinct from get_mod_param_list
 
     # Perl-compat shortcuts (UniqueModule.pm:1846+).
     def generate(self, module_cls, inst_name: str,
@@ -270,12 +318,52 @@ class UniqueModule:
         self, synth_top: str | None,
     ) -> list[tuple["UniqueModule", bool]]: ...
 
-    # Genesis2 short-name properties (str values; the StrCallable
-    # variants in the generated-module exec namespace wrap these).
-    mname: str  # unique module name
-    iname: str  # instance name
-    bname: str  # base module name
-    sname: str  # synthesis top name (== unique module name)
+    # Genesis2 short-name properties. Each returns a StrCallable (str
+    # subclass whose __call__ returns self) so both ``obj.mname`` and
+    # ``obj.mname()`` work uniformly, matching Perl's ``$obj->mname()``
+    # and bare ``mname`` usage. StrCallable preserves str semantics for
+    # comparison, concatenation, f-strings, json.dumps, etc.
+    mname: "StrCallable"  # unique module name
+    iname: "StrCallable"  # instance name
+    bname: "StrCallable"  # base module name
+    sname: "StrCallable"  # source template name: _synonym_for if class was built
+                          # via Manager.synonym_class, else bname (mirrors Perl
+                          # get_source_name; UniqueModule.pm:377)
+
+    # Sub-instance navigation (Perl UniqueModule.pm:760/780/797/932/1087).
+    def get_subinst(self, name: str) -> "UniqueModule": ...
+    def exists_subinst(self, name: str) -> bool: ...
+    def get_subinst_array(self, pattern: str = "") -> list["UniqueModule"]: ...
+    def get_instance_obj(
+        self, inst: "str | UniqueModule"
+    ) -> "UniqueModule": ...
+    # DFS hierarchy walker with regex/predicate filters. Kwarg names are
+    # snake_case (Perl wiki uses CamelCase: PathRegex, INameRegex,
+    # MNameRegex, BNameRegex, SNameRegex, HasParamRegex, ApplyMap,
+    # From/Depth/Reverse); rename on port.
+    def search_subinst(
+        self, *,
+        start_from: "UniqueModule | str | None" = None,
+        depth: int = 10000,
+        reverse: bool = False,
+        path_regex: str | None = None,
+        iname_regex: str | None = None,
+        mname_regex: str | None = None,
+        bname_regex: str | None = None,
+        sname_regex: str | None = None,
+        has_param_regex: "str | list[str] | None" = None,
+        apply_map: object = None,
+    ) -> list["UniqueModule"]: ...
+
+    # Diagnostics (Perl UniqueModule.pm:2803/:2863). Both bare-name
+    # error/warning in .vpy bodies AND self.error/self.warning prefix
+    # the user's message with `<module>@<instance-path>:` before
+    # delegating to reporting.error / reporting.warning.
+    def error(self, msg: str) -> None: ...
+    def warning(self, msg: str) -> None: ...
+    # pprint-based debug serialiser (Perl UniqueModule.pm:2911).
+    # Self-method only; no bare-name alias.
+    def to_string(self, *args: object) -> str: ...
 
     # emission
     def emit(self, text: str) -> None: ...
@@ -378,7 +466,15 @@ mname, iname, bname, sname
 # Perl-compat bare-name aliases bound at the top of every execute()
 # (also injected into user_config._include()'s exec namespace).
 # Canonical table: genesispy.template.aliases.SIMPLE_ALIASES.
-parameter, define_param, synonym, instantiate, emit
+parameter, define_param, doc_param, param_range, instantiate, emit
+exists_param, get_top_param, list_params
+error, warning          # route to self.error / self.warning (UniqueModule.pm:2803/:2863)
+get_subinst, exists_subinst, get_subinst_array
+get_instance_obj, search_subinst
+synonym                 # arity dispatcher:
+                        #   synonym(name)      -> self.synonym(name)   (outfile mirror)
+                        #   synonym(src, trgt) -> Manager.synonym_class(src, trgt)
+                        #                                              (class rename, Perl semantics)
 unique_inst, unique_inst_param, clone_inst, ununique_inst
 generate                # dispatches via cfg_handler.unq_style
 generate_unq_numeric    # alias for unique_inst
@@ -392,6 +488,69 @@ pinclude                # gvpy-only; None outside gvpy contexts
 
 These are plain Python locals: a user `.vpy` may rebind them (e.g. `parameter = ...`) and standard Python
 scoping wins.
+
+## genesispy.cache
+
+Process-wide singletons backing elaboration dedup and outfile flushing.
+Reset between runs by ``clear_all()`` (test-only). Every ``UniqueModule``
+instance shares this state -- the module is intentionally global to mirror
+Perl's ``shared-ref`` UniqueModule.pm globals.
+
+```python
+# Dedup-signature -> elaborated instance, plus instance-name -> instance.
+# Keys live in two disjoint namespaces partitioned by the `::` separator:
+#   "<base>::<sha256>"        pre-elaboration param key (unique_inst)
+#   "<base>::post::<sha256>"  post-elaboration full-param key
+#   "<base>::param::<sha256>" parametric form (unique_inst_param)
+# Plain instance identifiers (`<base>_unqN`, user synonyms) MUST NOT
+# contain `::`; cache.register asserts this so a future synonym name can
+# never collide with a dedup signature.
+MODULE_CACHE: _JournaledDict          # _JournaledDict <: dict
+
+# Base-class-name -> next derivative counter (drives `Foo_unq1`, `Foo_unq2`).
+# Advanced via cache.next_derivation. Best-effort contiguous; post-elaboration
+# dedup may leave gaps when a rollback fires.
+MODULE_NAME_NUM_DERIVS: Dict[str, int]
+
+# Filename -> emitted Verilog text. Flushed by output_writer.flush_to_disk.
+OUTFILE_CONTENT_CACHE: _JournaledDict # _JournaledDict <: dict
+
+# Base-name -> {"instance": UniqueModule, "params": dict[str, Any]}.
+# Tracks `ununique_inst` calls so a second call with the same base name
+# either aliases the previously generated instance (identical resolved
+# params) or raises (different params). Global scope, not per-parent,
+# because the on-disk filename is global. Mirrors Perl
+# UnUniquifiedModules + does_generate_same.
+UNUNIQUE_REGISTRY: Dict[str, Dict[str, Any]]
+
+# Filename -> 'synth' | 'verif' | 'synth_and_verif'. Built by Manager
+# before flush from a path-based DFS over the elaborated instance tree.
+# Empty when synth_top is None -> output_writer treats unmapped files as
+# 'verif'. Mirrors Perl Manager.pm:1330-1395.
+OUTFILE_TAGS: Dict[str, str]
+
+
+def clear_all() -> None: ...
+def next_derivation(base_name: str) -> int: ...
+def register(unique_name: str, instance: "UniqueModule") -> None: ...
+    # Re-registering the same instance is a silent no-op. Re-registering
+    # a *different* instance under an existing name emits a one-line
+    # stderr warning and overwrites. `::` in unique_name raises ValueError.
+
+@contextmanager
+def journaled() -> Iterator[Tuple[Dict, Dict]]: ...
+    # Capture first-touch writes to MODULE_CACHE and OUTFILE_CONTENT_CACHE
+    # inside the block. Yields (mc_journal, oc_journal) for rollback_journal.
+    # Nests; each scope tracks its own first-touch set. Used by
+    # UniqueModule.unique_inst to discard a post-key dedup hit's writes.
+
+def rollback_journal(mc_j: Dict, oc_j: Dict) -> None: ...
+```
+
+Only ``__setitem__`` / ``__delitem__`` on the journaled dicts are journaled;
+``.clear()`` (test-only via ``clear_all``) bypasses journaling on purpose.
+No call site uses ``.update()`` / ``.pop()`` / ``.popitem()`` while a journal
+is active -- add overrides on ``_JournaledDict`` if that changes.
 
 ## genesispy.hashing
 

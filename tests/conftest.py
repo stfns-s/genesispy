@@ -31,3 +31,16 @@ def _reset_cli_deprecation_warnings():
     _reset_deprecation_warnings()
     yield
     _reset_deprecation_warnings()
+
+
+@pytest.fixture(autouse=True)
+def _reset_error_log_state():
+    """Suppress the process-global error log between tests so the
+    Cluster J ``--log`` default (``genesispy.log`` lazy-open) doesn't
+    create stray log files in the test working directory when other
+    tests construct a Manager and then trigger error()/warning()."""
+    from genesispy import reporting
+
+    reporting.set_log_file(None)
+    yield
+    reporting.set_log_file(None)

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from . import cache, hashing
 from .config_handler import Priority
-from .errors import ElaborationError, ParameterError
+from .reporting import ElaborationError, ParameterError
 
 if TYPE_CHECKING:  # pragma: no cover
     from .manager import Manager
@@ -156,18 +156,77 @@ class UniqueModule:
             "type": type,
         }
 
-    def parameter(self, name: str, default: Any = None) -> Any:
+    def parameter(  # noqa: A002 -- min/max/list shadow builtins; matches Perl wiki
+        self,
+        name: str,
+        default: Any = None,
+        *,
+        force: bool = False,
+        doc: Optional[str] = None,
+        min: Any = None,
+        max: Any = None,
+        step: Any = None,
+        list: Any = None,
+        opt: Optional[str] = None,
+    ) -> Any:
         """Declarative shortcut (Perl ``parameter`` UniqueModule.pm:1981).
 
-        If ``name`` is unknown, register it. If already overridden (by
-        unique_inst's pre-elaboration override pass or a forced override),
-        keep the existing value. Otherwise consult the manager's
-        config_handler.
+        Behavioural notes:
+
+        - If ``name`` is unknown, register it.
+        - If already overridden (by unique_inst's pre-elaboration override
+          pass or a forced override), keep the existing value.
+        - Otherwise consult the manager's config_handler.
+
+        Optional kwargs (mirror Perl ``Name``/``Val``/``Force``/``Doc``/
+        ``Min``/``Max``/``Step``/``List``/``Opt`` at UniqueModule.pm:1981):
+
+        - ``force=True`` writes ``default`` at FORCED priority on this
+          call and locks the param against future ``override_param``.
+          Equivalent to a one-shot ``define_param`` + ``force_param``.
+        - ``doc=`` updates the documentation string (Perl ``Doc``).
+        - ``min``/``max``/``step``/``list`` register a range constraint
+          (mutually exclusive: min/max/step XOR list). The resolved
+          value is range-checked immediately. Subsequent
+          ``override_param`` / ``force_param`` re-check.
+        - ``opt`` (``'yes'``/``'no'``/``'try'``) is store-only metadata
+          for forward-compat with Perl's unused-param tracking; no
+          behaviour change today.
+
+        Parameter values may be any Python value, but module dedup
+        hashing, JSON-config roundtrip, and the ``list``/``min``/``max``
+        constraints assume JSON-shaped values (scalars, lists, dicts of
+        same). Custom Python objects bypass dedup and don't roundtrip
+        to JSON.
         """
         if name not in self._params:
-            self.define_param(name, default=default)
+            self.define_param(name, default=default, doc=doc)
+        else:
+            # Update metadata if the param exists.
+            if doc is not None:
+                self._params[name]["doc"] = doc
+
+        # Register range constraint before resolution so range-check runs
+        # against the final value. Validation order matches Perl's
+        # param_range (UniqueModule.pm:582): min/max/step XOR list.
+        if any(x is not None for x in (min, max, step, list)):
+            self._set_range(
+                name, min=min, max=max, step=step, list_=list
+            )
+
+        # Forced form: write at FORCED priority and skip cfg lookup.
+        if force:
+            self.force_param(name, default)
+            self._range_check(name, self._params[name]["value"])
+            if opt is not None:
+                self._params[name]["opt"] = self._normalise_opt(opt)
+            return self._params[name]["value"]
+
+        if opt is not None:
+            self._params[name]["opt"] = self._normalise_opt(opt)
 
         if self._params[name]["state"] in (STATE_OVERRIDDEN, STATE_FORCED):
+            self._range_check(name, self._params[name]["value"])
             return self._params[name]["value"]
 
         cfg = self._manager.cfg_handler
@@ -181,8 +240,118 @@ class UniqueModule:
                 self._params[name]["state"] = STATE_OVERRIDDEN
                 if prio is not None:
                     self._params[name]["priority"] = prio
+                self._range_check(name, v)
                 return v
+        self._range_check(name, self._params[name]["value"])
         return self._params[name]["value"]
+
+    # ------------------------------------------- doc_param / param_range
+    def doc_param(self, name: str, msg: str) -> None:
+        """Late-bind documentation on an existing parameter.
+
+        Mirrors Perl ``doc_param`` (UniqueModule.pm:558): errors if the
+        parameter doesn't exist; emits a warning if doc is already set.
+        """
+        if name not in self._params:
+            raise ParameterError(
+                f"{self._module_name}->doc_param: "
+                f"cannot document un-existing parameter {name!r}"
+            )
+        if self._params[name].get("doc") is not None:
+            from . import reporting as _errors
+
+            _errors.warning(
+                f"{self._module_name}->doc_param: "
+                f"Re-documentation of parameter {name!r}. Overwriting!"
+            )
+        self._params[name]["doc"] = msg
+
+    def param_range(
+        self,
+        name: str,
+        *,
+        min: Any = None,  # noqa: A002 -- mirrors Perl Min/Max/List wiki names
+        max: Any = None,  # noqa: A002
+        step: Any = None,
+        list_: Any = None,  # noqa: A002 -- "list" would shadow builtin
+    ) -> None:
+        """Late-bind a range constraint on an existing parameter.
+
+        Mirrors Perl ``param_range`` (UniqueModule.pm:582): errors if
+        the parameter doesn't exist; errors on re-definition of range.
+        Range is checked against the param's current value immediately.
+        """
+        if name not in self._params:
+            raise ParameterError(
+                f"{self._module_name}->param_range: "
+                f"cannot add range to un-existing parameter {name!r}"
+            )
+        if self._params[name].get("range") is not None:
+            raise ParameterError(
+                f"{self._module_name}->param_range: "
+                f"Re-definition of range for parameter {name!r}!"
+            )
+        self._set_range(name, min=min, max=max, step=step, list_=list_)
+        self._range_check(name, self._params[name]["value"])
+
+    def _set_range(
+        self,
+        name: str,
+        *,
+        min: Any = None,  # noqa: A002
+        max: Any = None,  # noqa: A002
+        step: Any = None,
+        list_: Any = None,
+    ) -> None:
+        """Install a range constraint dict on the param entry."""
+        has_minmax = any(x is not None for x in (min, max, step))
+        has_list = list_ is not None
+        if has_minmax and has_list:
+            raise ParameterError(
+                f"{self._module_name}->parameter: cannot combine "
+                f"min/max/step with list for parameter {name!r}"
+            )
+        if has_list:
+            self._params[name]["range"] = {"list": list_}
+        else:
+            self._params[name]["range"] = {
+                "min": min, "max": max, "step": step,
+            }
+
+    def _range_check(self, name: str, value: Any) -> None:
+        """Raise ParameterError if value violates the param's range."""
+        rng = self._params.get(name, {}).get("range")
+        if rng is None or value is None:
+            return
+        if "list" in rng:
+            if value not in rng["list"]:
+                raise ParameterError(
+                    f"{self._module_name}: parameter {name!r} value "
+                    f"{value!r} not in allowed list {rng['list']!r}"
+                )
+            return
+        lo, hi = rng.get("min"), rng.get("max")
+        if lo is not None and value < lo:
+            raise ParameterError(
+                f"{self._module_name}: parameter {name!r} value "
+                f"{value!r} below min {lo!r}"
+            )
+        if hi is not None and value > hi:
+            raise ParameterError(
+                f"{self._module_name}: parameter {name!r} value "
+                f"{value!r} above max {hi!r}"
+            )
+        # step is informative-only in Perl; mirror that (no enforcement).
+
+    @staticmethod
+    def _normalise_opt(opt: str) -> str:
+        """Normalise Perl ``Opt`` values: case-insensitive yes/no/try."""
+        o = opt.strip().lower()
+        if o not in {"yes", "no", "try"}:
+            raise ParameterError(
+                f"parameter opt={opt!r}: expected one of 'yes', 'no', 'try'"
+            )
+        return o
 
     def get_param(self, name: str) -> Any:
         if name not in self._params:
@@ -202,6 +371,7 @@ class UniqueModule:
         self._params[name]["value"] = value
         self._params[name]["state"] = STATE_OVERRIDDEN
         self._params[name]["priority"] = int(Priority.INHERITANCE)
+        self._range_check(name, value)
 
     def force_param(self, name: str, value: Any) -> None:
         """Forced override -- pinned, cannot be re-overridden."""
@@ -213,10 +383,36 @@ class UniqueModule:
         self._params[name]["value"] = value
         self._params[name]["state"] = STATE_FORCED
         self._params[name]["priority"] = int(Priority.IMMUTABLE)
+        self._range_check(name, value)
 
     def get_mod_param_list(self) -> Dict[str, Any]:
         """Return ``{name: value}`` for all parameters (Perl :2691)."""
         return {k: v["value"] for k, v in self._params.items()}
+
+    def list_params(self) -> List[str]:
+        """Return a sorted list of parameter names.
+
+        Distinct from :meth:`get_mod_param_list` (which keeps the
+        ``{name: value}`` dict form). Mirrors Perl ``list_params``
+        (UniqueModule.pm:515).
+        """
+        return sorted(self._params.keys())
+
+    def exists_param(self, name: str) -> bool:
+        """Return True iff a parameter named ``name`` is registered.
+
+        Mirrors Perl ``exists_param`` (UniqueModule.pm:496); diverges
+        from Perl's ``'Used'``-state-only check for cleaner Python
+        semantics (``define_param`` alone is enough to count).
+        """
+        return name in self._params
+
+    def get_top_param(self, name: str) -> Any:
+        """Return the value of parameter ``name`` on the top module.
+
+        Mirrors Perl ``get_top_param`` (UniqueModule.pm:550).
+        """
+        return self.get_top().get_param(name)
 
     # ----------------------------------------------------------- hierarchy
     def _scoped_cmdln_overrides_for(
@@ -446,24 +642,62 @@ class UniqueModule:
     def ununique_inst(
         self, module_cls, inst_name: str, **params: Any
     ) -> "UniqueModule":
-        """Instantiate without dedup -- always a fresh unique name."""
+        """Instantiate without uniquification: emit the module under its
+        bare base name (no ``_unqN`` suffix).
+
+        Mirrors Perl ``ununique_inst`` (UniqueModule.pm:1545): the whole
+        point of this entry point is to keep the emitted file findable
+        under the base name (typical use case: an ``analog`` module to be
+        replaced by a hand-written macro at PNR).
+
+        Second call with the **same** base name:
+          - identical resolved params -> alias the previously elaborated
+            instance under the new ``inst_name`` (Perl uses the same file).
+          - differing resolved params -> raise ``ElaborationError`` with
+            a Perl-style message and both param dicts (the on-disk
+            filename is global, so two distinct elaborations can't both
+            keep the bare name).
+
+        Comparison is on the **resolved param dict** before elaboration —
+        cheap and exact under the genesispy invariant that ``execute()``
+        is deterministic in its inputs (no time/random calls in module
+        bodies during elaboration). This diverges from Perl, which
+        byte-compares the generated files, but reaches the same verdict
+        for any compliant module body.
+        """
         if isinstance(module_cls, str):
             module_cls = self._manager.resolve_module_class(module_cls)
         # Same scoped-override layering as unique_inst / unique_inst_param.
         eff = self._resolve_params(module_cls, inst_name, params)
+        base_name = module_cls.__name__
+
+        existing = cache.UNUNIQUE_REGISTRY.get(base_name)
+        if existing is not None:
+            if eff == existing["params"]:
+                # Identical params: alias the previously emitted module.
+                return self._clone_from_cached(existing["instance"], inst_name)
+            raise ElaborationError(
+                f"ununique_inst: Will generate two different UN-uniquified "
+                f"{base_name} modules! "
+                f"First call params: {existing['params']!r}; "
+                f"second call params: {eff!r}"
+            )
+
         child = module_cls._new_as_son(self)
         child._instance_name = inst_name
         for k, v in eff.items():
             child.override_param(k, v)
-
-        n = cache.next_derivation(module_cls.__name__)
-        unique_name = f"{module_cls.__name__}_unq{n}"
-        child._unique_module_name = unique_name
+        # Bare base name (no _unqN) so synthesis tools find the file.
+        child._unique_module_name = base_name
 
         self._sub_instances[inst_name] = child
         child.execute()
-        # After execute() so a raising body doesn't poison MODULE_CACHE.
-        cache.register(unique_name, child)
+        # After execute() so a raising body doesn't poison the caches.
+        cache.register(base_name, child)
+        cache.UNUNIQUE_REGISTRY[base_name] = {
+            "instance": child,
+            "params": dict(eff),
+        }
         return child
 
     def generate(self, module_cls, inst_name: str, **params: Any) -> "UniqueModule":
@@ -531,22 +765,40 @@ class UniqueModule:
         return self._instance_name
 
     # Short aliases mirroring Genesis2's exported user API.
+    #
+    # Each property returns a :class:`StrCallable` (str subclass whose
+    # ``__call__`` returns self) so both attribute form (``obj.mname``)
+    # and method-call form (``obj.mname()``) work on instances, matching
+    # Perl's ``$obj->mname()`` and bare ``mname`` usage uniformly. The
+    # bare-name forms inside .vpy bodies already used StrCallable via the
+    # emitter prelude; Cluster F closes the gap on instances.
     @property
-    def mname(self) -> str:
-        return self._unique_module_name
+    def mname(self) -> "StrCallable":
+        from .template.runtime import StrCallable
+        return StrCallable(self._unique_module_name)
 
     @property
-    def iname(self) -> str:
-        return self._instance_name
+    def iname(self) -> "StrCallable":
+        from .template.runtime import StrCallable
+        return StrCallable(self._instance_name)
 
     @property
-    def bname(self) -> str:
-        return self._module_name
+    def bname(self) -> "StrCallable":
+        from .template.runtime import StrCallable
+        return StrCallable(self._module_name)
 
     @property
-    def sname(self) -> str:
-        # Synthesis top name = unique module name (parity with Genesis2).
-        return self._unique_module_name
+    def sname(self) -> "StrCallable":
+        """Source template name (pre-uniquification, pre-synonym).
+
+        Mirrors Perl ``get_source_name`` (UniqueModule.pm:377): returns
+        ``_synonym_for`` if the class was built by
+        :meth:`Manager.synonym_class`; otherwise the base module name.
+        """
+        from .template.runtime import StrCallable
+        return StrCallable(
+            getattr(type(self), "_synonym_for", None) or self._module_name
+        )
 
     def instantiate(self, **ports: Any) -> str:
         """Return a Verilog instance fragment: ``MName inst (.p(v), ...)``.
@@ -573,6 +825,161 @@ class UniqueModule:
 
     def get_instance_path(self) -> str:
         return "/".join(self._instance_path_segments())
+
+    # ------------------------------------------------- sub-instance navigation
+    def get_subinst(self, name: str) -> "UniqueModule":
+        """Return the sub-instance named ``name``; raise if absent.
+
+        Mirrors Perl ``get_subinst`` (UniqueModule.pm:760).
+        """
+        inst = self._sub_instances.get(name)
+        if inst is None:
+            raise ElaborationError(
+                f"{self._module_name}->get_subinst: "
+                f"Could not find subinst {name!r}"
+            )
+        return inst
+
+    def exists_subinst(self, name: str) -> bool:
+        """Return True iff a sub-instance named ``name`` exists.
+
+        Mirrors Perl ``exists_subinst`` (UniqueModule.pm:780).
+        """
+        return name in self._sub_instances
+
+    def get_subinst_array(self, pattern: str = "") -> List["UniqueModule"]:
+        """Return sub-instances whose instance names match ``pattern``.
+
+        Empty pattern matches all. Pattern is a Python regex (``re.search``
+        semantics; differs from Perl regex dialect for advanced features).
+        Order follows insertion (mirrors Perl ``SubInstanceList`` order;
+        UniqueModule.pm:932).
+        """
+        import re as _re
+
+        out: List[UniqueModule] = []
+        for name, inst in self._sub_instances.items():
+            if not pattern or _re.search(pattern, name):
+                out.append(inst)
+        return out
+
+    def get_instance_obj(
+        self, inst: "str | UniqueModule"
+    ) -> "UniqueModule":
+        """Resolve ``inst`` to a :class:`UniqueModule`.
+
+        - A :class:`UniqueModule` passes through unchanged.
+        - A dotted path ``"top.a.b"`` is walked from the top instance.
+
+        Mirrors Perl ``get_instance_obj`` (UniqueModule.pm:1087). Note
+        that Perl's `get_instance_path()` joins with ``"/"`` while
+        ``get_instance_obj`` expects ``"."`` — the two methods do not
+        compose directly. Inherited gotcha.
+        """
+        import re as _re
+
+        if isinstance(inst, UniqueModule):
+            return inst
+        if not isinstance(inst, str):
+            raise ElaborationError(
+                f"{self._module_name}->get_instance_obj: "
+                f"expected str or UniqueModule, got {type(inst).__name__}"
+            )
+        top = self.get_top()
+        top_name = top.get_instance_name()
+        if not _re.fullmatch(rf"{_re.escape(top_name)}(\.\w+)*", inst):
+            raise ElaborationError(
+                f"{self._module_name}->get_instance_obj: "
+                f"{inst!r} is not a legal instance path under {top_name!r}"
+            )
+        stripped = _re.sub(rf"^{_re.escape(top_name)}\.?", "", inst)
+        node: UniqueModule = top
+        for tok in (stripped.split(".") if stripped else []):
+            if tok not in node._sub_instances:
+                raise ElaborationError(
+                    f"{self._module_name}->get_instance_obj: "
+                    f"cannot find subinst {tok!r} of {inst!r}"
+                )
+            node = node._sub_instances[tok]
+        return node
+
+    def search_subinst(
+        self,
+        *,
+        start_from: "UniqueModule | str | None" = None,
+        depth: int = 10000,
+        reverse: bool = False,
+        path_regex: Optional[str] = None,
+        iname_regex: Optional[str] = None,
+        mname_regex: Optional[str] = None,
+        bname_regex: Optional[str] = None,
+        sname_regex: Optional[str] = None,
+        has_param_regex: "str | List[str] | None" = None,
+        apply_map: Any = None,
+    ) -> List["UniqueModule"]:
+        """DFS the elaborated hierarchy from ``start_from`` (default: top)
+        and filter results by the supplied regex filters and predicate.
+
+        All regex filters AND-compose. An empty-string regex matches
+        everything. ``apply_map`` is a callable applied last; instances
+        for which it returns falsy are dropped.
+
+        Mirrors Perl ``search_subinst`` (UniqueModule.pm:797). The kwarg
+        names are snake_case (Perl wiki uses CamelCase: ``PathRegex``,
+        ``INameRegex``, etc.); translate at the call site.
+        """
+        import re as _re
+
+        start = (
+            self.get_instance_obj(start_from)
+            if start_from is not None
+            else self.get_top()
+        )
+
+        results: List[UniqueModule] = []
+
+        def _dfs(node: "UniqueModule", d: int) -> None:
+            if d >= 0 and not reverse:
+                results.append(node)
+            if d >= 1:
+                for child in node._sub_instances.values():
+                    _dfs(child, d - 1)
+            if d >= 0 and reverse:
+                results.append(node)
+
+        _dfs(start, depth)
+
+        def _match(regex: Optional[str], value: str) -> bool:
+            return regex is None or regex == "" or _re.search(regex, value) is not None
+
+        def _has_param(node: "UniqueModule", patterns) -> bool:
+            params = node.get_mod_param_list()
+            pats = patterns if isinstance(patterns, list) else [patterns]
+            for p in pats:
+                if p == "":
+                    continue
+                if not any(_re.search(p, pname) for pname in params):
+                    return False
+            return True
+
+        filtered: List[UniqueModule] = []
+        for n in results:
+            if not _match(path_regex, n.get_instance_path()):
+                continue
+            if not _match(iname_regex, str(n.iname)):
+                continue
+            if not _match(mname_regex, str(n.mname)):
+                continue
+            if not _match(bname_regex, str(n.bname)):
+                continue
+            if not _match(sname_regex, str(n.sname)):
+                continue
+            if has_param_regex is not None and not _has_param(n, has_param_regex):
+                continue
+            if apply_map is not None and not apply_map(n):
+                continue
+            filtered.append(n)
+        return filtered
 
     # ----------------------------------------------------- product-list DFS
     def get_prod_list_insts(
@@ -650,6 +1057,51 @@ class UniqueModule:
         while node._parent is not None:
             node = node._parent
         return node
+
+    # ----------------------------------------------------------- diagnostics
+    def to_string(self, *args: Any) -> str:
+        """Serialise one or more structures to a printable string.
+
+        Mirrors Perl ``to_string`` (UniqueModule.pm:2911). Uses
+        :func:`pprint.pformat` per argument; not a byte-for-byte port
+        of Perl's ``CfgHandler::PrintToString`` but covers the
+        documented "debug-print arbitrary structures" use case.
+        """
+        if not args:
+            raise ParameterError(
+                f"{self._module_name}->to_string: "
+                f"expected at least one argument"
+            )
+        import pprint as _pprint
+
+        return "\n".join(_pprint.pformat(a) for a in args)
+
+    def error(self, msg: str) -> None:
+        """Raise a fatal error tagged with this module's identity.
+
+        Mirrors Perl ``$self->error(msg)`` / bare ``error(msg)`` in `.vpy`
+        bodies (UniqueModule.pm:2803): the user's message is prefixed with
+        the current module and instance path so the failure points at the
+        source of the elaboration error.
+        """
+        from . import reporting as _errors
+
+        _errors.error(
+            f"{self._module_name}@{self.get_instance_path()}: {msg}",
+            fatal=True,
+        )
+
+    def warning(self, msg: str) -> None:
+        """Emit a non-fatal warning tagged with this module's identity.
+
+        Mirrors Perl ``$self->warning(msg)`` / bare ``warning(msg)``
+        (UniqueModule.pm:2863).
+        """
+        from . import reporting as _errors
+
+        _errors.warning(
+            f"{self._module_name}@{self.get_instance_path()}: {msg}"
+        )
 
     # ----------------------------------------------------------- emission
     def emit(self, text: str) -> None:

@@ -3,7 +3,7 @@
 This document lists the subtle, behavior-affecting differences between genesispy and Perl Genesis2.
 Superficial changes that follow inevitably from a Perl-to-Python port (`//;` body language, `.vp`/`.svp` ->
 `.vpy`/`.svpy`, `.cfg` running under trusted-input `exec()` instead of `eval`, GNU-style CLI flags, new flags such
-as `--suffix`, `--out-type`, `--synth-dir`, `--verif-dir`) are covered in the user's guide and omitted here.
+as `--extension`, `--out-type`, `--synth-dir`, `--verif-dir`) are covered in the user's guide and omitted here.
 
 The items below are the ones a porting user is most likely to encounter.
 
@@ -41,14 +41,13 @@ requires editing `tools/xml_json.py:DEFAULT_FORCE_LIST`.
 
 **Where:** `unique_module.py:unique_inst`
 
-genesispy uses a two-stage cache: a *pre-key* hashed from the explicit overrides supplied to `unique_inst`
-(fast path, avoids re-running `execute()`), and a *post-key* hashed from the fully resolved parameter dict
-*after* `execute()` has run.
+genesispy collapses two `unique_inst` calls when their *resolved* parameter dicts (after `execute()` runs)
+match, even if their explicit overrides differ -- e.g. `unique_inst(Foo)` and `unique_inst(Foo, N=8)` when
+`Foo`'s body itself sets `parameter('N', 8)`. Perl Genesis2 had no equivalent post-elaboration dedup and
+would emit both as separate unique modules even though the bodies are byte-identical.
 
-The post-key catches the case where two calls with different explicit-override sets nevertheless converge to
-the same final parameter state -- for example `unique_inst(Foo)` and `unique_inst(Foo, N=8)` collapse if
-`Foo`'s body sets `parameter('N', 8)` itself. Perl Genesis2 had no equivalent post-elaboration dedup and would
-emit both as separate unique modules even though the bodies are byte-identical.
+The mechanics (two-stage pre-key/post-key cache, scoped-subtree signature, journaled rollback of the
+discarded child's cache writes) live in [code-structure.md](./code-structure.md) §5.
 
 The parity test suite compares emitted Verilog as a *set* of files rather than a multiset, so the extra Perl
 duplicates do not register as a parity failure.
@@ -57,9 +56,6 @@ duplicates do not register as a parity failure.
 
 **Where:** `config_handler.py:write_json`
 
-Perl Genesis2 `-hierarchy FILE` writes `FILE`, `small_<basename(FILE)>`, and `tiny_<basename(FILE)>` --
-underscore-prefixed siblings. genesispy `--json-out FILE` instead splits the basename with `os.path.splitext`
-and writes `FILE`, `<stem>-small<ext>`, and `<stem>-tiny<ext>`. For example, `--json-out hier.json` produces
-`hier.json`, `hier-small.json`, `hier-tiny.json`. The content of each variant is unchanged; only the filenames
-differ.
+Perl emits `FILE`, `small_<basename>`, `tiny_<basename>` (underscore prefix). genesispy emits
+`FILE`, `<stem>-small<ext>`, `<stem>-tiny<ext>` (suffix on the stem). Content unchanged; filenames only.
 

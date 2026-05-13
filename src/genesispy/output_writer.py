@@ -196,7 +196,7 @@ def flush_to_disk(manager) -> Dict[str, List[str]]:
             seen_key = (os.path.abspath(target_dir), base)
         prior_tag = seen_bases.get(seen_key)
         if prior_tag is not None and prior_tag != tag:
-            from . import errors as _errors
+            from . import reporting as _errors
             _errors.warning(
                 f"flush_to_disk: {base!r} written as both "
                 f"{prior_tag!r} and {tag!r} into the same directory "
@@ -402,33 +402,44 @@ def clean_outputs(manager) -> None:
 
 
 def write_product_lists(
-    manager, written: Dict[str, List[str]], base: str, *, vf: bool = False,
+    manager, written: Dict[str, List[str]], base: str,
 ) -> Dict[str, str]:
-    """Write Genesis2-style product lists.
+    """Write Perl-style triple-file product list.
 
-    Without ``vf``: produces ``base.synth`` and ``base.verif`` (matches
-    ``Manager.pm:1303``). With ``vf=True``: produces ``base.synth.vf`` and
-    ``base.verif.vf``, the Genesis2 ``.vf`` extension for product lists.
-    Contents are identical to the non-vf form; only the filename suffix
-    differs. Per Perl ``Manager.pm:1393-1394``, ``synth_and_verif`` files
-    appear in *both* lists.
+    For ``base = "foo.vf"`` writes three files:
+
+      foo.vf        - master (every emitted Verilog file)
+      foo.synth.vf  - synth-cone files
+      foo.verif.vf  - verif-cone files
+
+    Extension is split via :func:`os.path.splitext` (last-dot only,
+    matches Perl ``Manager.pm:1302-1319``). Per Perl
+    ``Manager.pm:1393-1394``, ``synth_and_verif`` files appear in
+    *both* synth and verif lists. They also appear once in the master.
+
+    Returns a dict mapping ``"master"``/``"synth"``/``"verif"`` to the
+    written paths.
     """
     stem, ext = os.path.splitext(base)
     if not ext:
-        stem = base
-    synth_suffix = ".synth.vf" if vf else ".synth"
-    verif_suffix = ".verif.vf" if vf else ".verif"
-    synth_path = stem + synth_suffix
-    verif_path = stem + verif_suffix
+        synth_path = base + ".synth"
+        verif_path = base + ".verif"
+    else:
+        synth_path = stem + ".synth" + ext
+        verif_path = stem + ".verif" + ext
+    master_path = base
 
     synth_paths = written.get("synth", [])
     verif_paths = written.get("verif", [])
     both_paths = written.get("synth_and_verif", [])
 
     out: Dict[str, str] = {}
+    _write_if_changed(
+        master_path, _join_paths(synth_paths + verif_paths + both_paths)
+    )
+    out["master"] = master_path
     _write_if_changed(synth_path, _join_paths(synth_paths + both_paths))
     out["synth"] = synth_path
-
     _write_if_changed(verif_path, _join_paths(verif_paths + both_paths))
     out["verif"] = verif_path
 

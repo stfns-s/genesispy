@@ -45,7 +45,7 @@ def test_parse_cmdln_param_hierarchical():
 
 def test_parse_cmdln_param_rejects_empty_segments():
     import pytest
-    from genesispy.errors import ParameterError
+    from genesispy.reporting import ParameterError
 
     with pytest.raises(ParameterError):
         _parse_cmdln_param(".x=1")
@@ -57,7 +57,7 @@ def test_parse_cmdln_param_rejects_empty_segments():
 
 def test_parse_cmdln_param_rejects_type_suffix():
     import pytest
-    from genesispy.errors import ParameterError
+    from genesispy.reporting import ParameterError
 
     # Perl ':TYPE=VAL' form is not ported; reject rather than silently strip.
     with pytest.raises(ParameterError) as ei:
@@ -155,7 +155,7 @@ def test_scoped_cmdln_wins_over_flat_for_matching_path():
 
 def test_duplicate_scoped_cmdln_raises():
     # Duplicate scoped --parameter raises ParameterError, not warn-and-keep-first.
-    from genesispy.errors import ParameterError
+    from genesispy.reporting import ParameterError
 
     m = _make_manager(parameter=["top.a.x=1", "top.a.x=2"])
     with pytest.raises(ParameterError) as ei:
@@ -165,7 +165,7 @@ def test_duplicate_scoped_cmdln_raises():
 
 
 def test_duplicate_flat_cmdln_raises():
-    from genesispy.errors import ParameterError
+    from genesispy.reporting import ParameterError
 
     m = _make_manager(parameter=["WIDTH=8", "WIDTH=16"])
     with pytest.raises(ParameterError) as ei:
@@ -205,9 +205,25 @@ def test_get_param_val_malformed_parameter_returns_none(tmp_path):
     assert ch.get_param_val("X") is None
 
 
+def test_input_immutable_parameters_ignored(tmp_path):
+    """Matches Genesis2: input ``ImmutableParameters`` is writeback-only
+    metadata. Values nested under it must not be picked up as overrides;
+    only ``Parameters`` is a value source."""
+    json_p = tmp_path / "cfg.json"
+    json_p.write_text(
+        '{"HierarchyTop": {"ImmutableParameters": ['
+        '{"Name": "PINNED", "__Val__": 42}'
+        "]}}"
+    )
+    ch = ConfigHandler(_make_manager())
+    ch.read_json(str(json_p))
+    assert ch.exists_configuration("PINNED") is False
+    assert ch.get_param_val("PINNED") is None
+
+
 def test_read_json_wraps_decode_error(tmp_path):
     """Bug #3: malformed JSON must raise ConfigError, not raw JSONDecodeError."""
-    from genesispy.errors import ConfigError
+    from genesispy.reporting import ConfigError
 
     p = tmp_path / "bad.json"
     p.write_text("{not valid json")

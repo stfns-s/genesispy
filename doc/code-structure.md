@@ -165,10 +165,31 @@ happens in `unique_module.py` / `user_lib.py` / `cache.py` / `config_handler.py`
 - `OUTFILE_CONTENT_CACHE: Dict[str, str]` -- emitted filename (`<unique_module_name><suffix>`) -> Verilog
   text. Flushed by `output_writer.flush_to_disk`.
 
-Cache keys come from `hashing.sha256_param_signature(module_name, params)`. `unique_inst` runs a two-stage
-cache: a *pre-key* over the explicit overrides (fast path) and a *post-key* over the fully resolved param dict
-after `execute()` runs. See [genesis2-incompatibilities.md](./genesis2-incompatibilities.md) sections 1 and 6
-for the hash algorithm choice and the post-elaboration dedup rationale.
+Cache keys come from `hashing.sha256_param_signature(module_name, params)` -- canonical-JSON SHA-256 hex
+digest, stable across Python runs (see [genesis2-incompatibilities.md](./genesis2-incompatibilities.md) §1
+for why this is not bit-equal to Perl `Digest::SHA` over `Data::Dumper`).
+
+`unique_inst` runs a two-stage cache:
+
+- **Pre-key** -- `"<base>::<sha256(explicit_overrides)>"`. Hashed before `execute()` runs; on hit, returns
+  the cached instance without re-elaborating.
+- **Post-key** -- `"<base>::post::<sha256(resolved_params)>"`. Hashed after `execute()` resolves every
+  `parameter(...)` call against the override / ConfigHandler / default ladder. Collapses the case where two
+  calls converge on the same final param state -- e.g. `unique_inst(Foo)` and `unique_inst(Foo, N=8)` when
+  `Foo`'s body itself sets `parameter('N', 8)`. On a post-key hit, the freshly elaborated child is discarded
+  and its `MODULE_CACHE` / `OUTFILE_CONTENT_CACHE` writes are rolled back via the `cache.journaled()` block
+  wrapping the call (see [`interfaces.md`](./interfaces.md) `genesispy.cache`). Genesis2 had no
+  equivalent post-elaboration dedup (see
+  [genesis2-incompatibilities.md](./genesis2-incompatibilities.md) §3 for the parity implication).
+
+Both keys also fold a **scoped-subtree signature**: every `--parameter top.A.B.x=2`-style hierarchical CLI
+override rooted at the prospective instance contributes to the dedup hash. Two instances of the same parent
+module at different paths therefore stay distinct when their descendants have different scoped overrides,
+even before the descendants run. Implementation: `unique_module._scoped_subtree_signature`, mirroring
+Perl `UniqueModule.pm:415-440`.
+
+`unique_inst_param` uses a single stage: the resolved-name itself (`Foo_N8_W16`) is the cache key, so it
+needs no pre/post split.
 
 Variants:
 
@@ -234,9 +255,10 @@ Selected flags (`genesispy --help` is authoritative for the full list, including
 | `--out-type synth|verif|both`   | Filter outputs by flavour.                                                    |
 | `--unq-style numeric|param`    | Selects `generate(...)` dispatch (numeric suffix vs. param-encoded names).    |
 | `--input-list FILE`            | Recursively expand a listfile of `--input` / `--src-path` / `--inc-path`.   |
-| `--suffix EXT`                | Override emitted Verilog extension (default `.v`).                            |
-| `--system-verilog` / `-sv`     | Shorthand for `--suffix sv`. Mutually exclusive with `--suffix`.              |
+| `--extension EXT_IN=EXT_OUT`  | Map an input extension to an output extension (repeatable; default `.vpy=.v`, `.svpy=.sv`). |
+| `--system-verilog` / `-sv`     | Shorthand for `--extension .vpy=.sv`. Conflicts with an explicit `--extension .vpy=...`. |
 | `--product FILE`              | Write `FILE.synth` / `FILE.verif` (Genesis2 semantics).                       |
+| `--vf-out FILE`               | Permanent alias for `--product FILE.vf` (auto-appends `.vf`); conflicts with `--product`. |
 | `--json-out`                   | Dump resolved configuration tree.                                             |
 
 ## 9. `gvpy` CLI

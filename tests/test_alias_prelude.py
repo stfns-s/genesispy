@@ -69,7 +69,14 @@ def test_alias_prelude_source_uses_caller_indent():
 def test_alias_prelude_source_binds_all_expected_names():
     src = alias_prelude_source(indent="")
     for name in EXPECTED_KEYS:
-        assert f"{name} " in src or f"{name}=" in src or f"{name}\t" in src, name
+        # Accept any binding form: `name = ...`, `name=...`, `name\t...`,
+        # or `def name(...)` (used for the synonym arity dispatcher).
+        assert (
+            f"{name} " in src
+            or f"{name}=" in src
+            or f"{name}\t" in src
+            or f"def {name}(" in src
+        ), name
 
 
 def _norm_alias_lines(src: str) -> set[tuple[str, str]]:

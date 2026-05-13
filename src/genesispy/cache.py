@@ -78,6 +78,15 @@ MODULE_NAME_NUM_DERIVS: Dict[str, int] = {}
 # Filename -> emitted Verilog text.  Flushed on demand (e.g. by Manager).
 OUTFILE_CONTENT_CACHE: _JournaledDict = _JournaledDict()
 
+# Base-name -> {"instance": UniqueModule, "params": dict[str, Any]}.
+# Tracks `ununique_inst` calls so a second call with the same base name
+# either aliases the previously generated instance (identical resolved
+# params) or raises (different params).  Mirrors Perl
+# UnUniquifiedModules + does_generate_same (UniqueModule.pm:1610-1700);
+# global scope (not per-parent) because the on-disk filename is global.
+UNUNIQUE_REGISTRY: Dict[str, Dict[str, Any]] = {}
+
+
 # Filename -> 'synth' | 'verif' | 'synth_and_verif'.  Built by Manager
 # before flush from a path-based DFS over the elaborated instance tree
 # (mirrors Perl Manager.pm:1330-1395 / UniqueModule.pm:_get_prod_list_insts).
@@ -92,6 +101,7 @@ def clear_all() -> None:
     MODULE_NAME_NUM_DERIVS.clear()
     OUTFILE_CONTENT_CACHE.clear()
     OUTFILE_TAGS.clear()
+    UNUNIQUE_REGISTRY.clear()
     # Recycled tmpdir paths could otherwise inherit a stale .vpy mapping.
     from .template import runtime as _rt
     _rt.clear_line_maps()
@@ -130,9 +140,9 @@ def register(unique_name: str, instance: "UniqueModule") -> None:
         )
     existing = MODULE_CACHE.get(unique_name)
     if existing is not None and existing is not instance:
-        from . import errors
+        from . import reporting
 
-        errors.warning(
+        reporting.warning(
             f"cache.register: {unique_name!r} already bound to a different "
             f"UniqueModule instance; overwriting."
         )
