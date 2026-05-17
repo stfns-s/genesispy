@@ -88,6 +88,16 @@ class Manager:
     # Override path for the `.depend` file; None falls back to
     # output_dir/<top>.depend. Set from --depend.
     depend_file: str | None
+    # Named product file (mirrors Genesis2 `$ProductFileName`). None when
+    # neither --product nor --vf-out is set. Set from --product FILE, or
+    # from --vf-out FILE (with `.vf` auto-appended). Drives
+    # output_writer.write_product_lists and suppresses the default
+    # <top>.vlist / <top>.vlist.verif when not None.
+    product_file: str | None
+    # True when product_file came from --vf-out (single-file mode: only
+    # the master is written, no .synth/.verif side-files). False
+    # otherwise (--product triple-file mode, or product_file is None).
+    product_single: bool
     # Disable post-elaboration MODULE_CACHE dedup. Set from
     # --no-module-cache. Read by unique_module.unique_inst[_param].
     no_module_cache: bool

@@ -71,10 +71,11 @@ def test_product_and_vf_out_mutual_exclusion(tmp_path: Path) -> None:
 
 
 def test_vf_out_auto_appends_vf(tmp_path: Path) -> None:
-    """--vf-out FILE becomes --product FILE.vf (auto-append)."""
+    """--vf-out FILE auto-appends .vf and selects single-file mode."""
     args = parse_args(["--top", "t", "--vf-out", str(tmp_path / "manifest")])
     mgr = Manager(args)
     assert mgr.product_file == str(tmp_path / "manifest") + ".vf"
+    assert mgr.product_single is True
 
 
 def test_vf_out_keeps_existing_vf(tmp_path: Path) -> None:
@@ -82,3 +83,19 @@ def test_vf_out_keeps_existing_vf(tmp_path: Path) -> None:
     args = parse_args(["--top", "t", "--vf-out", str(tmp_path / "manifest.vf")])
     mgr = Manager(args)
     assert mgr.product_file == str(tmp_path / "manifest.vf")
+    assert mgr.product_single is True
+
+
+def test_product_uses_triple_file_mode(tmp_path: Path) -> None:
+    """--product FILE selects triple-file (master + .synth + .verif) mode."""
+    args = parse_args(["--top", "t", "--product", str(tmp_path / "manifest.vf")])
+    mgr = Manager(args)
+    assert mgr.product_file == str(tmp_path / "manifest.vf")
+    assert mgr.product_single is False
+
+
+def test_no_product_flag_leaves_product_file_none(tmp_path: Path) -> None:
+    args = parse_args(["--top", "t"])
+    mgr = Manager(args)
+    assert mgr.product_file is None
+    assert mgr.product_single is False

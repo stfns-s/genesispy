@@ -68,23 +68,24 @@ class Manager:
         self.json_out = args.json_out
         self.cfg_files = list(args.cfg)
         self.out_type = args.out_type
-        # Perl ``-product FILE.ext`` produces three files:
-        #   FILE.ext (master), FILE.synth.ext, FILE.verif.ext
-        # ``--vf-out FILE`` is a permanent alias for ``--product FILE.vf``
-        # (auto-appends .vf if missing). The two flags are mutually
-        # exclusive.
+        # ``--product FILE.ext`` produces three files (master + .synth/.verif
+        # side-files), mirroring Genesis2. ``--vf-out FILE`` writes a single
+        # named product file with no side-files and auto-appends ``.vf``.
+        # Either flag suppresses the default ``<top>.vlist`` emission.
+        # The two are mutually exclusive.
         if args.product is not None and args.vf_out is not None:
             raise GenesisPyError(
-                "--product and --vf-out are mutually exclusive; "
-                "--vf-out FILE is shorthand for --product FILE.vf."
+                "--product and --vf-out are mutually exclusive."
             )
         if args.vf_out is not None:
             vf = args.vf_out
             if not vf.endswith(".vf"):
                 vf = vf + ".vf"
             self.product_file = vf
+            self.product_single = True
         else:
             self.product_file = args.product
+            self.product_single = False
         self.depend_file = args.depend
         self.path_file = args.path
         self.log_file = args.log
@@ -454,10 +455,15 @@ class Manager:
                 shutil.rmtree(self.raw_dir, ignore_errors=True)
         else:
             written = output_writer.flush_to_disk(self)
-            output_writer.write_file_lists(self, written)
+            output_writer.write_file_lists(
+                self, written, emit_vlist=self.product_file is None
+            )
             output_writer.write_clean_script(self)
             if self.product_file:
-                output_writer.write_product_lists(self, written, self.product_file)
+                output_writer.write_product_lists(
+                    self, written, self.product_file,
+                    single=self.product_single,
+                )
             if self.path_file:
                 output_writer.write_pathfile(self, self.path_file)
 

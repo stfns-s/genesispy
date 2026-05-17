@@ -14,6 +14,7 @@ $(EXAMPLES):
 	    TOP=$@ \
 	    INPUTS="$@.vpy pll.vpy" \
 	    OUTPUTDIR=genesis_synth_$(firstword $(subst _, ,$@)) \
+	    VLOG_VF=genesis_vlog_$@.vf \
 	    gen
 
 vlint: $(addprefix vlint-,$(EXAMPLES))
@@ -23,12 +24,13 @@ vlint-%:
 	    TOP=$* \
 	    INPUTS="$*.vpy pll.vpy" \
 	    OUTPUTDIR=genesis_synth_$(firstword $(subst _, ,$*)) \
+	    VLOG_VF=genesis_vlog_$*.vf \
 	    VERILINT=$(or $(VERILINT),verilator) \
 	    vlint
 
 cleangen:
 	rm -rf genesis_raw genesis_synth genesis_verif genesis_synth_ex*
-	rm -f genesis_vlog.vf
+	rm -f genesis_vlog_*.vf
 
 cleansim:
 	rm -rf obj_dir csrc simv.daidir work

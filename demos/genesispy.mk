@@ -54,10 +54,9 @@ PYTHON    ?= python3
 
 GEN_INPUT_FLAGS := $(addprefix --input ,$(INPUTS))
 SRC_FILES      := $(addprefix genesis_src/,$(INPUTS))
-VLIST          := $(OUTPUTDIR)/$(TOP).vlist
 DEPEND         := $(OUTPUTDIR)/$(TOP).depend
 CLEAN_SH       := $(OUTPUTDIR)/genesispy_clean.sh
-VLOG_VF        := genesis_vlog.vf
+VLOG_VF        ?= genesis_vlog.vf
 
 # Jinja2-flavour twin sources (opt-in via `make gen-j2`). genesis_src.j2/
 # carries the same INPUTS rewritten with {% %}/{{ }}/{# #} delimiters;
@@ -66,10 +65,9 @@ VLOG_VF        := genesis_vlog.vf
 SRCDIR_J2      ?= genesis_src.j2
 OUTPUTDIR_J2   ?= genesis_synth.j2
 SRC_FILES_J2   := $(addprefix $(SRCDIR_J2)/,$(INPUTS))
-VLIST_J2       := $(OUTPUTDIR_J2)/$(TOP).vlist
 DEPEND_J2      := $(OUTPUTDIR_J2)/$(TOP).depend
 CLEAN_SH_J2    := $(OUTPUTDIR_J2)/genesispy_clean.sh
-VLOG_VF_J2     := genesis_vlog.j2.vf
+VLOG_VF_J2     ?= genesis_vlog.j2.vf
 
 .PHONY: gen gen-j2 cleangen cleansim clean pylint vlint lint sim help
 
@@ -79,30 +77,27 @@ VLOG_VF_J2     := genesis_vlog.j2.vf
 %.json: %.xml
 	$(XML2JSON) $< $@
 
-gen: $(VLIST) $(VLOG_VF)
+gen: $(VLOG_VF)
 
-$(VLIST): $(SRC_FILES) $(CONFIG_DEP)
+# Genesis2-style product list at the demo root, written directly by
+# genesispy via --vf-out. Suppresses the default <top>.vlist pair.
+$(VLOG_VF): $(SRC_FILES) $(CONFIG_DEP)
 	$(GENESISPY) $(GEN_INPUT_FLAGS) --top $(TOP) $(CONFIG_FLAG) \
-	    --src-path genesis_src --out-dir $(OUTPUTDIR) $(EXTRA_FLAGS)
+	    --src-path genesis_src --out-dir $(OUTPUTDIR) \
+	    --vf-out $(VLOG_VF) $(EXTRA_FLAGS)
 
-# Genesis2-style product list at demo root (mirrors $(VLIST)).
-$(VLOG_VF): $(VLIST)
-	cp $(VLIST) $(VLOG_VF)
+gen-j2: $(VLOG_VF_J2)
 
-gen-j2: $(VLIST_J2) $(VLOG_VF_J2)
-
-$(VLIST_J2): $(SRC_FILES_J2) $(CONFIG_DEP)
+$(VLOG_VF_J2): $(SRC_FILES_J2) $(CONFIG_DEP)
 	$(GENESISPY) --j2 $(GEN_INPUT_FLAGS) --top $(TOP) $(CONFIG_FLAG) \
-	    --src-path $(SRCDIR_J2) --out-dir $(OUTPUTDIR_J2) $(EXTRA_FLAGS)
-
-$(VLOG_VF_J2): $(VLIST_J2)
-	cp $(VLIST_J2) $(VLOG_VF_J2)
+	    --src-path $(SRCDIR_J2) --out-dir $(OUTPUTDIR_J2) \
+	    --vf-out $(VLOG_VF_J2) $(EXTRA_FLAGS)
 
 cleangen:
 	rm -rf genesis_raw genesis_synth genesis_verif
 	rm -rf $(OUTPUTDIR_J2)
-	rm -f $(VLIST) $(DEPEND) $(CLEAN_SH) $(VLOG_VF)
-	rm -f $(VLIST_J2) $(DEPEND_J2) $(CLEAN_SH_J2) $(VLOG_VF_J2)
+	rm -f $(DEPEND) $(CLEAN_SH) $(VLOG_VF)
+	rm -f $(DEPEND_J2) $(CLEAN_SH_J2) $(VLOG_VF_J2)
 
 cleansim:
 	rm -rf obj_dir csrc simv.daidir work
@@ -125,26 +120,26 @@ lint: pylint vlint
 
 vlint: gen
 ifeq ($(VERILINT),slang)
-	slang --lint-only -Weverything -Wpedantic --top $(SIM_TOP) -f $(VLIST)
+	slang --lint-only -Weverything -Wpedantic --top $(SIM_TOP) -f $(VLOG_VF)
 else ifeq ($(VERILINT),verilator)
-	verilator --lint-only --top-module $(SIM_TOP) -f $(VLIST)
+	verilator --lint-only --top-module $(SIM_TOP) -f $(VLOG_VF)
 else
 	$(error vlint: unknown VERILINT='$(VERILINT)' (slang|verilator))
 endif
 
 sim: gen
 ifeq ($(SIMULATOR),xrun)
-	xrun -sv -access +rwc -64bit +define+SIMULATION -f $(VLIST) -top $(SIM_TOP)
+	xrun -sv -access +rwc -64bit +define+SIMULATION -f $(VLOG_VF) -top $(SIM_TOP)
 else ifeq ($(SIMULATOR),vcs)
-	vcs -sverilog +define+SIMULATION -f $(VLIST) -top $(SIM_TOP) -o simv && ./simv
+	vcs -sverilog +define+SIMULATION -f $(VLOG_VF) -top $(SIM_TOP) -o simv && ./simv
 else ifeq ($(SIMULATOR),vlog)
-	vlog -sv +define+SIMULATION -f $(VLIST) && vsim -c -do "run -all; quit" $(SIM_TOP)
+	vlog -sv +define+SIMULATION -f $(VLOG_VF) && vsim -c -do "run -all; quit" $(SIM_TOP)
 else ifeq ($(SIMULATOR),verilator)
 	verilator --binary -Wno-fatal --timing -CFLAGS -std=c++20 \
-	    +define+SIMULATION --top-module $(SIM_TOP) -f $(VLIST) \
+	    +define+SIMULATION --top-module $(SIM_TOP) -f $(VLOG_VF) \
 	    -Mdir obj_dir && obj_dir/V$(SIM_TOP)
 else ifeq ($(SIMULATOR),iverilog)
-	iverilog -g2012 -DSIMULATION -s $(SIM_TOP) -o $(SIM_TOP).vvp -f $(VLIST) && vvp $(SIM_TOP).vvp
+	iverilog -g2012 -DSIMULATION -s $(SIM_TOP) -o $(SIM_TOP).vvp -f $(VLOG_VF) && vvp $(SIM_TOP).vvp
 else
 	$(error sim: unknown SIMULATOR='$(SIMULATOR)' (xrun|vcs|vlog|verilator|iverilog))
 endif

@@ -225,7 +225,11 @@ def flush_to_disk(manager) -> Dict[str, List[str]]:
     return written
 
 
-def write_file_lists(manager, written: Dict[str, List[str]]) -> Dict[str, str]:
+def write_file_lists(
+    manager,
+    written: Dict[str, List[str]],
+    emit_vlist: bool = True,
+) -> Dict[str, str]:
     """Write the simulation file list ``<top>.vlist`` (every emitted file),
     an optional verif-only ``<top>.vlist.verif``, and a Make-style
     ``<top>.depend``.
@@ -235,10 +239,15 @@ def write_file_lists(manager, written: Dict[str, List[str]]) -> Dict[str, str]:
     is written only when at least one verif-tagged file exists; it lists
     verif + synth_and_verif paths (matching Perl ``Manager.pm:1394``).
 
+    When ``emit_vlist=False`` (caller already requested a named product
+    via ``--vf-out`` / ``--product``), the two ``.vlist`` files are
+    skipped; only ``<top>.depend`` is written. The depend file then
+    targets the named product file path instead of ``<top>.vlist``.
+
     Returns ``{'synth_vlist': ..., 'verif_vlist': ..., 'depend': ...}``
-    (``verif_vlist`` omitted when empty).  The ``synth_vlist`` key is
-    retained for backward compat though the file now holds the full
-    list rather than synth-only.
+    (``synth_vlist`` / ``verif_vlist`` omitted when not written).  The
+    ``synth_vlist`` key is retained for backward compat though the file
+    now holds the full list rather than synth-only.
     """
     output_dir = manager.output_dir or "."
     _ensure_dir(output_dir)
@@ -252,26 +261,31 @@ def write_file_lists(manager, written: Dict[str, List[str]]) -> Dict[str, str]:
 
     full_paths = synth_paths + both_paths + verif_paths
     full_vlist = os.path.join(output_dir, f"{top}.vlist")
-    body = _join_paths(full_paths)
-    _write_if_changed(full_vlist, body)
-    out["synth_vlist"] = full_vlist
 
-    verif_list_paths = verif_paths + both_paths
-    if verif_list_paths:
-        verif_vlist = os.path.join(output_dir, f"{top}.vlist.verif")
-        body = _join_paths(verif_list_paths)
-        _write_if_changed(verif_vlist, body)
-        out["verif_vlist"] = verif_vlist
+    if emit_vlist:
+        body = _join_paths(full_paths)
+        _write_if_changed(full_vlist, body)
+        out["synth_vlist"] = full_vlist
 
-    # Depfile: '<vlist>: <input1.vpy> <input2.vpy> ...'
+        verif_list_paths = verif_paths + both_paths
+        if verif_list_paths:
+            verif_vlist = os.path.join(output_dir, f"{top}.vlist.verif")
+            body = _join_paths(verif_list_paths)
+            _write_if_changed(verif_vlist, body)
+            out["verif_vlist"] = verif_vlist
+
+    # Depfile: '<target>: <input1.vpy> <input2.vpy> ...'
+    # Target is the .vlist when we emit one, otherwise the named product
+    # file the caller is writing instead.
     sources = list(manager.src_path)
     depend_override = manager.depend_file
     depend_path = depend_override or os.path.join(output_dir, f"{top}.depend")
+    depend_target = full_vlist if emit_vlist else (manager.product_file or full_vlist)
     deps_str = " ".join(_portable_path(s) for s in sources)
     if deps_str:
-        depend_body = f"{_portable_path(full_vlist)}: {deps_str}\n"
+        depend_body = f"{_portable_path(depend_target)}: {deps_str}\n"
     else:
-        depend_body = f"{_portable_path(full_vlist)}:\n"
+        depend_body = f"{_portable_path(depend_target)}:\n"
     _write_if_changed(depend_path, depend_body)
     out["depend"] = depend_path
 
@@ -403,14 +417,18 @@ def clean_outputs(manager) -> None:
 
 def write_product_lists(
     manager, written: Dict[str, List[str]], base: str,
+    single: bool = False,
 ) -> Dict[str, str]:
-    """Write Perl-style triple-file product list.
+    """Write Genesis2-style product file list(s).
 
-    For ``base = "foo.vf"`` writes three files:
+    For ``base = "foo.vf"`` with ``single=False`` writes three files:
 
       foo.vf        - master (every emitted Verilog file)
       foo.synth.vf  - synth-cone files
       foo.verif.vf  - verif-cone files
+
+    With ``single=True`` (the ``--vf-out`` path) only the master file
+    is written; no ``.synth``/``.verif`` side-files are produced.
 
     Extension is split via :func:`os.path.splitext` (last-dot only,
     matches Perl ``Manager.pm:1302-1319``). Per Perl
@@ -418,8 +436,19 @@ def write_product_lists(
     *both* synth and verif lists. They also appear once in the master.
 
     Returns a dict mapping ``"master"``/``"synth"``/``"verif"`` to the
-    written paths.
+    written paths (``"synth"``/``"verif"`` omitted when ``single``).
     """
+    synth_paths = written.get("synth", [])
+    verif_paths = written.get("verif", [])
+    both_paths = written.get("synth_and_verif", [])
+
+    out: Dict[str, str] = {}
+    _write_if_changed(base, _join_paths(synth_paths + verif_paths + both_paths))
+    out["master"] = base
+
+    if single:
+        return out
+
     stem, ext = os.path.splitext(base)
     if not ext:
         synth_path = base + ".synth"
@@ -427,17 +456,7 @@ def write_product_lists(
     else:
         synth_path = stem + ".synth" + ext
         verif_path = stem + ".verif" + ext
-    master_path = base
 
-    synth_paths = written.get("synth", [])
-    verif_paths = written.get("verif", [])
-    both_paths = written.get("synth_and_verif", [])
-
-    out: Dict[str, str] = {}
-    _write_if_changed(
-        master_path, _join_paths(synth_paths + verif_paths + both_paths)
-    )
-    out["master"] = master_path
     _write_if_changed(synth_path, _join_paths(synth_paths + both_paths))
     out["synth"] = synth_path
     _write_if_changed(verif_path, _join_paths(verif_paths + both_paths))

@@ -685,9 +685,9 @@ output.
 - `-sv`, `--system-verilog` -- shorthand for `--extension .vpy=.sv`. Errors out if combined with a conflicting `--extension .vpy=...` entry.
 - `--comment PREFIX` -- line-comment prefix of the target output language (default: `//`). Sets both the template directive sentinel (`<comment>;` replaces `//;` in genesis flavour) and the prefix used by the auto-generated module banner. j2 mode is unaffected.
 - `--stdout` -- write generated Verilog to stdout instead of `genesis_synth`/`genesis_verif`. Skips `.vlist`/`.depend`/clean script and removes the raw dir on exit. Overrides `--gen-raw`: no raw `.v` siblings are written and the raw dir is removed regardless.
-- `--product FILE` -- write Genesis2-style product file lists. `--product FILE.ext` produces three files: `FILE.ext` (all modules), `FILE.synth.ext` (synth-cone), `FILE.verif.ext` (verif-cone).
+- `--product FILE` -- write Genesis2-style product file lists. `--product FILE.ext` produces three files: `FILE.ext` (all modules), `FILE.synth.ext` (synth-cone), `FILE.verif.ext` (verif-cone). Suppresses the default `<top>.vlist`/`<top>.vlist.verif`.
 - `--json-out FILE` -- write a `HierarchyTop` snapshot of the elaborated module tree (port of Perl `-hierarchy`). Emits three files in `dirname(FILE)`: `FILE` (full), `<stem>-small<ext>` (no `ImmutableParameters`), `<stem>-tiny<ext>` (only params with priority `>= EXTERNAL_PARAM_FILE`).
-- `--vf-out FILE` -- permanent alias for `--product FILE.vf` (auto-appends `.vf` if missing). Mutually exclusive with `--product`.
+- `--vf-out FILE` -- write a single Verilog file-list product to `FILE` (auto-appends `.vf` if missing). Unlike `--product`, no `.synth`/`.verif` side-files are emitted. Suppresses the default `<top>.vlist`/`<top>.vlist.verif`. Mutually exclusive with `--product`.
 - `--depend FILE` -- override the dependency-list output path (default: `<top>.depend`).
 - `--path FILE` -- write the list of directories touched during elaboration to `FILE`.
 
@@ -846,8 +846,8 @@ flag style) are listed below. For behaviour-affecting incompatibilities
 - **`print(...)` inside `//;` escapes** -- Perl `print "..."` inside `//;` blocks routes to the **generated Verilog file** by default; `print STDOUT/STDERR` explicitly route to the screen. Python `print(...)` writes to `sys.stdout`, not to the module's outfile. Use `emit(...)` to write to the module's Verilog output, or pass `file=sys.stderr` for the diagnostic channel. A mechanical port of debug `print` lines silently loses them from the `.v` output.
 - **`Genesis2::UserConfigBase` class form** -- Perl `.cfg` scripts can subclass `Genesis2::UserConfigBase` (PerlLibs/Genesis2/UserConfigBase.pm) to share helper code via OO inheritance. genesispy has no class-form equivalent; import helper modules from the `.cfg` script directly. The injected sandbox functions (`configure`, `get_configuration`, `print_configuration`, `get_top_name`, `get_synthtop_path`, ...) remain in scope through any imported helpers.
 - **`--log` default** -- now defaults to `genesispy.log` (lazy-opened on first error/warning so clean runs leave no log artifact). Mirrors Perl's `LogFileName = 'genesis.log'` (Manager.pm:103). Suppress by pointing at `/dev/null` or any non-writable path.
-- **`--product FILE.ext`** -- writes three files: `FILE.ext` (master, every emitted Verilog file), `FILE.synth.ext` (synth-cone files), `FILE.verif.ext` (verif-cone files). Mirrors Perl `-product` (Manager.pm:1302-1319). Extension split via `os.path.splitext` (last-dot only).
-- **`--vf-out FILE`** -- permanent alias for `--product FILE.vf` (auto-appends `.vf` if missing). Mutually exclusive with `--product`.
+- **`--product FILE.ext`** -- writes three files: `FILE.ext` (master, every emitted Verilog file), `FILE.synth.ext` (synth-cone files), `FILE.verif.ext` (verif-cone files). Mirrors Genesis2 `-product` (Manager.pm:1302-1319). Extension split via `os.path.splitext` (last-dot only). Suppresses the default `<top>.vlist`/`<top>.vlist.verif`; `<top>.depend` is still written and its target tracks the named product file.
+- **`--vf-out FILE`** -- writes a single Verilog file-list product to `FILE` (auto-appends `.vf` if missing). Unlike `--product`, no `.synth`/`.verif` side-files are emitted. Suppresses the default `<top>.vlist`/`<top>.vlist.verif`. Mutually exclusive with `--product`. Diverges from Genesis2, which has no single-file product-list flag.
 - **`self.to_string(*args)`** -- debug serialiser using `pprint.pformat` per argument (newline-separated). Mirrors Perl `$self->to_string(...)` (UniqueModule.pm:2911); not a byte-for-byte port of `CfgHandler::PrintToString`. Self-method only -- no bare-name alias in `.vpy` bodies.
 - **Parameter accessors** -- `exists_param(name)`, `get_top_param(name)`, and `list_params()` (sorted list of names; distinct from the existing `get_mod_param_list()` which returns a `{name: value}` dict). Mirror Perl UniqueModule.pm:496/:550/:515.
 - **Sub-instance navigation** -- `get_subinst(name)`, `exists_subinst(name)`, `get_subinst_array(pattern="")`, `get_instance_obj(path_or_obj)`, and `search_subinst(...)` are now available on every `UniqueModule` (mirrors Perl UniqueModule.pm:760/780/797/932/1087). `search_subinst` kwargs are **snake_case**: `start_from=`, `depth=`, `reverse=`, `path_regex=`, `iname_regex=`, `mname_regex=`, `bname_regex=`, `sname_regex=`, `has_param_regex=`, `apply_map=`. Translate from Perl Genesis2's CamelCase (`PathRegex`, `INameRegex`, ...) when porting.
@@ -865,12 +865,13 @@ A `genesispy` run produces:
 - `genesis_raw/<stem>.py` -- generated Python intermediate per `.vpy` input. The raw directory is removed at end of run unless `--gen-raw` is set (which also writes the per-module `.v` siblings into it). `--raw-dir DIR` relocates the directory; `--use-tmp` puts it under `/tmp/genesispy_*` (auto-cleaned at exit; `--keep-tmp` preserves the scratch).
 - `genesis_synth/<module>.v` -- elaborated Verilog for instances at or under `--synth-top`. (Empty when `--synth-top` is omitted.)
 - `genesis_verif/<module>.v` -- elaborated Verilog for instances outside the synth cone (everything when `--synth-top` is omitted, mirroring Genesis2's `SynthTop=undef` default).
-- `<outputdir>/<top>.vlist` -- full compile-order file list (every emitted `.v`, regardless of synth/verif tag).
-- `<outputdir>/<top>.vlist.verif` -- emitted only when at least one verif-tagged file exists; lists verif + synth_and_verif paths.
-- `<top>.depend` -- Make-style dependency list.
+- `<outputdir>/<top>.vlist` -- full compile-order file list (every emitted `.v`, regardless of synth/verif tag). Suppressed when `--product` or `--vf-out` is set.
+- `<outputdir>/<top>.vlist.verif` -- emitted only when at least one verif-tagged file exists; lists verif + synth_and_verif paths. Suppressed when `--product` or `--vf-out` is set.
+- `<top>.depend` -- Make-style dependency list. Always written. Target is the `.vlist` by default, or the named product file under `--product`/`--vf-out`.
 - `genesispy_clean.sh` -- sweeps the run's output products.
 - Optional `--json-out FILE` -- resolved configuration tree (three siblings, see section 9.4).
-- Optional `--product FILE` (Genesis2 compat) -- writes `FILE`, `FILE.synth`, `FILE.verif` product lists.
+- Optional `--product FILE` (Genesis2 compat) -- writes `FILE`, `FILE.synth`, `FILE.verif` product lists; suppresses the default `.vlist` pair.
+- Optional `--vf-out FILE` -- writes a single `FILE` product list (no side-files); suppresses the default `.vlist` pair.
 - Optional `--path FILE` -- directories touched during elaboration.
 
 ## 14. Troubleshooting

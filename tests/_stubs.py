@@ -94,6 +94,8 @@ class StubManager:
         self.out_type: str = "both"
         self.gen_raw: bool = False
         self.depend_file: Optional[str] = None
+        self.product_file: Optional[str] = None
+        self.product_single: bool = False
         self.touched_dirs: list = []
         self.syntax: str = "genesis"
         self.comment: str = "//"

@@ -435,3 +435,45 @@ def test_write_product_lists_with_extension(manager, tmp_path):
     assert out["verif"] == stem + ".verif.vf"
     for k in ("master", "synth", "verif"):
         assert os.path.isfile(out[k])
+
+
+def test_write_product_lists_single_emits_only_master(manager, tmp_path):
+    """single=True (the --vf-out path) writes only the master file.
+
+    No .synth/.verif side-files are produced, and the returned dict
+    contains only the ``"master"`` key.
+    """
+    _populate_cache()
+    written = output_writer.flush_to_disk(manager)
+    base = str(tmp_path / "manifest.vf")
+    out = output_writer.write_product_lists(manager, written, base, single=True)
+    stem = str(tmp_path / "manifest")
+    assert out == {"master": base}
+    assert os.path.isfile(base)
+    assert not os.path.exists(stem + ".synth.vf")
+    assert not os.path.exists(stem + ".verif.vf")
+
+
+def test_write_file_lists_skips_vlist_when_named_product(manager, tmp_path):
+    """emit_vlist=False suppresses <top>.vlist[.verif] but still writes .depend.
+
+    The depend file targets the named product file rather than the
+    suppressed .vlist.
+    """
+    _populate_cache()
+    manager.product_file = str(tmp_path / "manifest.vf")
+    written = output_writer.flush_to_disk(manager)
+    out = output_writer.write_file_lists(manager, written, emit_vlist=False)
+
+    assert "synth_vlist" not in out
+    assert "verif_vlist" not in out
+    assert "depend" in out
+    assert not os.path.exists(os.path.join(manager.output_dir, "my_top.vlist"))
+    assert not os.path.exists(
+        os.path.join(manager.output_dir, "my_top.vlist.verif")
+    )
+    with open(out["depend"]) as fh:
+        body = fh.read()
+    # Depend target tracks the named product, not the suppressed .vlist.
+    assert "manifest.vf" in body
+    assert "my_top.vlist" not in body

@@ -338,10 +338,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="FILE",
         help=(
-            "Write Perl-style product file lists. --product FILE.ext "
+            "Write Genesis2-style product file lists. --product FILE.ext "
             "produces three files: FILE.ext (all modules), "
             "FILE.synth.ext (synth modules), FILE.verif.ext (verif "
-            "modules). Mirrors Perl Manager.pm:1302-1319."
+            "modules). Suppresses the default <top>.vlist/<top>.vlist.verif. "
+            "Mirrors Genesis2 Manager.pm:1302-1319."
         ),
     )
     g_out.add_argument(
@@ -350,8 +351,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="FILE",
         help=(
-            "Permanent alias for --product FILE.vf (auto-appends .vf "
-            "if FILE doesn't already end in .vf). Mutually exclusive "
+            "Write a single Verilog file-list product to FILE "
+            "(auto-appends .vf if missing). Unlike --product, no "
+            ".synth/.verif side-files are emitted. Suppresses the "
+            "default <top>.vlist/<top>.vlist.verif. Mutually exclusive "
             "with --product."
         ),
     )

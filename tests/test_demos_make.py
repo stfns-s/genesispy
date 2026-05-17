@@ -55,14 +55,14 @@ def test_make_gen(demo_copy: Path) -> None:
         timeout=300,
     )
     assert r.returncode == 0, f"make gen failed:\n{r.stdout}\n{r.stderr}"
-    # Demos don't pass --synthtop; under Perl-default semantics every
+    # Demos don't pass --synthtop; under Genesis2-default semantics every
     # emitted .v is verif-tagged.  The Makefile passes --outputdir
-    # genesis_synth, which (per --outputdir cascade) also supplies the
-    # default for --verif-dir, so the .v lands under genesis_synth/
-    # alongside the .vlist and the genesis_vlog.vf product list.
+    # genesis_synth, so .v files land there; the file list itself is
+    # written to the demo root via --vf-out, and the default
+    # <top>.vlist is suppressed.
     assert (demo_copy / "genesis_synth" / "top.v").exists()
-    assert (demo_copy / "genesis_synth" / "top.vlist").exists()
     assert (demo_copy / "genesis_vlog.vf").exists()
+    assert not (demo_copy / "genesis_synth" / "top.vlist").exists()
 
 
 @pytest.mark.parametrize("demo_copy", DEMO_NAMES, indirect=True)
@@ -75,8 +75,8 @@ def test_make_gen_j2(demo_copy: Path) -> None:
     )
     assert r.returncode == 0, f"make gen-j2 failed:\n{r.stdout}\n{r.stderr}"
     assert (demo_copy / "genesis_synth.j2" / "top.v").exists()
-    assert (demo_copy / "genesis_synth.j2" / "top.vlist").exists()
     assert (demo_copy / "genesis_vlog.j2.vf").exists()
+    assert not (demo_copy / "genesis_synth.j2" / "top.vlist").exists()
 
 
 @pytest.mark.parametrize("demo_copy", DEMO_NAMES, indirect=True)
@@ -162,7 +162,7 @@ def test_generation_examples_make(tmp_path: Path) -> None:
     assert r.returncode == 0, f"make clean failed:\n{r.stdout}\n{r.stderr}"
     for ex in _GEN_EX_EXPECTED:
         assert not (dst / f"genesis_synth_{ex}").exists()
-    assert not (dst / "genesis_vlog.vf").exists()
+    assert not list(dst.glob("genesis_vlog_*.vf"))
 
 
 def test_generation_examples_make_vlint(tmp_path: Path) -> None:
