@@ -1,7 +1,8 @@
 # genesispy -- code interfaces
 
-Canonical contracts for the package in `genesispy/src/genesispy/`. These signatures are the load-bearing
-contract between modules; coordinate before changing them.
+Canonical interfaces for the package in `genesispy/src/genesispy/`. These
+signatures are the critical boundary between modules; coordinate before
+changing them.
 
 ## genesispy.reporting
 
@@ -575,9 +576,9 @@ def sha256_param_signature(module_name: str,
 Stand-alone helper, not used by the elaboration core. Ports a stock-Jinja2
 template to genesispy's ``--j2`` dialect (Jinja2-style delimiters with
 full-Python embedded language). Requires the optional ``jinja2`` dependency
-(``pip install 'genesispy[import-j2]'``); a missing import surfaces as a
-clear error at CLI start. Driven by Jinja2's own parser to handle filter
-pipelines and ``is``-tests robustly. Block openers gain a trailing ``:``;
+(``pip install 'genesispy[import-j2]'``); a missing import raises a clear
+error at CLI start. Uses Jinja2's own parser to handle filter pipelines
+and ``is``-tests. Block openers gain a trailing ``:``;
 filters and tests are translated to Python via fixed mapping tables;
 ``{% set N = E %}`` becomes ``{% N = PY(E) %}``; ``{% include "f" %}``
 becomes ``{% include("f") %}``. Macros, blocks, ``extends``, ``import``,

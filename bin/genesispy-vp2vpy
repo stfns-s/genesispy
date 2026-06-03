@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Local launcher for genesispy-vp2vpy — no install required.
+# Requires `perl` with PPI on @INC; on ramyx hosts:
+#   module load ramyx/perl/5.42.0/0.1.0
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+export PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+exec "${PYTHON:-python3}" -m genesispy.tools.vp2vpy "$@"

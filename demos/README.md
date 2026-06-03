@@ -1,8 +1,9 @@
 # genesispy demos
 
-Worked examples that exercise the `genesispy` elaborator end-to-end. Each demo is a self-contained directory derived
-from the corresponding tree under upstream `Genesis2/demo/`; parity vs. the Perl reference is exercised by the
-workspace-level `test_parity/` suite.
+Examples that run the `genesispy` elaborator on the four ported demos.
+Each demo is self-contained, derived from the matching tree under
+upstream `Genesis2/demo/`; parity vs. the Perl reference is checked by
+the workspace-level `test_parity/` suite.
 
 ## Quick start
 
@@ -12,8 +13,8 @@ cd <demo>
 make gen                   # elaborate -> genesis_synth/
 ```
 
-`bin/genesispy` and `bin/gvpy` run in-tree -- no `pip install -e .` needed. `env_setup.sh` simply prepends
-`genesispy/bin` to `PATH`.
+`bin/genesispy` and `bin/gvpy` run from the tree; `pip install -e .` is
+not required. `env_setup.sh` prepends `genesispy/bin` to `PATH`.
 
 ## Shared infrastructure
 
@@ -48,8 +49,8 @@ See `genesispy/doc/user-guide.md` section 3 for the full `genesispy` flag list.
 
 ### `env_setup.sh`
 
-Sourceable shell snippet (bash/zsh). Prepends `genesispy/bin` to `PATH` so `genesispy` and `gvpy` resolve from the
-in-tree checkout.
+Sourceable shell snippet (bash/zsh). Prepends `genesispy/bin` to `PATH`
+so `genesispy` and `gvpy` resolve from the checkout.
 
 ## Demos
 
@@ -75,8 +76,8 @@ config files are at the demo root:
 - `config.py` -- low-priority `.cfg` fallback. Both `--json-cfg` and CLI `--parameter` take priority over it; it
   applies under JSON when both are passed.
 
-The local `Makefile` overrides `help` to document the supported invocations; run `make help` for the live version.
-Common modes:
+The local `Makefile` documents the supported invocations; run `make help`
+for the current list. Common modes:
 
 | Invocation                                         | `WALLACES_WIDTHS`           | Result                       |
 |----------------------------------------------------|-----------------------------|------------------------------|
@@ -91,16 +92,15 @@ Common modes:
 
 Five small tops illustrating the instance-generation primitives
 (`unique_inst`, `ununique_inst`, `generate_w_name`,
-`synonym`+`generate_base`, `clone_inst`) side-by-side. Each serves a
-different purpose -- distinct uniquified modules per parameter set, a
-single shared module under many instances, renaming the emitted
-module, registering a synonym up front, or duplicating an
-already-elaborated module without re-running its body. One top module
-per pattern under `genesis_src/ex<N>_<style>.vpy`, sharing a single
-`pll.vpy` leaf. `make gen` elaborates all five into
-`genesis_synth_ex<N>/`; `make ex<N>_<style>` runs just one. See the
-demo's own `README.md` for source listings, commands, and the expected
-Verilog output for each example.
+`synonym`+`generate_base`, `clone_inst`). Each shows a different use:
+distinct uniquified modules per parameter set, one shared module under
+many instances, renaming the emitted module, registering a synonym up
+front, or creating extra instances of an already-elaborated module
+without re-running its body. One top per pattern under
+`genesis_src/ex<N>_<style>.vpy`, sharing a single `pll.vpy` leaf.
+`make gen` elaborates all five into `genesis_synth_ex<N>/`;
+`make ex<N>_<style>` runs just one. See the demo's own `README.md` for
+source listings, commands, and the expected Verilog per example.
 
 ### `random_logic`
 
@@ -116,5 +116,5 @@ backtick expressions, control flow (`for` / `if`), and `pp()`. Run via `bin/gvpy
 ## See also
 
 - `genesispy/doc/user-guide.md` -- full CLI and config reference.
-- `genesispy/doc/interfaces.md` -- module-author API contracts.
+- `genesispy/doc/interfaces.md` -- module-author API reference.
 - `test_parity/README.md` -- running parity vs. Perl Genesis2.

@@ -1,8 +1,8 @@
 # Generation examples
 
-Five tops that instantiate **the same** `pll.vpy` module in five
-different ways. Each section shows the top source, how the same
-underlying template gets elaborated, and the emitted Verilog.
+Five tops that instantiate the same `pll.vpy` module in five different
+ways. Each section shows the top source, how the template is elaborated,
+and the emitted Verilog.
 
 ## The shared module
 
@@ -41,7 +41,7 @@ genesispy --input ex1_unique.vpy --input pll.vpy --top ex1_unique \
 
 ## 1. Distinct uniquified modules via `unique_inst`
 
-Three `unique_inst` calls with **different resolved parameters** ->
+Three `unique_inst` calls with different resolved parameters produce
 three distinct uniquified modules (`pll_unq1.v`, `pll_unq2.v`,
 `pll_unq3.v`), each instantiated once.
 
@@ -87,7 +87,7 @@ endmodule
 - The numeric suffix (`_unq1`, `_unq2`, ...) is the default style.
   `--unq-style param` (or `unique_inst_param`) encodes the parameters
   in the name instead (e.g. `pll_M2.v`).
-- Examples 2-4 cover the opposite pattern: a **single** emitted module
+- Examples 2-4 cover the opposite pattern: a single emitted module
   shared across multiple instances.
 
 ## 2. One bare-name module shared by many instances: `ununique_inst`

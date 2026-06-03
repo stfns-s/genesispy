@@ -1,10 +1,10 @@
 # genesispy -- code structure
 
-This document describes how the genesispy package fits together end-to-end: the layering, the pipeline that
-turns a `.vpy` template into Verilog on disk, the deduplication model, and the major control surfaces. It is a
-self-contained reference; deep detail (signatures, attribute names) lives in `interfaces.md` in this
-directory. This document deliberately does not pin specific signatures -- it points at `interfaces.md` for
-those so the two cannot disagree.
+How the genesispy package fits together: the layering, the pipeline from
+`.vpy` template to Verilog on disk, the dedup model, and the main control
+flags. Self-contained; signatures and attribute names live in
+`interfaces.md` next door. This file does not pin specific signatures --
+it points at `interfaces.md` so the two cannot disagree.
 
 ## 1. Purpose and scope
 
@@ -14,15 +14,16 @@ elaboration runtime, and emits Verilog into `genesis_synth/` and `genesis_verif/
 JSON, trusted-input `.cfg` files, and explicit `unique_inst(...)` overrides; identical parameterisations are
 deduplicated so the same module body is emitted once.
 
-This document covers: the package layering, the orchestrator's order of operations, the lifecycle of a single
-`.vpy` file, the dedup cache, and the top-level flag surface. It does **not** document the user-facing
-template language (`user-guide.md`), the run instructions (`README.md`), or the contract surface between
-modules (`interfaces.md`).
+Covers: package layering, the orchestrator's order of operations, the
+lifecycle of a single `.vpy` file, the dedup cache, and the top-level
+flags. Does **not** cover the user-facing template language
+(`user-guide.md`), run instructions (`README.md`), or the module-boundary
+interfaces (`interfaces.md`).
 
 ## 2. Layered view
 
-The package separates into three layers with a one-way dependency: frontend imports engine, engine never
-imports frontend.
+Three layers with a one-way dependency: frontend imports engine, engine
+never imports frontend.
 
 **CLI / orchestration**
 - `cli.py` -- argparse, listfile expansion, entry point.
@@ -57,9 +58,10 @@ imports frontend.
 - `output_writer.py` -- flush cache to disk, write `.vlist` / `.depend` / `genesispy_clean.sh`.
 - `errors.py` -- exception hierarchy and `error()` / `warning()` reporters.
 
-The `template/` directory is a separate package because its job is the surface-syntax frontend: a different
-surface language (Jinja, native Python, a different HDL target) would replace `template/parser.py` and adjust
-the emitter without touching the engine.
+The `template/` directory is a separate package because its job is the
+input-syntax frontend: a different input language (Jinja, native Python,
+a different HDL target) would replace `template/parser.py` and adjust the
+emitter without touching the engine.
 
 ## 3. End-to-end pipeline
 
@@ -135,7 +137,7 @@ runs as a short-circuit before parsing -- `--clean` exits before any `.vpy` is t
 
 ## 4. Frontend in detail (`template/`)
 
-The frontend is the only place that knows the `.vpy` surface syntax. Three files:
+The frontend is the only place that knows the `.vpy` input syntax. Three files:
 
 - **`parser.py`** translates one `.vpy` source to a column-zero Python string: `//;` lines become bare Python
   at indent `(leading_spaces // 4)`; plain Verilog lines become `emit(...)` calls whose indent follows the
@@ -237,7 +239,7 @@ Legacy XML configs convert via `genesispy-xml2json`. Full `ConfigHandler` API: s
 - Optional `--product FILE` (Genesis2 compat) -- writes `FILE.synth` and `FILE.verif` product lists.
 - Optional `--path FILE` -- directories touched during elaboration.
 
-## 8. Control surfaces
+## 8. Control flags
 
 Selected flags (`genesispy --help` is authoritative for the full list, including
 `--synth-top`, `--out-dir`, `--synth-dir`, `--verif-dir`, `--cfg`, `--cfg-path`,
@@ -271,7 +273,7 @@ emits a one-time deprecation warning.
 
 ## 10. Pointers
 
-- [`interfaces.md`](./interfaces.md) -- frozen contract surface: every attribute, method, exception, and
+- [`interfaces.md`](./interfaces.md) -- module-boundary interfaces: every attribute, method, exception, and
   exec-namespace key the modules expose to each other. The source of truth for signatures.
 - [`../README.md`](../README.md) and [`user-guide.md`](./user-guide.md) -- run instructions and end-user
   template guide.

@@ -858,6 +858,61 @@ flag style) are listed below. For behaviour-affecting incompatibilities
 - **`sname`** -- mirrors Perl `get_source_name` (UniqueModule.pm:377): returns the source template name (`_synonym_for` set by `Manager.synonym_class` on a synonym-derived class, else the base module name == `bname`).
 - **`--json-out`** (Perl `-hierarchy`) -- same three-file output and same `HierarchyTop` schema, but emitted as JSON (use `genesispy-json2xml` for XML). Sibling filenames diverge from Perl: Perl emits `<f>`/`small_<f>`/`tiny_<f>`; genesispy splits `<f>` into `<stem><ext>` and emits `<stem><ext>`/`<stem>-small<ext>`/`<stem>-tiny<ext>`. The `tiny` variant filters by `priority >= EXTERNAL_PARAM_FILE`; genesispy's flat-key config lookup cannot replicate Perl's `inherit_param`-aware priority assignment, so the `tiny` set may be a strict superset of Perl's (params Perl tags as inherited may appear as user-overrides in genesispy).
 
+### 12.1 `genesispy-vp2vpy` -- mechanical `.vp` -> `.vpy` translator
+
+Status: experimental. Coverage tracks the Genesis2 demo set plus the
+`glctest` parity corpus (see `test_parity/test_vp2vpy_parity.py`);
+constructs outside that scope may emit a TODO. Report unsupported Perl
+patterns as issues.
+
+The `.vp` -> `.vpy` port is mostly mechanical (`$x` -> `x`, fat commas ->
+keywords, `{` `}` -> indent + sentinels). `genesispy-vp2vpy` does that
+translation as a one-shot pass; the output isn't always idiomatic, but
+it parses and elaborates as a starting point for further hand-cleanup.
+
+Run on a file or a directory:
+
+```
+$ module load ramyx/perl/5.42.0/0.1.0      # provides perl + PPI
+$ genesispy-vp2vpy path/to/genesis-source -o path/to/genesis_src
+```
+
+Output extension defaults: `.vp -> .vpy`, `.vph -> .vpy`.
+`--strict` upgrades any unmappable construct to an error;
+default behaviour passes the original line through wrapped in
+`// TODO vp2vpy: <reason>`. `--check` exits nonzero if any TODO would
+have been emitted (CI use).
+
+Implementation: Perl is parsed via the CPAN `PPI` module (run as a
+subprocess); Python rewriting is table-driven from
+`genesispy.tools.vp2vpy_map`. The translator covers `my`/scalar/array/
+hash declarations, `for`/`foreach`/`while`/`until`/`if`/`unless`/`elsif`/
+`else` (with `# endX` sentinel injection), postfix conditionals,
+ternary, regex bind (`=~` / `!~`), `sprintf`, `defined`/`scalar`/
+`length`/`keys`/`values`/`push`/`pop`/`shift`/`unshift`, the Genesis2
+user API (`Parameter`, `Generate`, `Instantiate`, `UniqueInst`, `Clone`,
+`Synonym`, `Include`, `Pinclude`, ...), backtick expressions inside
+Verilog body, multi-line directive continuations, and Verilog
+compiler-directive escaping (`` `timescale ``, etc.).
+
+Known limitations:
+
+- `sub NAME { ... }` definitions translate to `def NAME(...): ...` with
+  the body walked through the same expression/statement rewriter as
+  inline directives. There is no Perl-runtime emulation: `wantarray`,
+  `local`, prototype declarations, and closures over outer lexicals are
+  not modelled; affected lines emit a TODO.
+- Anonymous Perl subs (`sub { ... }` as a value, e.g. callback args) are
+  unmappable and emit a TODO.
+- Bare `m//` regex against Perl's implicit `$_` is unmappable (use the
+  bound form `$x =~ m//`).
+- `s///` substitution rewrites the LHS unconditionally; if the original
+  used a complex lvalue, expect a TODO.
+
+The translator's smoke + unit suites live in
+`genesispy/tests/test_vp2vpy_*.py`; the workspace-level end-to-end
+parity test is `test_parity/test_vp2vpy_parity.py`.
+
 ## 13. Outputs
 
 A `genesispy` run produces:
@@ -917,10 +972,10 @@ genesispy --inc-path ./shared --input top.vpy --top top
 
 `config_handler` unwraps `__ArrayType__` / `__HashType__` / `__Val__`
 wrappers when it loads JSON, but only at the boundaries it knows
-about. Custom nested structures may surface as raw dict / list with
-the sentinel keys still visible. Inspect with `--json-out hier.json`
-to see the resolved tree, and add an explicit unwrap helper call in
-`.vpy` body if you need a particular shape.
+about. Custom nested structures may appear as raw dict / list with the
+sentinel keys still visible. Inspect with `--json-out hier.json` to see
+the resolved tree, and add an explicit unwrap helper call in `.vpy` body
+if you need a particular shape.
 
 ### `genesispy.log` appearing in clean repos
 
@@ -944,8 +999,8 @@ Three core subsystems do the work, backed by two shared modules:
 
 Shared dedup and output state lives in **`genesispy.cache`**
 (`MODULE_CACHE`, `OUTFILE_CONTENT_CACHE`, `UNUNIQUE_REGISTRY`,
-`OUTFILE_TAGS`); see `interfaces.md` `genesispy.cache` for the
-canonical surface. Configuration resolution lives in
+`OUTFILE_TAGS`); see `interfaces.md` `genesispy.cache` for the canonical
+interface. Configuration resolution lives in
 **`genesispy.config_handler.ConfigHandler`**; see
 `interfaces.md` `genesispy.config_handler.ConfigHandler`.
 

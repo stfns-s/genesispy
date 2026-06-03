@@ -1,11 +1,11 @@
 # genesispy -- incompatibilities with genesis2
 
-This document lists the subtle, behavior-affecting differences between genesispy and Perl Genesis2.
-Superficial changes that follow inevitably from a Perl-to-Python port (`//;` body language, `.vp`/`.svp` ->
-`.vpy`/`.svpy`, `.cfg` running under trusted-input `exec()` instead of `eval`, GNU-style CLI flags, new flags such
-as `--extension`, `--out-type`, `--synth-dir`, `--verif-dir`) are covered in the user's guide and omitted here.
-
-The items below are the ones a porting user is most likely to encounter.
+Behaviour differences between genesispy and Perl Genesis2 that affect output
+or runtime semantics. Cosmetic changes from the Perl-to-Python port (`//;`
+body language, `.vp`/`.svp` -> `.vpy`/`.svpy`, `.cfg` under `exec()` instead
+of `eval`, GNU-style CLI flags, new flags such as `--extension`,
+`--out-type`, `--synth-dir`, `--verif-dir`) are covered in the user's guide
+and omitted here.
 
 ## 1. Unique-module hash is not bit-equal to Genesis2
 

@@ -2,10 +2,9 @@
 
 Python port of the Genesis2 Chip Generator (see
 <https://github.com/StanfordVLSI/Genesis2>). Replaces the Perl runtime
-with a pure-Python implementation while preserving the hierarchical
-template schema (now `.vpy` / `.svpy`). Configuration is JSON; legacy
-Genesis2 `.xml` configs convert via the bundled `genesispy-xml2json`
-helper.
+with a pure-Python implementation while keeping the template hierarchy
+(now `.vpy` / `.svpy`). Configuration is JSON; legacy Genesis2 `.xml`
+configs convert via the bundled `genesispy-xml2json` helper.
 
 ## Install
 
@@ -57,8 +56,8 @@ PYTHONPATH=src pytest tests/
 - [doc/user-guide.md](./doc/user-guide.md) -- `.vpy` syntax, walkthrough,
   CLI reference for `genesispy` and `gvpy`, migrating from Genesis2.
 - [doc/code-structure.md](./doc/code-structure.md) -- pipeline, dedup,
-  control surfaces.
-- [doc/interfaces.md](./doc/interfaces.md) -- frozen module-boundary
-  contracts.
+  control flags.
+- [doc/interfaces.md](./doc/interfaces.md) -- module-boundary
+  interfaces.
 - [doc/genesis2-incompatibilities.md](./doc/genesis2-incompatibilities.md)
   -- non-obvious behavior differences from Perl Genesis2.
