@@ -266,6 +266,35 @@ def test_include_uses_source_comment_from_manager(tmp_path) -> None:
     assert "#; emit" not in out
 
 
+def test_include_honors_custom_extension_from_manager(tmp_path) -> None:
+    """include() must accept input extensions registered via --extension."""
+    mgr = _RealishManager()
+    mgr.extension_map = {".vpy": ".v", ".svpy": ".sv", ".myvpy": ".myv"}
+    top = _Top(mgr)
+    p = tmp_path / "frag.myvpy"
+    p.write_text(
+        "//; from genesispy.user_config import _configure as configure\n"
+        "//; configure('X', 7)\n"
+    )
+    with user_config.context(mgr, top):
+        user_config._include(str(p))
+        assert user_config._get_configuration("X") == 7
+
+
+def test_include_rejects_extension_absent_from_manager_map(tmp_path) -> None:
+    """An extension not in the manager's map is still gated out."""
+    from genesispy.template.parser import ParseError
+
+    mgr = _RealishManager()
+    mgr.extension_map = {".vpy": ".v", ".svpy": ".sv"}
+    top = _Top(mgr)
+    p = tmp_path / "frag.myvpy"
+    p.write_text("//; emit('payload')\n")
+    with user_config.context(mgr, top):
+        with pytest.raises(ParseError, match="unsupported extension"):
+            user_config._include(str(p))
+
+
 # --------------------------------------------------------------------------
 # get_top_name / get_synthtop_path
 # --------------------------------------------------------------------------

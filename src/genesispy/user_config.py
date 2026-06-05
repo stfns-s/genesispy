@@ -142,9 +142,11 @@ def _include(path: str) -> None:
     else:
         mgr = _current_manager()
         resolved = mgr.find_file(path, list(mgr.inc_path) + ["."])
+    ext_map = getattr(_active_manager, "extension_map", None)
+    allowed = frozenset(ext_map.keys()) if ext_map else None
     syntax = getattr(_active_manager, "syntax", "genesis")
     comment = getattr(_active_manager, "source_comment", "//")
-    src = parse_vpy(resolved, syntax=syntax, comment=comment)
+    src = parse_vpy(resolved, allowed, syntax=syntax, comment=comment)
     # Register a line map so tracebacks from the included .vpy point at the
     # author's source lines, not the generated Python.
     runtime.register_line_map(resolved, runtime.build_line_map(src))
