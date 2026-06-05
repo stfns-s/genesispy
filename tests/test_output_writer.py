@@ -382,6 +382,26 @@ def test_write_clean_script_dedups_overlapping_dirs(tmp_path):
     )
 
 
+def test_dump_to_stdout_separator_block_comment(manager):
+    """output_comment tuple renders separator as '<open> genesispy: <file> <close>'."""
+    manager.output_comment = ("/*", "*/")
+    cache.OUTFILE_CONTENT_CACHE["foo"] = "module foo; endmodule\n"
+    buf = io.StringIO()
+    output_writer.dump_to_stdout(manager, stream=buf)
+    out = buf.getvalue()
+    assert "/* genesispy: foo.v */" in out
+
+
+def test_dump_to_stdout_separator_line_mode(manager):
+    """output_comment str keeps the existing line-mode separator format."""
+    manager.output_comment = "//"
+    cache.OUTFILE_CONTENT_CACHE["bar"] = "module bar; endmodule\n"
+    buf = io.StringIO()
+    output_writer.dump_to_stdout(manager, stream=buf)
+    out = buf.getvalue()
+    assert "// genesispy: bar.v\n" in out
+
+
 def test_dump_to_stdout_emits_top_last(manager):
     manager.top = "my_top"
     cache.OUTFILE_CONTENT_CACHE["aaa"] = "// aaa\n"

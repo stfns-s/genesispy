@@ -247,6 +247,25 @@ def test_include_self_is_current_module(tmp_path) -> None:
     assert "hello world" in top._outfile_handle.getvalue()
 
 
+def test_include_uses_source_comment_from_manager(tmp_path) -> None:
+    """include() must forward source_comment to parse_vpy so non-default sentinels work."""
+    mgr = _RealishManager()
+    mgr.source_comment = "#"
+    top = _Top(mgr)
+    p = tmp_path / "frag.vpy"
+    # Directive uses the '#;' sentinel. If comment defaults to '//' the line is
+    # treated as literal text: it leaks verbatim and emit() never runs. The
+    # 'not in' assertion is the discriminator -- a substring check on the
+    # payload alone passes either way, since the leaked literal contains it.
+    p.write_text("#; emit('payload')\n")
+    with user_config.context(mgr, top):
+        user_config._include(str(p))
+    assert top._outfile_handle is not None
+    out = top._outfile_handle.getvalue()
+    assert "payload" in out
+    assert "#; emit" not in out
+
+
 # --------------------------------------------------------------------------
 # get_top_name / get_synthtop_path
 # --------------------------------------------------------------------------

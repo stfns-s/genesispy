@@ -28,7 +28,7 @@ from typing import Any, Iterable
 
 from genesispy import __version__, cache, user_config
 from genesispy import reporting
-from genesispy.cli import _add_deprecated_alias, _comment_arg
+from genesispy.cli import _add_deprecated_alias, _comment_arg, _output_comment_arg
 from genesispy.config_handler import ConfigHandler
 from genesispy.reporting import ParameterError
 from genesispy.extensions import build_extension_map, parse_extension_spec
@@ -73,7 +73,9 @@ class _GvpyManager:
             getattr(args, "extensions", []) or []
         )
         self.syntax = "j2" if getattr(args, "j2", False) else "genesis"
-        self.comment = getattr(args, "comment", "//")
+        self.source_comment = getattr(args, "source_comment", "//")
+        oc = getattr(args, "output_comment", None)
+        self.output_comment = oc if oc is not None else self.source_comment
         self.no_module_cache = False
         self.out_type = "both"
         self.gen_raw = False
@@ -116,7 +118,7 @@ class _GvpyManager:
                 continue
             return _build_class_from_vpy(
                 name, path, self.extension_map,
-                syntax=self.syntax, comment=self.comment,
+                syntax=self.syntax, comment=self.source_comment,
             )
         raise RuntimeError(
             f"Cannot resolve module {name!r}: no {name}{{{','.join(candidates)}}} found"
@@ -308,10 +310,27 @@ def main(argv: list[str] | None = None) -> int:
         kind="append", prog=PROG, metavar="NAME=VALUE",
     )
     parser.add_argument(
-        "--comment",
+        "--source-comment",
+        dest="source_comment",
         default="//",
         type=_comment_arg,
-        help='Comment prefix of the target language (default "//").',
+        help='Line-comment prefix of the source/target language (default "//").',
+    )
+    _add_deprecated_alias(
+        parser, "--comment", "--source-comment", dest="source_comment",
+        kind="store", type=_comment_arg, prog=PROG,
+    )
+    parser.add_argument(
+        "--output-comment",
+        dest="output_comment",
+        default=None,
+        type=_output_comment_arg,
+        metavar="PREFIX | OPEN,CLOSE",
+        help=(
+            "Comment style for emitted output comments (banner and the "
+            "--stdout 'genesispy:' separator): line prefix or 'OPEN,CLOSE' "
+            "block. Defaults to --source-comment."
+        ),
     )
     parser.add_argument(
         "--extension",
@@ -397,7 +416,7 @@ def _process(
 
     cls = _build_class_from_vpy(
         name, path, mgr.extension_map,
-        syntax=mgr.syntax, comment=mgr.comment,
+        syntax=mgr.syntax, comment=mgr.source_comment,
     )
     inst = cls(mgr)
 

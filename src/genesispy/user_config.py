@@ -143,7 +143,7 @@ def _include(path: str) -> None:
         mgr = _current_manager()
         resolved = mgr.find_file(path, list(mgr.inc_path) + ["."])
     syntax = getattr(_active_manager, "syntax", "genesis")
-    comment = getattr(_active_manager, "comment", "//")
+    comment = getattr(_active_manager, "source_comment", "//")
     src = parse_vpy(resolved, syntax=syntax, comment=comment)
     # Register a line map so tracebacks from the included .vpy point at the
     # author's source lines, not the generated Python.

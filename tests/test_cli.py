@@ -429,29 +429,37 @@ def test_json_out_help_does_not_reference_nonexistent_gen_flag():
 
 
 # ---------------------------------------------------------------------------
-# --comment validation
+# --source-comment validation
 # ---------------------------------------------------------------------------
 
-def test_comment_default_is_double_slash():
+def test_source_comment_default_is_double_slash():
     ns = parse_args([])
-    assert ns.comment == "//"
+    assert ns.source_comment == "//"
 
 
-def test_comment_custom_accepted():
-    ns = parse_args(["--comment", "#"])
-    assert ns.comment == "#"
+def test_source_comment_custom_accepted():
+    ns = parse_args(["--source-comment", "#"])
+    assert ns.source_comment == "#"
 
 
-def test_comment_empty_rejected():
+def test_source_comment_empty_rejected():
     # Empty prefix would collapse the directive sentinel to bare ';' and
     # emit banner lines without any comment marker.
     with pytest.raises(SystemExit):
-        parse_args(["--comment", ""])
+        parse_args(["--source-comment", ""])
 
 
-def test_comment_whitespace_only_rejected():
+def test_source_comment_whitespace_only_rejected():
     with pytest.raises(SystemExit):
-        parse_args(["--comment", "   "])
+        parse_args(["--source-comment", "   "])
+
+
+def test_deprecated_comment_alias_works_and_warns(capsys):
+    ns = parse_args(["--comment", "#"])
+    captured = capsys.readouterr()
+    assert ns.source_comment == "#"
+    assert "--comment is deprecated" in captured.err
+    assert "--source-comment" in captured.err
 
 
 def test_main_comment_flag_rewrites_directive_and_banner(tmp_path, capsys):
@@ -470,7 +478,7 @@ def test_main_comment_flag_rewrites_directive_and_banner(tmp_path, capsys):
         "endmodule\n"
     )
     rc = main([
-        "-i", str(src), "-t", "c", "--comment", "#", "--stdout",
+        "-i", str(src), "-t", "c", "--source-comment", "#", "--stdout",
     ])
     assert rc == 0
     out = capsys.readouterr().out
@@ -479,6 +487,52 @@ def test_main_comment_flag_rewrites_directive_and_banner(tmp_path, capsys):
     assert "# Genesis-Py generated module:" in out
     assert "// Genesis-Py" not in out
     assert "#; for" not in out
+
+
+# ---------------------------------------------------------------------------
+# --output-comment
+# ---------------------------------------------------------------------------
+
+def test_output_comment_unset_defaults_to_none():
+    ns = parse_args([])
+    assert ns.output_comment is None
+
+
+def test_output_comment_line_form():
+    ns = parse_args(["--output-comment", "@"])
+    assert ns.output_comment == "@"
+
+
+def test_output_comment_block_form():
+    ns = parse_args(["--output-comment", "/*,*/"])
+    assert ns.output_comment == ("/*", "*/")
+
+
+def test_output_comment_empty_rejected():
+    with pytest.raises(SystemExit):
+        parse_args(["--output-comment", ""])
+
+
+def test_output_comment_empty_open_rejected():
+    with pytest.raises(SystemExit):
+        parse_args(["--output-comment", ",*/"])
+
+
+def test_output_comment_empty_close_rejected():
+    with pytest.raises(SystemExit):
+        parse_args(["--output-comment", "/*,"])
+
+
+def test_output_comment_manager_resolution_inherits_source_comment():
+    from genesispy.manager import _resolve_output_comment
+    ns = parse_args(["--source-comment", "#"])
+    assert _resolve_output_comment(ns) == "#"
+
+
+def test_output_comment_manager_resolution_uses_explicit_value():
+    from genesispy.manager import _resolve_output_comment
+    ns = parse_args(["--source-comment", "#", "--output-comment", "/*,*/"])
+    assert _resolve_output_comment(ns) == ("/*", "*/")
 
 
 # ---------------------------------------------------------------------------

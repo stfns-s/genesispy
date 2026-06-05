@@ -98,7 +98,8 @@ class StubManager:
         self.product_single: bool = False
         self.touched_dirs: list = []
         self.syntax: str = "genesis"
-        self.comment: str = "//"
+        self.source_comment: str = "//"
+        self.output_comment: str = "//"
 
     def find_file(self, name: str, paths=None) -> str:  # pragma: no cover
         raise FileNotFoundError(name)

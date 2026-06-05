@@ -366,13 +366,20 @@ def dump_to_stdout(manager, stream: TextIO | None = None) -> None:
     Used by ``--stdout`` mode. Files are emitted in sorted order with the
     top module (when known) emitted last, each preceded by a
     ``<comment> genesispy: <filename>`` separator (default ``//``,
-    overridden by ``--comment``) so consumers can split the stream while
+    overridden by ``--output-comment``) so consumers can split the stream while
     keeping it valid in the target language.
     """
     out = stream if stream is not None else sys.stdout
     top = manager.top
     extra_known = _manager_extra_known(manager)
-    cmt = getattr(manager, "comment", "//")
+    style = getattr(manager, "output_comment", "//")
+    if isinstance(style, tuple):
+        _open, _close = style
+        def _sep(name: str) -> str:
+            return f"{_open} genesispy: {name} {_close}"
+    else:
+        def _sep(name: str) -> str:
+            return f"{style} genesispy: {name}"
 
     names = sorted(cache.OUTFILE_CONTENT_CACHE.keys())
     if top:
@@ -386,7 +393,7 @@ def dump_to_stdout(manager, stream: TextIO | None = None) -> None:
     for name in names:
         content = cache.OUTFILE_CONTENT_CACHE[name]
         filename = os.path.basename(_canonical_filename(name, extra_known=extra_known))
-        out.write(f"{cmt} genesispy: {filename}\n")
+        out.write(f"{_sep(filename)}\n")
         out.write(content)
         if not content.endswith("\n"):
             out.write("\n")

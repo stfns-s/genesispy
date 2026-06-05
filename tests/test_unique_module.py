@@ -34,13 +34,55 @@ def test_root_construction_and_module_name() -> None:
 
 def test_to_verilog_banner_uses_manager_comment_prefix() -> None:
     mgr = StubManager()
-    mgr.comment = "--"  # VHDL-style line comment
+    mgr.output_comment = "--"  # VHDL-style line comment
     top = Top(mgr)
     top.execute()
     out = top._outfile_handle.getvalue()
     # All banner lines must be prefixed with the configured comment.
     assert out.startswith("-- Genesis-Py generated module: Top")
     assert "// Genesis-Py" not in out
+
+
+def test_to_verilog_banner_line_mode_default() -> None:
+    """Line-mode banner uses output_comment prefix on every line."""
+    mgr = StubManager()
+    top = Top(mgr)
+    top.define_param("N", default=8)
+    top.execute()
+    out = top._outfile_handle.getvalue()
+    assert "// Genesis-Py generated module: Top" in out
+    assert "// Source class: Top" in out
+    assert "//   N = 8" in out
+
+
+def test_to_verilog_banner_custom_line_prefix() -> None:
+    """output_comment overrides the line prefix used in the banner."""
+    mgr = StubManager()
+    mgr.output_comment = "#"
+    top = Top(mgr)
+    top.define_param("N", default=8)
+    top.execute()
+    out = top._outfile_handle.getvalue()
+    assert "# Genesis-Py generated module: Top" in out
+    assert "# Source class: Top" in out
+    assert "#   N = 8" in out
+    assert "//" not in out
+
+
+def test_to_verilog_banner_block_comment() -> None:
+    """output_comment=(open, close) wraps the banner in a single block comment."""
+    mgr = StubManager()
+    mgr.output_comment = ("/*", "*/")
+    top = Top(mgr)
+    top.define_param("N", default=8)
+    top.execute()
+    out = top._outfile_handle.getvalue()
+    lines = out.splitlines()
+    assert lines[0] == "/*"
+    assert " Genesis-Py generated module: Top" in out
+    assert " Source class: Top" in out
+    assert "   N = 8" in out
+    assert lines[-1] == "*/"
 
 
 # ---------------------------------------------------------------- params

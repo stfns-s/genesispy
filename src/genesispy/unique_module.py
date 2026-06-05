@@ -1110,16 +1110,31 @@ class UniqueModule:
         self._outfile_handle.write(text + "\n")
 
     def to_verilog(self, infile: Optional[str] = None) -> None:
-        """Emit a comment banner + parameter table (parity with :2927)."""
-        cmt = getattr(self._manager, "comment", "//")
-        self.emit(f"{cmt} Genesis-Py generated module: {self._unique_module_name}")
-        self.emit(f"{cmt} Source class: {self._module_name}")
+        """Emit a comment banner + parameter table (parity with :2927).
+
+        Style comes from ``manager.output_comment``: a ``str`` line prefix,
+        or an ``(open, close)`` tuple for a single wrapping block comment.
+        """
+        style = getattr(self._manager, "output_comment", "//")
+        lines = [
+            f"Genesis-Py generated module: {self._unique_module_name}",
+            f"Source class: {self._module_name}",
+        ]
         if infile is not None:
-            self.emit(f"{cmt} Source file: {infile}")
+            lines.append(f"Source file: {infile}")
         if self._params:
-            self.emit(f"{cmt} Parameters:")
+            lines.append("Parameters:")
             for k in sorted(self._params):
-                self.emit(f"{cmt}   {k} = {self._params[k]['value']!r}")
+                lines.append(f"  {k} = {self._params[k]['value']!r}")
+        if isinstance(style, tuple):
+            open_d, close_d = style
+            self.emit(open_d)
+            for ln in lines:
+                self.emit(f" {ln}")
+            self.emit(close_d)
+        else:
+            for ln in lines:
+                self.emit(f"{style} {ln}")
 
     def execute(self) -> None:
         """Elaborate this module: open buffer, emit header, flush.

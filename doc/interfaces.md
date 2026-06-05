@@ -108,12 +108,17 @@ class Manager:
     # --j2; threaded through to parse_vpy / write_module /
     # user_config._include.
     syntax: str
-    # Line-comment prefix of the target output language (default "//").
-    # Set from --comment. Threaded through parse_vpy / write_module /
-    # user_config._include (where it controls the directive sentinel
-    # "<comment>;") and read by UniqueModule.to_verilog and
-    # output_writer.dump_to_stdout for emitted banners/separators.
-    comment: str
+    # Line-comment prefix of the source/target language (default "//"). Set
+    # from --source-comment (deprecated --comment alias). Drives the directive
+    # sentinel "<comment>;" and is threaded through parse_vpy / write_module /
+    # user_config._include.
+    source_comment: str
+    # Style for comments emitted into the output stream. Set from
+    # --output-comment; inherits source_comment when unset. A str is a line
+    # prefix; a (open, close) tuple is a wrapping block (e.g. ("/*", "*/")).
+    # Read by UniqueModule.to_verilog (banner) and
+    # output_writer.dump_to_stdout (--stdout separator).
+    output_comment: "str | tuple[str, str]"
     # Original argparse.Namespace as parsed by cli.parse_args(). Engine
     # classes (ConfigHandler) read late-bound flags directly off this
     # (e.g. args.unq_style, args.parameter).
@@ -423,13 +428,13 @@ def parse_vpy(
       accepted as a syntactic no-op. All three forms may span multiple
       physical lines; tracebacks land on the opener line.
 
-    ``comment`` is the line-comment prefix of the target output language
-    (default ``"//"``, set per-run by ``--comment`` on both ``genesispy``
-    and ``gvpy``). In genesis flavour it determines the directive
-    sentinel: ``<comment>;`` lines are treated as Python; the default
-    ``"//"`` keeps the historical ``//;`` behaviour. j2 flavour is
-    unaffected. Threaded through ``Manager.comment`` /
-    ``_GvpyManager.comment``.
+    ``comment`` is the line-comment prefix of the source/target language
+    (default ``"//"``, set per-run by ``--source-comment`` on both
+    ``genesispy`` and ``gvpy``; deprecated ``--comment`` alias also accepted).
+    In genesis flavour it determines the directive sentinel: ``<comment>;``
+    lines are treated as Python; the default ``"//"`` keeps the historical
+    ``//;`` behaviour. j2 flavour is unaffected. Fed from
+    ``Manager.source_comment`` / ``_GvpyManager.source_comment``.
 
     Indent rules, block-opener detection (trailing ``:``), and the
     ``# line N "path"`` traceback directives are identical across

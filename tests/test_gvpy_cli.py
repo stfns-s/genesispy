@@ -120,7 +120,7 @@ def test_main_emits_to_stdout(tmp_path, capsys):
 
 
 def test_main_comment_flag_rewrites_directive_and_banner(tmp_path, capsys):
-    """--comment '#' makes the parser recognise '#;' directives and
+    """--source-comment '#' makes the parser recognise '#;' directives and
     stamps '#' on the generated banner."""
     src = tmp_path / "c.vpy"
     src.write_text(
@@ -128,7 +128,7 @@ def test_main_comment_flag_rewrites_directive_and_banner(tmp_path, capsys):
         "    wire w_`i`;\n"
         "#; # endfor\n"
     )
-    rc = main(["--comment", "#", str(src)])
+    rc = main(["--source-comment", "#", str(src)])
     assert rc == 0
     out = capsys.readouterr().out
     # Loop body unrolled.
@@ -285,25 +285,25 @@ def test_main_libdirs_prepends_sys_path(tmp_path, capsys):
 
 
 def test_main_comment_flag_accepted(tmp_path, capsys):
-    """``--comment`` parses and is plumbed end-to-end (sentinel + banner)
+    """``--source-comment`` parses and is plumbed end-to-end (sentinel + banner)
     by ``test_main_comment_flag_rewrites_directive_and_banner`` above; this
     test just covers the rc==0 happy path with a non-default value.
     """
     src = _write_basic_module(tmp_path)
-    rc = main(["--comment", "#", str(src)])
+    rc = main(["--source-comment", "#", str(src)])
     assert rc == 0
 
 
 def test_main_comment_empty_rejected(tmp_path):
     src = _write_basic_module(tmp_path)
     with pytest.raises(SystemExit):
-        main(["--comment", "", str(src)])
+        main(["--source-comment", "", str(src)])
 
 
 def test_main_comment_whitespace_only_rejected(tmp_path):
     src = _write_basic_module(tmp_path)
     with pytest.raises(SystemExit):
-        main(["--comment", "  ", str(src)])
+        main(["--source-comment", "  ", str(src)])
 
 
 def test_main_multiple_files(tmp_path, capsys):
@@ -414,6 +414,28 @@ def test_main_pinclude_missing_file(tmp_path, capsys):
     assert "error processing" in capsys.readouterr().err
 
 
+def test_output_comment_parses_block_pair(tmp_path, capsys):
+    """``--output-comment '/*,*/'`` parses to ``("/*", "*/")`` and rc==0."""
+    src = _write_basic_module(tmp_path)
+    # Verify the flag is accepted (unknown flag would SystemExit with rc=2).
+    rc = main(["--output-comment", "/*,*/", str(src)])
+    assert rc == 0
+    # Also verify the type converter produces the expected tuple.
+    from genesispy.cli import _output_comment_arg
+    assert _output_comment_arg("/*,*/") == ("/*", "*/")
+
+
+def test_output_comment_inherits_source_comment(tmp_path, capsys):
+    """Omitting ``--output-comment`` makes the emitted banner use ``--source-comment``."""
+    src = tmp_path / "m.vpy"
+    src.write_text("module m;\n  wire w;\nendmodule\n")
+    rc = main(["--source-comment", "#", str(src)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "# Genesis-Py generated module:" in out
+    assert "// Genesis-Py" not in out
+
+
 # Review 11 #152 -- _build_class_from_vpy must reject names that aren't valid identifiers.
 def test_build_class_from_vpy_rejects_unsafe_name(tmp_path):
     """A stem with `-` or a leading digit must surface as ValueError, not SyntaxError."""
@@ -446,3 +468,18 @@ def test_build_class_from_vpy_gvpy_inherits_vpy_suffix(tmp_path):
         "foo", str(src), {".vpy": ".sv", ".svpy": ".sv"}
     )
     assert cls_sv._OUTPUT_SUFFIX == ".sv"
+
+
+def test_main_comment_deprecated_alias_names_gvpy(tmp_path, capsys, monkeypatch):
+    """``--comment`` deprecation warning must name 'gvpy', not 'genesispy'."""
+    from genesispy.cli import _reset_deprecation_warnings
+    _reset_deprecation_warnings()
+    monkeypatch.setattr(sys, "argv", ["gvpy"])
+    src = tmp_path / "m.vpy"
+    src.write_text("module m;\n  wire w;\nendmodule\n")
+    rc = main(["--comment", "//", str(src)])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "--comment is deprecated" in err
+    assert "gvpy" in err
+    assert "genesispy" not in err

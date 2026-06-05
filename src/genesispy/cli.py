@@ -165,6 +165,28 @@ def _comment_arg(raw: str) -> str:
     return raw
 
 
+def _output_comment_arg(raw: str):
+    """argparse ``type=`` for ``--output-comment``.
+
+    A ``,`` splits the value into ``(open, close)`` block delimiters; both
+    halves must be non-empty. Without a ``,`` the value is a line prefix.
+    Empty/whitespace-only values (or halves) are rejected.
+    """
+    if "," in raw:
+        open_d, _, close_d = raw.partition(",")
+        if not open_d.strip() or not close_d.strip():
+            raise argparse.ArgumentTypeError(
+                f"--output-comment {raw!r}: both OPEN and CLOSE must be "
+                f"non-empty (form 'OPEN,CLOSE')"
+            )
+        return (open_d, close_d)
+    if not raw.strip():
+        raise argparse.ArgumentTypeError(
+            f"--output-comment {raw!r}: empty/whitespace-only comment prefix"
+        )
+    return raw
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="genesispy",
@@ -541,13 +563,32 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="system_verilog", kind="store_true",
     )
     g_tmpl.add_argument(
-        "--comment",
+        "--source-comment",
+        dest="source_comment",
         default="//",
         type=_comment_arg,
         help=(
-            "Line-comment prefix of the target language (default \"//\"). "
-            "Sets both the directive sentinel ('<comment>;' replaces '//;') "
-            "and the prefix used in the auto-generated module banner."
+            "Line-comment prefix of the source/target language (default "
+            "\"//\"). Sets both the directive sentinel ('<comment>;' replaces "
+            "'//;') and, unless --output-comment is given, the emitted module "
+            "banner prefix."
+        ),
+    )
+    _add_deprecated_alias(
+        g_tmpl, "--comment", "--source-comment", dest="source_comment",
+        kind="store", type=_comment_arg,
+    )
+    g_tmpl.add_argument(
+        "--output-comment",
+        dest="output_comment",
+        default=None,
+        type=_output_comment_arg,
+        metavar="PREFIX | OPEN,CLOSE",
+        help=(
+            "Comment style for genesispy-emitted output comments (module "
+            "banner and the --stdout 'genesispy:' separator). A line prefix "
+            "(e.g. '#') or a block form 'OPEN,CLOSE' (e.g. '/*,*/'). "
+            "Defaults to --source-comment."
         ),
     )
     g_tmpl.add_argument(

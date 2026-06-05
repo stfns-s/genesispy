@@ -28,6 +28,15 @@ from .reporting import GenesisPyError, ParseError, error, warning
 from .extensions import build_extension_map
 
 
+def _resolve_output_comment(args: argparse.Namespace):
+    """Return the resolved ``output_comment`` value from *args*.
+
+    When ``--output-comment`` is absent (``None``), inherit ``source_comment``.
+    """
+    oc = getattr(args, "output_comment", None)
+    return oc if oc is not None else getattr(args, "source_comment", "//")
+
+
 class Manager:
     """Top-level engine controller.
 
@@ -100,7 +109,8 @@ class Manager:
         self.clean_flag = args.clean
         self.stdout_mode = args.stdout
         self.syntax = "j2" if getattr(args, "j2", False) else "genesis"
-        self.comment = getattr(args, "comment", "//")
+        self.source_comment = getattr(args, "source_comment", "//")
+        self.output_comment = _resolve_output_comment(args)
 
         # Track every directory touched during elaboration for --path.
         self.touched_dirs: List[str] = []
@@ -246,7 +256,7 @@ class Manager:
                 output_suffix=out_suffix,
                 allowed=allowed,
                 syntax=self.syntax,
-                comment=self.comment,
+                comment=self.source_comment,
             )
             stem = os.path.splitext(os.path.basename(path))[0]
             self._generated_modules[stem] = py_path
@@ -327,7 +337,7 @@ class Manager:
                         output_suffix=out_suffix,
                         allowed=frozenset(self.extension_map.keys()),
                         syntax=self.syntax,
-                        comment=self.comment,
+                        comment=self.source_comment,
                     )
                     self._generated_modules[name] = py_path
                     break
@@ -354,7 +364,7 @@ class Manager:
                     output_suffix=out_suffix,
                     allowed=frozenset(self.extension_map.keys()),
                     syntax=self.syntax,
-                    comment=self.comment,
+                    comment=self.source_comment,
                 )
                 self._generated_modules[name] = py_path
                 break

@@ -683,7 +683,8 @@ output.
 - `--verif-dir DIR` -- directory for verif-tagged Verilog.
 - `--extension EXT_IN=EXT_OUT` -- pair an input template extension with its emitted-Verilog extension (repeatable). Defaults: `.vpy=.v`, `.svpy=.sv`. User entries override defaults; e.g. `--extension .vpy=.sv` or `--extension .tvpy=.tv`. Leading dots are added on either side if missing; both sides are case-folded.
 - `-sv`, `--system-verilog` -- shorthand for `--extension .vpy=.sv`. Errors out if combined with a conflicting `--extension .vpy=...` entry.
-- `--comment PREFIX` -- line-comment prefix of the target output language (default: `//`). Sets both the template directive sentinel (`<comment>;` replaces `//;` in genesis flavour) and the prefix used by the auto-generated module banner. j2 mode is unaffected.
+- `--source-comment PREFIX` -- line-comment prefix of the source/target language (default: `//`). Sets the directive sentinel (`<comment>;` replaces `//;` in genesis flavour) and is used as the default for `--output-comment`. j2 mode is unaffected. (`--comment` is a deprecated alias; emits a one-time warning.)
+- `--output-comment PREFIX | OPEN,CLOSE` -- style for comments emitted into the output (banner and `--stdout` separator). A bare prefix (e.g. `#`) emits line comments; a comma-separated pair (e.g. `/*,*/`) emits a wrapping block. Defaults to `--source-comment`.
 - `--stdout` -- write generated Verilog to stdout instead of `genesis_synth`/`genesis_verif`. Skips `.vlist`/`.depend`/clean script and removes the raw dir on exit. Overrides `--gen-raw`: no raw `.v` siblings are written and the raw dir is removed regardless.
 - `--product FILE` -- write Genesis2-style product file lists. `--product FILE.ext` produces three files: `FILE.ext` (all modules), `FILE.synth.ext` (synth-cone), `FILE.verif.ext` (verif-cone). Suppresses the default `<top>.vlist`/`<top>.vlist.verif`.
 - `--json-out FILE` -- write a `HierarchyTop` snapshot of the elaborated module tree (port of Perl `-hierarchy`). Emits three files in `dirname(FILE)`: `FILE` (full), `<stem>-small<ext>` (no `ImmutableParameters`), `<stem>-tiny<ext>` (only params with priority `>= EXTERNAL_PARAM_FILE`).
@@ -714,7 +715,8 @@ Usage: `gvpy [options] FILE [FILE ...]` (output goes to stdout).
 - `--py-path DIR[,DIR...]` -- comma-separated dirs to add to `sys.path`. Repeatable.
 - `--inc-path DIR[,DIR...]` -- comma-separated dirs for `include()`/`pinclude()` search. Repeatable.
 - `-p`, `--parameter NAME=VALUE` -- set a flat parameter consulted by `parameter()`. Repeatable. (`--defparam` is a deprecated hidden alias; emits a one-time warning.)
-- `--comment PREFIX` -- line-comment prefix of the target output language (default: `//`). Sets both the directive sentinel (`<comment>;` replaces `//;`) and the banner prefix.
+- `--source-comment PREFIX` -- line-comment prefix of the source/target language (default: `//`). Sets the directive sentinel (`<comment>;` replaces `//;`) and is used as the default for `--output-comment`. (`--comment` is a deprecated alias; emits a one-time warning.)
+- `--output-comment PREFIX | OPEN,CLOSE` -- style for comments emitted into the output (banner and stdout separator). A bare prefix (e.g. `#`) emits line comments; a comma-separated pair (e.g. `/*,*/`) emits a wrapping block. Defaults to `--source-comment`.
 - `--extension EXT_IN=EXT_OUT` -- pair an input template extension with its emitted-Verilog extension. Defaults `.vpy=.v`, `.svpy=.sv`. Repeatable.
 - `-j2`, `--j2` -- parse templates with the j2 (Jinja2-like) flavour (Appendix A).
 - `--gvpy-strict` -- use gvpy's record-only `generate`/`instantiate`/`synonym` instead of genesispy's elaboration-based versions.
@@ -835,6 +837,7 @@ flag style) are listed below. For behaviour-affecting incompatibilities
 
 - **File extension** -- `.vp` -> `.vpy`, `.svp` -> `.svpy`. Configurable via the repeatable `--extension EXT_IN=EXT_OUT` flag (e.g. `--extension .tvpy=.tv` to register a custom pair, or `--extension .vpy=.sv` to redirect the default).
 - **`--suffix` removed** -- replaced by `--extension`. `-sv`/`--system-verilog` is preserved as a shorthand for `--extension .vpy=.sv`.
+- **`--comment` -> `--source-comment`** -- `--comment PREFIX` is a deprecated alias for `--source-comment PREFIX`; it is retained and emits a one-time stderr warning. New flag `--output-comment PREFIX | OPEN,CLOSE` controls the style for comments emitted into the output (banner and `--stdout` separator); defaults to `--source-comment`. Genesis2 has no equivalent to `--output-comment`.
 - **Config input** -- XML support removed from the core CLI; convert legacy XML once with `genesispy-xml2json in.xml out.json` and pass `--json-cfg out.json`. The reverse helper `genesispy-json2xml` is provided for symmetry.
 - **`ImmutableParameters` (input config)** -- ignored by both engines. Genesis2 `ConfigHandler.pm:875-919` reads only `{Parameters}` from input XML; `{ImmutableParameters}` is touched only by the writeback path (`ConfigHandler.pm:677, 724`). genesispy matches via `_FIND_PARAM_SKIP_KEYS` in `config_handler.py:_find_param`. The tag is writeback-only metadata in both engines. To actually pin past a parent's `unique_inst` kwarg, use `force_param` (Genesis2) / `parameter(..., force=True)` (genesispy); both write at `IMMUTABLE`.
 - **`//;` body language** -- Perl -> Python.
