@@ -527,7 +527,7 @@ class UniqueModule:
         if cache_enabled:
             # Journal cache writes so post-dedup rollback is O(writes), not O(cache).
             with cache.journaled() as journal:
-                child.execute()
+                self._execute_child(child)
 
                 eff_post = child.get_mod_param_list()
                 sig_post = hashing.sha256_param_signature(
@@ -549,7 +549,7 @@ class UniqueModule:
                 cache.MODULE_CACHE[pre_key] = child
                 cache.MODULE_CACHE[post_key] = child
         else:
-            child.execute()
+            self._execute_child(child)
 
         cache.register(unique_name, child)
         return child
@@ -600,7 +600,7 @@ class UniqueModule:
         child._unique_module_name = unique_name
 
         self._sub_instances[inst_name] = child
-        child.execute()
+        self._execute_child(child)
 
         # Cache after execute() so a raising .vpy body doesn't poison it.
         if cache_enabled:
@@ -691,7 +691,7 @@ class UniqueModule:
         child._unique_module_name = base_name
 
         self._sub_instances[inst_name] = child
-        child.execute()
+        self._execute_child(child)
         # After execute() so a raising body doesn't poison the caches.
         cache.register(base_name, child)
         cache.UNUNIQUE_REGISTRY[base_name] = {
@@ -1135,6 +1135,18 @@ class UniqueModule:
         else:
             for ln in lines:
                 self.emit(f"{style} {ln}")
+
+    def _execute_child(self, child: "UniqueModule") -> None:
+        """Run ``child.execute()`` with the user-config context bound to the
+        child, so ``include()`` and other bare-name helpers inside the child's
+        body resolve ``self`` to the child (not the parent under elaboration).
+        Mirrors the top-level ``with user_config.context(...)`` in
+        ``Manager.gen_verilog``.
+        """
+        from . import user_config
+
+        with user_config.context(self._manager, child):
+            child.execute()
 
     def execute(self) -> None:
         """Elaborate this module: open buffer, emit header, flush.

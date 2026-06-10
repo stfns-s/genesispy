@@ -1,6 +1,6 @@
 # genesispy demos
 
-Examples that run the `genesispy` elaborator on the four ported demos.
+Examples that run the `genesispy` elaborator on the ported demos.
 Each demo is self-contained, derived from the matching tree under
 upstream `Genesis2/demo/`; parity vs. the Perl reference is checked by
 the workspace-level `test_parity/` suite.
@@ -106,6 +106,21 @@ source listings, commands, and the expected Verilog per example.
 
 Nested parametric one-hot mux. Generates six unique modules from hardcoded loops over signal and mux widths. No config.
 Entry: `genesis_src/top.vpy`.
+
+### `logmult`
+
+Log-arithmetic approximate multipliers. Three include files under
+`genesis_src/` define Verilog `function`s: `ilog2.vpy` (integer log2),
+`logmult.vpy` (`a*b ~= antilog(log2 a + log2 b)`), and `slogmult.vpy`
+(semi-log, `a*b ~= a << log2 b`). The multipliers pull in `ilog2` via
+`include()`; wrapper modules (`logmult_wrap.vpy`, `slogmult_wrap.vpy`)
+expose each as `a*b -> p` with widths from `unique_inst` parameters. The
+`top` instantiates both and self-checks under `` `ifdef SIMULATION ``,
+asserting the relative error against the exact product stays within a
+documented bound (these are coarse approximations -- worst case near a
+factor of two at powers of two). The includes are resolved via
+`--inc-path genesis_src` (set in the demo `Makefile`). Entry:
+`genesis_src/top.vpy`. `make sim` runs the self-check.
 
 ### `gvpy`
 
