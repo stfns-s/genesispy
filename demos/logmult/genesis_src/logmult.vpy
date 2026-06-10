@@ -1,38 +1,38 @@
 // signed log multiplier - a*b =~ antilog(log2(a)+log2(b)), optional final shift/antilog
 //; import math
-//; h       = self.include_params
-//; func_name   = h.get('func_name', 'f_logmult')    # name of the generated Verilog function
-//; sign_only    = h.get('sign_only', False)           # True: return only the product sign (-1/0/+1); False: full magnitude
-//; a_width  = h['a_width']                     # multiplicand (a) bit width
-//; b_width  = h['b_width']                     # multiplier (b) bit width
-//; take_antilog = h.get('take_antilog', True)         # True: output the product (take antilog); False: output log2 of the product
-//; zero_detect  = h.get('zero_detect', False)         # True: force result to 0 when a or b == 0
-//; a_log_frac_bits   = h.get('a_log_frac_bits', 0)              # extra fractional log LSBs for operand a (forced 0 when antilog set)
-//; b_log_frac_bits   = h.get('b_log_frac_bits', 0)              # extra fractional log LSBs for operand b (forced 0 when antilog set)
-//; symmetric_input    = h.get('symmetric_input', False)           # True: operands never -2^N (forwarded to ilog2)
-//; approx_input_negate = h.get('approx_input_negate', True)         # approximate (ones-complement) input negation in ilog2
-//; approx_output_negate = h.get('approx_output_negate', False)        # True: ones-complement output negate (skip +1); False: exact
-//; sign_mag_output     = h.get('sign_mag_output', False)            # True: output sign-magnitude; False: two's-complement signed
+//; h                    = self.include_params
+//; func_name            = h.get('func_name', 'f_logmult')
+//; sign_only            = h.get('sign_only', False)
+//; a_width              = h['a_width']
+//; b_width              = h['b_width']
+//; take_antilog         = h.get('take_antilog', True)
+//; zero_detect          = h.get('zero_detect', False)
+//; a_log_frac_bits      = h.get('a_log_frac_bits', 0)
+//; b_log_frac_bits      = h.get('b_log_frac_bits', 0)
+//; symmetric_input      = h.get('symmetric_input', False)
+//; approx_input_negate  = h.get('approx_input_negate', True)
+//; approx_output_negate = h.get('approx_output_negate', False)
+//; sign_mag_output      = h.get('sign_mag_output', False)
 //; if take_antilog and (a_log_frac_bits or b_log_frac_bits):
 //;     a_log_frac_bits = 0
 //;     b_log_frac_bits = 0
 //;     warning(f"{func_name} take_antilog is set. Setting a_log_frac_bits=b_log_frac_bits=0")
 //; # endif
-//; a_msb     = a_width - 1
-//; b_msb     = b_width - 1
-//; a_log_width    = int(math.log(a_width) / math.log(2) + 1) + a_log_frac_bits
-//; b_log_width    = int(math.log(b_width) / math.log(2) + 1) + b_log_frac_bits
-//; max_log_width  = a_log_width if a_log_width > b_log_width else b_log_width
-//; log_sum_width  = max_log_width + 1
-//; product_width  = a_width + b_width + (-1 if symmetric_input else 0)
-//; a_pad   = f"{log_sum_width - a_log_width}'d0,"
-//; b_pad   = f"{log_sum_width - b_log_width}'d0,"
-//; out_width = product_width if take_antilog else log_sum_width + 1
-//; antilog_width  = (2**log_sum_width) + 1
-//; a_log_func  = func_name + "_loga"
-//; b_log_func  = func_name + "_logb"
+//; a_msb         = a_width - 1
+//; b_msb         = b_width - 1
+//; a_log_width   = int(math.log(a_width) / math.log(2) + 1) + a_log_frac_bits
+//; b_log_width   = int(math.log(b_width) / math.log(2) + 1) + b_log_frac_bits
+//; max_log_width = a_log_width if a_log_width > b_log_width else b_log_width
+//; log_sum_width = max_log_width + 1
+//; product_width = a_width + b_width + (-1 if symmetric_input else 0)
+//; a_pad         = f"{log_sum_width - a_log_width}'d0,"
+//; b_pad         = f"{log_sum_width - b_log_width}'d0,"
+//; out_width     = product_width if take_antilog else log_sum_width + 1
+//; antilog_width = (2**log_sum_width) + 1
+//; a_log_func    = func_name + "_loga"
+//; b_log_func    = func_name + "_logb"
 //; antilog_func  = func_name + "_antilog"
-//; core_func  = func_name + "_core"
+//; core_func     = func_name + "_core"
 //; if not sign_only:
 //;     self.include_params = {'func_name': a_log_func, 'input_width': a_width, 'log_frac_bits': a_log_frac_bits, 'symmetric_input': symmetric_input, 'approx_negate': approx_input_negate}
 //;     include("ilog2.vpy")

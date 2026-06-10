@@ -1,20 +1,20 @@
 // signed semi-log multiplier (simplest form) - a*b =~ a << log2(b)
 //; import math
-//; h       = self.include_params
-//; func_name   = h.get('func_name', 'f_slogmult')   # name of the generated Verilog function
-//; a_width  = h['a_width']                     # multiplicand (a) bit width
-//; b_width  = h['b_width']                     # multiplier (b) bit width
-//; symmetric_input    = h.get('symmetric_input', False)            # True: operands never -2^N (forwarded to ilog2)
-//; zero_detect  = h.get('zero_detect', True)           # True: force result to 0 when b == 0
-//; approx_input_negate = h.get('approx_input_negate', True)          # approximate (ones-complement) input negation in ilog2
-//; approx_output_negate = h.get('approx_output_negate', False)         # True: ones-complement output negate (skip +1); False: exact
-//; a_msb     = a_width - 1
-//; b_msb     = b_width - 1
-//; b_log_width    = int(math.log(b_width) / math.log(2) + 1)
-//; product_width  = a_width + 2**b_log_width
-//; out_width = a_width + b_width - (1 if symmetric_input else 0)
-//; b_log_func  = func_name + "_logb"
-//; core_func  = func_name + "_core"
+//; h                    = self.include_params
+//; func_name            = h.get('func_name', 'f_slogmult')
+//; a_width              = h['a_width']
+//; b_width              = h['b_width']
+//; symmetric_input      = h.get('symmetric_input', False)
+//; zero_detect          = h.get('zero_detect', True)
+//; approx_input_negate  = h.get('approx_input_negate', True)
+//; approx_output_negate = h.get('approx_output_negate', False)
+//; a_msb                = a_width - 1
+//; b_msb                = b_width - 1
+//; b_log_width          = int(math.log(b_width) / math.log(2) + 1)
+//; product_width        = a_width + 2**b_log_width
+//; out_width            = a_width + b_width - (1 if symmetric_input else 0)
+//; b_log_func           = func_name + "_logb"
+//; core_func            = func_name + "_core"
 //; self.include_params = {'func_name': b_log_func, 'input_width': b_width, 'log_frac_bits': 0, 'symmetric_input': symmetric_input, 'approx_negate': approx_input_negate}
 //; include("ilog2.vpy")
 //; _d = getattr(self, func_name, {}); _d['out_width'] = out_width; setattr(self, func_name, _d)

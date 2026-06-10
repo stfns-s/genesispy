@@ -1,9 +1,9 @@
 // Wrapper module exposing f_logmult as a*b -> p
-//; a_width  = self.parameter('A_WIDTH', 8)     # multiplicand (a) bit width
-//; b_width  = self.parameter('B_WIDTH', 8)     # multiplier (b) bit width
-//; take_antilog = self.parameter('TAKE_ANTILOG', True) # True: output the product; False: output log2 of the product
-//; zero_detect  = self.parameter('ZERO_DETECT', False) # True: force result to 0 when a or b == 0
-//; func_name   = 'f_logmult'
+//; a_width      = self.parameter('A_WIDTH', 8)
+//; b_width      = self.parameter('B_WIDTH', 8)
+//; take_antilog = self.parameter('TAKE_ANTILOG', True)
+//; zero_detect  = self.parameter('ZERO_DETECT', False)
+//; func_name    = 'f_logmult'
 module `mname` (a, b, p);
 //; self.include_params = {'func_name': func_name, 'a_width': a_width, 'b_width': b_width, 'take_antilog': take_antilog, 'zero_detect': zero_detect}
 //; include("logmult.vpy")

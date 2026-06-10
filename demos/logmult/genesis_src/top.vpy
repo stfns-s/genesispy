@@ -3,7 +3,7 @@ module `mname` ();
 
 //; a_width = 8
 //; b_width = 8
-//; u_slm = unique_inst('slogmult_wrap', 'u_slm', A_WIDTH=a_width, B_WIDTH=b_width)
+//; u_slm   = unique_inst('slogmult_wrap', 'u_slm', A_WIDTH=a_width, B_WIDTH=b_width)
    logic signed [`a_width-1`:0]      slm_a;
    logic signed [`b_width-1`:0]      slm_b;
    logic signed [`a_width+b_width-1`:0]   slm_p;
