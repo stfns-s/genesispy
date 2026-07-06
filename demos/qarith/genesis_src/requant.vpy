@@ -21,7 +21,8 @@
 //; shift  = n_in - n_out
 //; acc_w  = w_in + abs(shift) + 2
 //; imax   = (1 << (w_out - 1)) - 1 if s_out else (1 << w_out) - 1
-//; imin   = -(1 << (w_out - 1)) if s_out else 0
+//; osym   = h.get('osym', False)
+//; imin   = -((1 << (w_out - 1)) - 1) if (s_out and osym) else (-(1 << (w_out - 1)) if s_out else 0)
 //; add_c  = (1 << (shift - 1)) if (shift > 0 and round_mode != 'trunc') else 0
 //; tie_mask = (1 << shift) - 1 if shift > 0 else 0
 //; tie_val  = (1 << (shift - 1)) if shift > 0 else 0

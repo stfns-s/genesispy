@@ -124,25 +124,30 @@ factor of two at powers of two). The includes are resolved via
 `--inc-path genesis_src` (set in the demo `Makefile`). Entry:
 `genesis_src/top.vpy`. `make sim` runs the self-check.
 
-### `qrequant`
+### `qarith`
 
-Parametric fixed-point (Q-notation) requantizer. One leaf include `genesis_src/requant.vpy` emits a
-Verilog `function` that converts a source format to a target format with a selectable rounding mode
-(`trunc`, `half_up`, `half_even`) and integer-side saturation; signed and unsigned inputs and
-outputs are independent (formats are `Qm.n` / `UQm.n` strings, with `m` including the sign bit).
-The function ports use Q-weighted bit indices -- a bit's index is its power-of-two weight, so a
-`Q4.12` input is declared `[3:-12]` (`x[0]` the integer LSB, `x[-12]` the fraction LSB, `x[3]` the
-sign) and the result of a `Q2.6` output is `[1:-6]`. There is no wrapper module: `top` calls
-`include()` once per format pair, passing a `func_name`
-derived from the two formats (e.g. `Q4.12`->`Q2.6` becomes `q4d12_to_q2d6`), so four distinct
-functions are emitted directly into the `top` module. The descriptive names are what let several
-`include()`s share one module without colliding. `top` self-checks under `` `ifdef SIMULATION `` by
-calling each function on baked-in vectors and comparing against a golden computed at elaboration time
-with the Python `fixedpoint` library -- exhaustive over every input code for the 8-bit-input
-functions, a deterministic sample for the 16-bit-input ones. The leaf is resolved via
-`--inc-path genesis_src` (set in the demo `Makefile`). Entry: `genesis_src/top.vpy`. `make sim` runs
-the self-check. Requires `fixedpoint` importable by the interpreter running `genesispy` at
-`make gen` time.
+Parametric fixed-point (Q-notation) arithmetic demo. `genesis_src/top.vpy` generates a requantizer
+and four arithmetic operations -- negate, add, subtract, multiply -- as descriptively-named Verilog
+`function`s emitted directly into the `top` module (no wrapper). Formats are `Qm.n` / `UQm.n`
+strings with `m` including the sign bit; operands may have heterogeneous formats and independent
+signedness. Function ports use Q-weighted bit indices: a `Q4.12` port is declared `[3:-12]`
+(`x[0]` the integer LSB, `x[-12]` the fraction LSB, `x[3]` the sign).
+
+Each arithmetic op leaf (`negate.vpy`, `add.vpy`, `subtract.vpy`, `multiply.vpy`) computes an exact
+full-precision intermediate result, then calls a generated `<name>_rq` requant helper -- itself a
+`requant.vpy` include -- to round and saturate to the caller's target `Qp.q`. The requant helper
+supports a symmetric-output option (`osym`) that tightens the negative bound to match the positive
+range. Negate and subtract support one's-complement approximate negation (`approx`). Each leaf is
+`include()`d once per format combination, with a descriptive function name derived from the op and
+formats; the requant helper for that op is emitted immediately before the op include. There is no
+wrapper module: all functions appear directly in `top`.
+
+`top` self-checks under `` `ifdef SIMULATION `` by calling each function on baked-in vectors and
+comparing against a golden computed at elaboration time with the Python `fixedpoint` library --
+exhaustive over every input code for the demo's small formats. Entry: `genesis_src/top.vpy`.
+`make sim` runs the self-check and prints `qarith: all vectors PASS`. Leaves are resolved via
+`--inc-path genesis_src` (set in the demo `Makefile`). Requires `fixedpoint` importable by the
+interpreter running `genesispy` at `make gen` time.
 
 ### `gvpy`
 

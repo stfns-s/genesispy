@@ -26,7 +26,7 @@ _DEMOS_ROOT = _REPO_ROOT / "demos"
 
 _DEMOS = ["regfile", "iterative_wallace_tree",
           "many_iterative_wallace_trees", "random_logic",
-          "generation_examples", "logmult", "qrequant"]
+          "generation_examples", "logmult", "qarith"]
 
 
 def _collect(demo: str, suffixes):
