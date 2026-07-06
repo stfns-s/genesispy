@@ -113,14 +113,36 @@ Log-arithmetic approximate multipliers. Three include files under
 `genesis_src/` define Verilog `function`s: `ilog2.vpy` (integer log2),
 `logmult.vpy` (`a*b ~= antilog(log2 a + log2 b)`), and `slogmult.vpy`
 (semi-log, `a*b ~= a << log2 b`). The multipliers pull in `ilog2` via
-`include()`; wrapper modules (`logmult_wrap.vpy`, `slogmult_wrap.vpy`)
-expose each as `a*b -> p` with widths from `unique_inst` parameters. The
-`top` instantiates both and self-checks under `` `ifdef SIMULATION ``,
+`include()`. There is no wrapper module: `top` calls `include()` on
+`slogmult.vpy` and `logmult.vpy`, passing a width-derived `func_name`
+(e.g. `logmult_8x8`, `slogmult_8x8`), so both functions are emitted
+directly into the `top` module. `top` self-checks under
+`` `ifdef SIMULATION `` by calling each function on random operands and
 asserting the relative error against the exact product stays within a
 documented bound (these are coarse approximations -- worst case near a
 factor of two at powers of two). The includes are resolved via
 `--inc-path genesis_src` (set in the demo `Makefile`). Entry:
 `genesis_src/top.vpy`. `make sim` runs the self-check.
+
+### `qrequant`
+
+Parametric fixed-point (Q-notation) requantizer. One leaf include `genesis_src/requant.vpy` emits a
+Verilog `function` that converts a source format to a target format with a selectable rounding mode
+(`trunc`, `half_up`, `half_even`) and integer-side saturation; signed and unsigned inputs and
+outputs are independent (formats are `Qm.n` / `UQm.n` strings, with `m` including the sign bit).
+The function ports use Q-weighted bit indices -- a bit's index is its power-of-two weight, so a
+`Q4.12` input is declared `[3:-12]` (`x[0]` the integer LSB, `x[-12]` the fraction LSB, `x[3]` the
+sign) and the result of a `Q2.6` output is `[1:-6]`. There is no wrapper module: `top` calls
+`include()` once per format pair, passing a `func_name`
+derived from the two formats (e.g. `Q4.12`->`Q2.6` becomes `q4d12_to_q2d6`), so four distinct
+functions are emitted directly into the `top` module. The descriptive names are what let several
+`include()`s share one module without colliding. `top` self-checks under `` `ifdef SIMULATION `` by
+calling each function on baked-in vectors and comparing against a golden computed at elaboration time
+with the Python `fixedpoint` library -- exhaustive over every input code for the 8-bit-input
+functions, a deterministic sample for the 16-bit-input ones. The leaf is resolved via
+`--inc-path genesis_src` (set in the demo `Makefile`). Entry: `genesis_src/top.vpy`. `make sim` runs
+the self-check. Requires `fixedpoint` importable by the interpreter running `genesispy` at
+`make gen` time.
 
 ### `gvpy`
 

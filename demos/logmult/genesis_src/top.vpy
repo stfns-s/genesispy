@@ -1,25 +1,24 @@
-// logmult demo top — semi-log and log multipliers
+// logmult demo top — semi-log and log multipliers as descriptively-named
+// Verilog functions (no wrapper modules), self-checked against the exact product.
+//; a_width  = 8
+//; b_width  = 8
+//; slm_fname = f"slogmult_{a_width}x{b_width}"
+//; lm_fname  = f"logmult_{a_width}x{b_width}"
 module `mname` ();
-
-//; a_width = 8
-//; b_width = 8
-//; u_slm   = unique_inst('slogmult_wrap', 'u_slm', A_WIDTH=a_width, B_WIDTH=b_width)
-   logic signed [`a_width-1`:0]      slm_a;
-   logic signed [`b_width-1`:0]      slm_b;
-   logic signed [`a_width+b_width-1`:0]   slm_p;
-
-   `u_slm.instantiate()` (.a(slm_a), .b(slm_b), .p(slm_p));
-
-   //; u_lm = unique_inst('logmult_wrap', 'u_lm', A_WIDTH=a_width, B_WIDTH=b_width, ZERO_DETECT=True)
-   logic signed [`a_width-1`:0]      lm_a;
-   logic signed [`b_width-1`:0]      lm_b;
-   logic signed [`a_width+b_width-1`:0]   lm_p;
-
-   `u_lm.instantiate()` (.a(lm_a), .b(lm_b), .p(lm_p));
+//; self.include_params = {'func_name': slm_fname, 'a_width': a_width, 'b_width': b_width}
+//; include("slogmult.vpy")
+//; slm_out = getattr(self, slm_fname)['out_width']
+//; self.include_params = {'func_name': lm_fname, 'a_width': a_width, 'b_width': b_width, 'take_antilog': True, 'zero_detect': True}
+//; include("logmult.vpy")
+//; lm_out = getattr(self, lm_fname)['out_width']
 
 \`ifdef SIMULATION
    //; LM_BOUND  = 110   # logmult worst-case ~100% (factor 2 at powers of two)
    //; SLM_BOUND = 110   # slogmult worst-case ~100%
+   logic signed [`a_width-1`:0]  slm_a, lm_a;
+   logic signed [`b_width-1`:0]  slm_b, lm_b;
+   logic signed [`slm_out-1`:0]  slm_p;
+   logic signed [`lm_out-1`:0]   lm_p;
    integer seed, i;
    integer lm_exp, slm_exp;     // exact products
    integer lm_err, slm_err;     // |relative error|, percent
@@ -31,6 +30,8 @@ module `mname` ();
          lm_a  = $random(seed) % 128;  lm_b  = $random(seed) % 128;
          slm_a = lm_a;                 slm_b = lm_b;
          #10;
+         slm_p = `slm_fname`(slm_a, slm_b);
+         lm_p  = `lm_fname`(lm_a, lm_b);
          lm_exp  = lm_a  * lm_b;
          slm_exp = slm_a * slm_b;
          lm_err  = (lm_exp  == 0) ? 0 : ((lm_p  - lm_exp )  * 100) / lm_exp;
