@@ -85,10 +85,10 @@ class Manager:
     # output_writer.write_pathfile alongside src_path /
     # inc_path. Set from --cfg-path.
     cfg_path: list[str]
-    # Output-type override for emitted Verilog ('synth', 'verif', or None
-    # for auto). Read by output_writer when tagging files. Set from
+    # Output-type override for emitted Verilog ('synth', 'verif', or 'both'
+    # -- default 'both'). Read by output_writer when tagging files. Set from
     # --out-type.
-    out_type: str | None
+    out_type: str
     # If True, also write raw (pre-out_type-tagging) Verilog under raw_dir.
     # Set from --gen-raw.
     gen_raw: bool
@@ -133,6 +133,12 @@ class Manager:
     def __init__(self, args: argparse.Namespace) -> None: ...
     def find_file(self, name: str, paths: list[str] | None = None) -> str: ...
     def execute(self) -> int: ...
+    # Phase gating: --parse-only stops after parse_files(); --gen-only skips
+    # parse_files() and instead loads previously generated .py modules from
+    # raw_dir via _discover_generated_modules() — no --input required, but
+    # --top is mandatory and raw_dir must exist (GenesisPyError otherwise).
+    # parsed_source_files is empty in gen-only mode, so .depend prerequisites
+    # will be absent.
 
     # CLI orchestration entry points (also called directly by tests).
     def parse_files(self) -> None: ...
@@ -245,9 +251,11 @@ class UniqueModule:
     # Param-state sentinels exposed for tests; values are opaque strings
     # ("DEFINED" / "OVERRIDDEN" / "FORCED"). Use the public predicates
     # rather than indexing into _params directly.
-    STATE_DEFINED:    str
-    STATE_OVERRIDDEN: str
-    STATE_FORCED:     str
+    # These are module-level constants of genesispy.unique_module, not
+    # class attributes: import as unique_module.STATE_DEFINED, etc.
+    # STATE_DEFINED: str    (module-level)
+    # STATE_OVERRIDDEN: str (module-level)
+    # STATE_FORCED: str     (module-level)
 
     # construction
     def __init__(self, manager: "Manager") -> None: ...
@@ -267,6 +275,20 @@ class UniqueModule:
     # parameter(): Perl-compat kwargs (UniqueModule.pm:1981) — force/doc
     # plus min/max/step XOR list (range guard) plus opt store-only.
     # Range checked at register-time AND on every subsequent override.
+    #
+    # Range combination rules (mirrors Perl UniqueModule.pm:621-670):
+    #   - min/max/step and list are mutually exclusive.
+    #   - step requires min or max; step == 0 is an error.
+    #   - When both min and max are given: min <= max.
+    #   - When min, max, and step all given: (max - min) must be an
+    #     integer multiple of step.
+    # Value rules (Perl:705-723):
+    #   - When step and min defined: (value - min) / step must be integer.
+    #   - When step and only max defined: (max - value) / step must be integer.
+    #
+    # Re-defining a range (calling parameter() with range kwargs when a
+    # range is already set, or calling param_range() after one is set)
+    # raises ParameterError: "Re-definition of range for parameter ...".
     def parameter(
         self, name: str, default=None, *,
         force: bool = False,
@@ -278,6 +300,8 @@ class UniqueModule:
         opt: str | None = None,
     ) -> object: ...
     # Late-bind documentation / range; mirror older Perl APIs.
+    # param_range() enforces the same combination and value rules as
+    # parameter() above. Re-definition raises ParameterError.
     def doc_param(self, name: str, msg: str) -> None: ...
     def param_range(
         self, name: str, *,
@@ -289,8 +313,18 @@ class UniqueModule:
 
     # hierarchy. module_cls accepts a class OR a registered module name
     # string (resolved via Manager.resolve_module_class).
+    # All four instantiation entry points (unique_inst, unique_inst_param,
+    # clone_inst, ununique_inst) raise ElaborationError if inst_name (or
+    # new_name for clone_inst) is already registered under self, mirroring
+    # Perl UniqueModule.pm:1158.  On execute() failure the failed entry is
+    # removed from _sub_instances so the same name can be retried.
     def unique_inst(self, module_cls: type | str, inst_name: str,
                     **params) -> "UniqueModule": ...
+    # unique_inst_param emits the module under a name that encodes the
+    # resolved parameters: <Base>_<KEY>_<VAL>[_<KEY>_<VAL>...], keys in
+    # sorted order (mirrors Perl _${abbrev}_${val}, UniqueModule.pm:2718).
+    # Non-word values fall back to <KEY>_<8-hex-digest>.
+    # When the instance sits on a scoped-override path, appends _unqN.
     def unique_inst_param(self, module_cls: type | str, inst_name: str,
                           **params) -> "UniqueModule": ...
     def clone_inst(self, src_inst: "UniqueModule",
@@ -339,9 +373,11 @@ class UniqueModule:
     def get_synonyms(self) -> list[str]: ...
 
     # Product-list DFS for synth/verif partitioning (Manager.flush_outputs
-    # walks this to populate cache.OUTFILE_TAGS).  ``synth_top`` is the
-    # **dotted** instance path bounding the synth cone; None matches Perl
-    # SynthTop=undef -> every (inst, is_synth) pair has is_synth=False.
+    # walks this to populate cache.OUTFILE_TAGS and cache.OUTFILE_ORDER).
+    # ``synth_top`` is the **dotted** instance path bounding the synth cone;
+    # None matches Perl SynthTop=undef -> every (inst, is_synth) pair has
+    # is_synth=False.  The walk order is the single source of truth for all
+    # product-list ordering (vlist, vf, synth-side, verif-side).
     # Mirrors UniqueModule.pm::_get_prod_list_insts.
     def get_prod_list_insts(
         self, synth_top: str | None,
@@ -412,9 +448,6 @@ class UniqueModule:
     # the footer to overwrite the base-class banner with body content.
     def _flush_outfile(self) -> None: ...
 
-    # API-parity stub; base-module resolution actually goes through
-    # normal Python import. No-op kept for Perl ``load_base_module``.
-    def load_base_module(self, name: str) -> None: ...
 ```
 
 ## genesispy.template.parser
@@ -573,6 +606,14 @@ UNUNIQUE_REGISTRY: Dict[str, Dict[str, Any]]
 # Empty when synth_top is None -> output_writer treats unmapped files as
 # 'verif'. Mirrors Perl Manager.pm:1330-1395.
 OUTFILE_TAGS: Dict[str, str]
+
+# Output filenames in DFS first-seen walk order, populated by Manager
+# _populate_outfile_tags alongside OUTFILE_TAGS. output_writer iterates
+# this order when writing all product lists so every list (vlist, vf,
+# synth-side, verif-side) uses a single consistent DFS ordering.
+# Cache keys absent here (test-only raw entries) follow alphabetically
+# after all ordered entries. Cleared by clear_all().
+OUTFILE_ORDER: List[str]
 
 # Resolved paths of include()'d template files, appended by
 # user_config._include. Consumed together with Manager.parsed_source_files

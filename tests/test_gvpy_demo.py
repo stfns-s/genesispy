@@ -105,3 +105,24 @@ def test_make_lint() -> None:
     r = _run_with("lint", f"VERILINT={tool}")
     assert r.returncode == 0, f"make lint ({tool}) failed:\n{r.stdout}\n{r.stderr}"
     _run("clean")
+
+
+def test_make_gen_reruns_on_width_change() -> None:
+    """make gen WIDTH=16 must re-run even when the output file is already present."""
+    _run("clean")
+    r1 = _run("gen")
+    assert r1.returncode == 0, f"make gen failed: {r1.stderr}"
+
+    # Verify default width.
+    out_default = (DEMO / "example.out.v").read_text()
+    assert "parameter WIDTH = 8" in out_default, "default WIDTH=8 not found"
+
+    # Re-run with a different width; without the flag-stamp fix this says "up to date".
+    r2 = _run_with("gen", "WIDTH=16")
+    assert r2.returncode == 0, f"make gen WIDTH=16 failed: {r2.stderr}"
+    out_w16 = (DEMO / "example.out.v").read_text()
+    assert "parameter WIDTH = 16" in out_w16, (
+        f"WIDTH=16 not reflected in output (stale build?): {out_w16[:500]}"
+    )
+
+    _run("clean")

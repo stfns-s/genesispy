@@ -52,39 +52,41 @@ PREFIX_OPERATOR_MAP: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Built-in functions.
 #
-# Value is either a string template (``"{0}.append({1})"``) or a callable
-# taking the rendered arg strings and returning a string. ``None`` means
-# unmappable -> TODO passthrough.
+# True  = handled structurally in render_builtin (if-chain); the map is
+#         used only as a membership test to gate the render_builtin call.
+#         String templates are NOT used: the if-chain needs ctx side-effects
+#         (helpers/imports injection), arity-dependent shapes, and direct
+#         token-structure access that a flat template cannot express.
+# None  = unmappable; render_builtin raises Unmappable -> TODO passthrough.
 # ---------------------------------------------------------------------------
 BUILTIN_MAP: dict[str, object] = {
-    "print":   "print({args})",
-    "printf":  "print({fmt0} % ({rest},), end='')",
-    "sprintf": "({fmt0} % ({rest},))",
-    "scalar":  "len({args})",
-    "length":  "len({args})",
-    "defined": "({args} is not None)",
-    "exists":  "({arg0} in {arg1})",            # exists $h{k}  -- arg-order-dependent; see translator
-    "delete":  "{arg0}.pop({arg1}, None)",      # delete $h{k}
-    "keys":    "list({args})",
-    "values":  "list({args}.values())",
-    "die":     "(_ for _ in ()).throw(RuntimeError({args}))",
-    "warn":    "print({args}, file=__import__('sys').stderr)",
-    "push":    "{arg0}.append({rest})",
-    "pop":     "{args}.pop()",
-    "shift":   "{args}.pop(0)",
-    "unshift": "{arg0}.insert(0, {rest})",
-    "split":   "({arg1}).split({arg0})",
-    "join":    "({arg0}).join({rest})",
-    "lc":      "({args}).lower()",
-    "uc":      "({args}).upper()",
-    "chomp":   "{args}.rstrip('\\n')",          # not in-place
-    "int":     "int({args})",
-    "abs":     "abs({args})",
-    "ref":     "type({args}).__name__",
-    "wantarray": None,
-    "qw":      None,  # handled structurally
-    # Scalar::Util::looks_like_number -- routed via runtime helper.
-    "looks_like_number": "_vp2vpy_looks_like_number({args})",
+    "print":             True,
+    "printf":            True,
+    "sprintf":           True,
+    "scalar":            True,
+    "length":            True,
+    "defined":           True,
+    "exists":            True,
+    "delete":            True,
+    "keys":              True,
+    "values":            True,
+    "die":               True,
+    "warn":              True,
+    "push":              True,
+    "pop":               True,
+    "shift":             True,
+    "unshift":           True,
+    "split":             True,
+    "join":              True,
+    "lc":                True,
+    "uc":                True,
+    "chomp":             True,
+    "int":               True,
+    "abs":               True,
+    "ref":               True,
+    "wantarray":         None,
+    "qw":                None,  # handled structurally
+    "looks_like_number": True,
 }
 
 # POSIX:: math passthrough.

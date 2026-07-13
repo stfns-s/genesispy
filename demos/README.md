@@ -45,7 +45,7 @@ Common overrides:
   set in both
 - `EXTRA_FLAGS=...` -- passed verbatim to `genesispy`
 
-See `genesispy/doc/user-guide.md` section 3 for the full `genesispy` flag list.
+See `genesispy/doc/user-guide.md` section 9 for the full `genesispy` flag list.
 
 ### `env_setup.sh`
 
@@ -133,7 +133,7 @@ strings with `m` including the sign bit; operands may have heterogeneous formats
 signedness. Function ports use Q-weighted bit indices: a `Q4.12` port is declared `[3:-12]`
 (`x[0]` the integer LSB, `x[-12]` the fraction LSB, `x[3]` the sign).
 
-Each arithmetic op leaf (`negate.vpy`, `add.vpy`, `subtract.vpy`, `multiply.vpy`) computes an exact
+Each arithmetic op leaf (`neg.vpy`, `add.vpy`, `sub.vpy`, `mul.vpy`) computes an exact
 full-precision intermediate result, then calls a generated `<name>_rq` requant helper -- itself a
 `requant.vpy` include -- to round and saturate to the caller's target `Qp.q`. The requant helper
 supports a symmetric-output option (`osym`) that tightens the negative bound to match the positive

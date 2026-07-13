@@ -40,7 +40,7 @@ from typing import Dict, List, Tuple
 # Make the sibling helper importable when run as a script.
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
-from _parity_normalize import normalize, parse_header  # noqa: E402
+from _parity_normalize import build_variant_map, normalize, parse_header  # noqa: E402
 
 INNER_REPO = _HERE.parent
 DEMOS_DIR = INNER_REPO / "demos"
@@ -129,7 +129,8 @@ def _run_make(workdir: Path, env: Dict[str, str]) -> None:
 def _collect_bodies(workdir: Path, subdirs: Tuple[str, ...], all_bases: set
                     ) -> List[Tuple[str, tuple, str]]:
     """Return ``[(base, sig, normalised_body), ...]`` for every emitted .v."""
-    out: List[Tuple[str, tuple, str]] = []
+    rows: List[Tuple[str, tuple, str]] = []
+    texts: Dict[str, str] = {}
     for sub in subdirs:
         d = workdir / sub
         if not d.is_dir():
@@ -140,8 +141,10 @@ def _collect_bodies(workdir: Path, subdirs: Tuple[str, ...], all_bases: set
                 base, sig = parse_header(text)
             except ValueError:
                 continue
-            out.append((base, sig, normalize(text, all_bases)))
-    return out
+            rows.append((base, sig, text))
+            texts[str(path)] = text
+    vmap = build_variant_map(texts, all_bases)
+    return [(base, sig, normalize(text, all_bases, vmap)) for base, sig, text in rows]
 
 
 def _bases_only(workdir: Path, subdirs: Tuple[str, ...]) -> set:

@@ -1,0 +1,1 @@
+module wallace__U1 ( input logic [1:0] pp[1:0], output logic [3:0] sum,carry ); logic [3:0] pp0_step0; assign pp0_step0 = {{(2){1'b0}}, pp[0]}; logic [3:0] pp1_step0; assign pp1_step0 = {{(1){1'b0}}, pp[1], {1{1'b0}}}; assign sum = pp0_step0[3:0]; assign carry = pp1_step0[3:0]; endmodule : wallace__U1

@@ -1,0 +1,1 @@
+module flop__U2( input logic Clk, input logic [31:0] data_in, output logic [31:0] data_out ); always @ (posedge Clk) begin data_out <= data_in; end endmodule

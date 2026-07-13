@@ -241,6 +241,12 @@ class UniqueModule:
         # against the final value. Validation order matches Perl's
         # param_range (UniqueModule.pm:582): min/max/step XOR list.
         if any(x is not None for x in (min, max, step, list)):
+            # Rule 6: re-defining a range via parameter() is fatal (Perl:594-595).
+            if self._params[name].get("range") is not None:
+                raise ParameterError(
+                    f"{self._module_name}->parameter: "
+                    f"Re-definition of range for parameter {name!r}!"
+                )
             self._set_range(
                 name, min=min, max=max, step=step, list_=list
             )
@@ -334,7 +340,11 @@ class UniqueModule:
         step: Any = None,
         list_: Any = None,
     ) -> None:
-        """Install a range constraint dict on the param entry."""
+        """Install a range constraint dict on the param entry.
+
+        Validates combination legality mirroring Perl param_range
+        (UniqueModule.pm:621-670).
+        """
         has_minmax = any(x is not None for x in (min, max, step))
         has_list = list_ is not None
         if has_minmax and has_list:
@@ -342,6 +352,34 @@ class UniqueModule:
                 f"{self._module_name}->parameter: cannot combine "
                 f"min/max/step with list for parameter {name!r}"
             )
+        if not has_list:
+            # Rule 1: step requires min or max (Perl:633-641).
+            if step is not None and min is None and max is None:
+                raise ParameterError(
+                    f"{self._module_name}: parameter {name!r}: "
+                    f"range rule 'Step' not allowed unless combined with 'Min' or 'Max'"
+                )
+            # Rule 2: step != 0 (Perl:639-641).
+            if step is not None and step == 0:
+                raise ParameterError(
+                    f"{self._module_name}: parameter {name!r}: "
+                    f"range rule 'Step' of size zero not allowed"
+                )
+            # Rule 3: min <= max (Perl:644-653).
+            if min is not None and max is not None and min > max:
+                raise ParameterError(
+                    f"{self._module_name}: parameter {name!r}: "
+                    f"range rule 'Min'={min!r} must be less than or equal to 'Max'={max!r}"
+                )
+            # Rule 4: (max - min) integer multiple of step (Perl:656-670).
+            if step is not None and min is not None and max is not None:
+                steps = (max - min) / step
+                if steps != int(steps):
+                    raise ParameterError(
+                        f"{self._module_name}: parameter {name!r}: "
+                        f"range rule 'Max'={max!r} not an integer number of "
+                        f"'Steps'={step!r} away from 'Min'={min!r}"
+                    )
         if has_list:
             self._params[name]["range"] = {"list": list_}
         else:
@@ -372,7 +410,20 @@ class UniqueModule:
                 f"{self._module_name}: parameter {name!r} value "
                 f"{value!r} above max {hi!r}"
             )
-        # step is informative-only in Perl; mirror that (no enforcement).
+        # Rule 5: step grid check (Perl:705-723).
+        st = rng.get("step")
+        if st is not None:
+            if lo is not None:
+                anchor_label, anchor_val, diff = "min", lo, value - lo
+            else:
+                anchor_label, anchor_val, diff = "max", hi, hi - value
+            steps = diff / st
+            if steps != int(steps):
+                raise ParameterError(
+                    f"{self._module_name}: parameter {name!r} value "
+                    f"{value!r} not an integer number of steps={st!r} "
+                    f"from {anchor_label}={anchor_val!r}"
+                )
 
     @staticmethod
     def _normalise_opt(opt: str) -> str:
@@ -513,6 +564,22 @@ class UniqueModule:
         merged.update(overrides)  # explicit kwargs win
         return merged
 
+    def _guard_new_instance_name(self, inst_name: str, api: str) -> None:
+        """Raise if ``inst_name`` is already registered under this parent.
+
+        Called at entry to each instantiation API before any child is
+        created. The transient-overwrite path inside ``unique_inst``
+        (post-elaboration dedup via ``_clone_from_cached``) must NOT call
+        this guard; only the public entry points do.
+
+        Mirrors Perl ``UniqueModule.pm:1158`` and siblings.
+        """
+        if inst_name in self._sub_instances:
+            raise ElaborationError(
+                f"{api}: Instance -->{inst_name}<-- already exists in module "
+                f"{self.get_instance_path()}"
+            )
+
     def unique_inst(
         self, module_cls, inst_name: str, **params: Any
     ) -> "UniqueModule":
@@ -529,6 +596,8 @@ class UniqueModule:
         """
         if isinstance(module_cls, str):
             module_cls = self._manager.resolve_module_class(module_cls)
+
+        self._guard_new_instance_name(inst_name, "unique_inst")
 
         eff_pre = self._resolve_params(module_cls, inst_name, params)
         child_path = self._instance_path_segments() + (inst_name,)
@@ -555,32 +624,37 @@ class UniqueModule:
         # safe only because elaboration is single-threaded.
         self._sub_instances[inst_name] = child
 
-        if cache_enabled:
-            # Journal cache writes so post-dedup rollback is O(writes), not O(cache).
-            with cache.journaled() as journal:
+        try:
+            if cache_enabled:
+                # Journal cache writes so post-dedup rollback is O(writes), not O(cache).
+                with cache.journaled() as journal:
+                    self._execute_child(child)
+
+                    eff_post = child.get_mod_param_list()
+                    sig_post = hashing.sha256_param_signature(
+                        module_cls.__name__, eff_post
+                    )
+                    post_key = (
+                        f"{module_cls.__name__}::post::{sig_post}{subtree_tag}"
+                    )
+
+                    if post_key in cache.MODULE_CACHE:
+                        existing = cache.MODULE_CACHE[post_key]
+                        cache.rollback_journal(*journal)
+                        # Reclaim the wasted _unqN only if no nested unique_inst
+                        # bumped the counter past it.
+                        if cache.MODULE_NAME_NUM_DERIVS.get(module_cls.__name__) == n:
+                            cache.MODULE_NAME_NUM_DERIVS[module_cls.__name__] = n - 1
+                        return self._clone_from_cached(existing, inst_name)
+
+                    cache.MODULE_CACHE[pre_key] = child
+                    cache.MODULE_CACHE[post_key] = child
+            else:
                 self._execute_child(child)
-
-                eff_post = child.get_mod_param_list()
-                sig_post = hashing.sha256_param_signature(
-                    module_cls.__name__, eff_post
-                )
-                post_key = (
-                    f"{module_cls.__name__}::post::{sig_post}{subtree_tag}"
-                )
-
-                if post_key in cache.MODULE_CACHE:
-                    existing = cache.MODULE_CACHE[post_key]
-                    cache.rollback_journal(*journal)
-                    # Reclaim the wasted _unqN only if no nested unique_inst
-                    # bumped the counter past it.
-                    if cache.MODULE_NAME_NUM_DERIVS.get(module_cls.__name__) == n:
-                        cache.MODULE_NAME_NUM_DERIVS[module_cls.__name__] = n - 1
-                    return self._clone_from_cached(existing, inst_name)
-
-                cache.MODULE_CACHE[pre_key] = child
-                cache.MODULE_CACHE[post_key] = child
-        else:
-            self._execute_child(child)
+        except Exception:
+            if self._sub_instances.get(inst_name) is child:
+                del self._sub_instances[inst_name]
+            raise
 
         cache.register(unique_name, child)
         return child
@@ -600,6 +674,9 @@ class UniqueModule:
         """Like :meth:`unique_inst` but unique name encodes the params."""
         if isinstance(module_cls, str):
             module_cls = self._manager.resolve_module_class(module_cls)
+
+        self._guard_new_instance_name(inst_name, "unique_inst_param")
+
         eff = self._resolve_params(module_cls, inst_name, params)
         child_path = self._instance_path_segments() + (inst_name,)
         subtree_sig = self._scoped_subtree_signature(child_path)
@@ -617,8 +694,9 @@ class UniqueModule:
             child.override_param(k, v)
 
         # Non-scalar values collapse to a short hash to keep the emitted name a legal identifier.
+        # Separator between key and value mirrors Perl _${abbrev}_${val} (UniqueModule.pm:2718).
         def _safe_pair(k: str, v: Any) -> str:
-            raw = f"{k}{v}"
+            raw = f"{k}_{v}"
             if re.fullmatch(r"\w+", raw):
                 return raw
             digest = hashing.sha256_param_signature("", {k: v})[:8]
@@ -637,7 +715,12 @@ class UniqueModule:
         child._unique_module_name = unique_name
 
         self._sub_instances[inst_name] = child
-        self._execute_child(child)
+        try:
+            self._execute_child(child)
+        except Exception:
+            if self._sub_instances.get(inst_name) is child:
+                del self._sub_instances[inst_name]
+            raise
 
         # Cache after execute() so a raising .vpy body doesn't poison it.
         if cache_enabled:
@@ -661,6 +744,8 @@ class UniqueModule:
         ancestor, raise rather than silently building a self-referential
         hierarchy.
         """
+        self._guard_new_instance_name(new_name, "clone_inst")
+
         src_uname = src_inst._unique_module_name
         ancestor: Optional[UniqueModule] = self
         while ancestor is not None:
@@ -704,6 +789,9 @@ class UniqueModule:
         """
         if isinstance(module_cls, str):
             module_cls = self._manager.resolve_module_class(module_cls)
+
+        self._guard_new_instance_name(inst_name, "ununique_inst")
+
         # Same scoped-override layering as unique_inst / unique_inst_param.
         eff = self._resolve_params(module_cls, inst_name, params)
         base_name = module_cls.__name__
@@ -736,7 +824,12 @@ class UniqueModule:
         child._unique_module_name = base_name
 
         self._sub_instances[inst_name] = child
-        self._execute_child(child)
+        try:
+            self._execute_child(child)
+        except Exception:
+            if self._sub_instances.get(inst_name) is child:
+                del self._sub_instances[inst_name]
+            raise
         # After execute() so a raising body doesn't poison the caches.
         cache.register(base_name, child)
         cache.UNUNIQUE_REGISTRY[base_name] = {
@@ -768,7 +861,12 @@ class UniqueModule:
         tmp_name = f"{base_name}_tmp{n}"
         child._unique_module_name = tmp_name
         self._sub_instances[inst_name] = child
-        self._execute_child(child)
+        try:
+            self._execute_child(child)
+        except Exception:
+            if self._sub_instances.get(inst_name) is child:
+                del self._sub_instances[inst_name]
+            raise
 
         suffix = type(child)._OUTPUT_SUFFIX
         tmp_file = f"{tmp_name}{suffix}"

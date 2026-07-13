@@ -234,6 +234,39 @@ def test_regfile(tmp_path: Path, syntax: str) -> None:
     assert "DataOut2" in body
 
 
+def test_logmult(tmp_path: Path) -> None:
+    """logmult is wrapperless: include()-d leaves, single emitted top.v,
+    no config file.  Function names are derived from the operand widths
+    baked into the top-level template."""
+    synth = _run_demo(
+        tmp_path, DEMOS / "logmult", "top",
+        "top.vpy",
+        extra_argv=["--inc-path", "genesis_src"],
+    )
+    files = [p.name for p in synth.iterdir()]
+    assert files == ["top.v"], f"expected exactly top.v, got {files}"
+    body = (synth / "top.v").read_text()
+    assert "module top" in body
+    assert "logmult_8x8" in body
+    assert "slogmult_8x8" in body
+
+
+def test_qarith(tmp_path: Path) -> None:
+    """qarith is wrapperless: include()-d leaves, single emitted top.v,
+    no config file.  Function names encode Q-notation operand formats."""
+    synth = _run_demo(
+        tmp_path, DEMOS / "qarith", "top",
+        "top.vpy",
+        extra_argv=["--inc-path", "genesis_src"],
+    )
+    files = [p.name for p in synth.iterdir()]
+    assert files == ["top.v"], f"expected exactly top.v, got {files}"
+    body = (synth / "top.v").read_text()
+    assert "module top" in body
+    assert "q4d12_to_q2d6" in body
+    assert "mul_q2d2_q2d2_to_q4d4" in body
+
+
 def test_generation_examples(tmp_path: Path) -> None:
     """Five tops sharing one pll.vpy, each via a different generation
     primitive. No j2 twin in this demo, so only the default flavour runs.

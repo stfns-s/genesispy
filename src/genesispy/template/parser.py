@@ -214,8 +214,10 @@ def _process_verilog_line(line: str, lineno: int, infile: str) -> str:
         if kind == "text":
             parts.append(_escape_fstring_text(seg))
         else:
-            # Verbatim paste; compile() validates the expression later.
-            parts.append("{" + seg + "}")
+            # Pad with spaces inside the braces so that a leading '{' or
+            # trailing '}' in the expression (e.g. dict literals) doesn't
+            # collide with f-string '{{'/'}}' literal-escape parsing.
+            parts.append("{ " + seg + " }")
     return f'self.emit(f"{"".join(parts)}")'
 
 

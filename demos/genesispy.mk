@@ -69,7 +69,24 @@ DEPEND_J2      := $(OUTPUTDIR_J2)/$(TOP).depend
 CLEAN_SH_J2    := $(OUTPUTDIR_J2)/genesispy_clean.sh
 VLOG_VF_J2     ?= genesis_vlog.j2.vf
 
-.PHONY: gen gen-j2 cleangen cleansim clean pylint vlint lint sim help
+# Full command lines as variables so the recipe and stamp cannot drift.
+# Note: a double-quote inside EXTRA_FLAGS would break the printf quoting below.
+GEN_CMD    := $(GENESISPY) $(GEN_INPUT_FLAGS) --top $(TOP) $(CONFIG_FLAG) \
+	    --src-path genesis_src --out-dir $(OUTPUTDIR) \
+	    --vf-out $(VLOG_VF) $(EXTRA_FLAGS)
+GEN_CMD_J2 := $(GENESISPY) --j2 $(GEN_INPUT_FLAGS) --top $(TOP) $(CONFIG_FLAG) \
+	    --src-path $(SRCDIR_J2) --out-dir $(OUTPUTDIR_J2) \
+	    --vf-out $(VLOG_VF_J2) $(EXTRA_FLAGS)
+
+# Stamp files record the last command line used; rewritten only when content
+# changes, so mtime advances only on a real flag/config change.
+FLAGSTAMP    := $(VLOG_VF).flags
+FLAGSTAMP_J2 := $(VLOG_VF_J2).flags
+
+.PHONY: gen gen-j2 cleangen cleansim clean pylint vlint lint sim help FORCE
+
+# Stamp rules precede gen textually; set default goal explicitly.
+.DEFAULT_GOAL := gen
 
 # XML -> JSON config conversion. One-way: XML is canonical for demos that
 # carry both forms; JSON is regenerated from it. Use `genesispy-json2xml`
@@ -77,27 +94,34 @@ VLOG_VF_J2     ?= genesis_vlog.j2.vf
 %.json: %.xml
 	$(XML2JSON) $< $@
 
+$(FLAGSTAMP): FORCE
+	@printf '%s\n' "$(GEN_CMD)" | cmp -s - $@ 2>/dev/null || printf '%s\n' "$(GEN_CMD)" > $@
+
+$(FLAGSTAMP_J2): FORCE
+	@printf '%s\n' "$(GEN_CMD_J2)" | cmp -s - $@ 2>/dev/null || printf '%s\n' "$(GEN_CMD_J2)" > $@
+
+# Pull in the generated depfiles so include()'d leaves also trigger rebuilds.
+# First build: files absent -> -include skips silently; $(SRC_FILES) drives it.
+-include $(DEPEND)
+-include $(DEPEND_J2)
+
 gen: $(VLOG_VF)
 
 # Genesis2-style product list at the demo root, written directly by
 # genesispy via --vf-out. Suppresses the default <top>.vlist pair.
-$(VLOG_VF): $(SRC_FILES) $(CONFIG_DEP)
-	$(GENESISPY) $(GEN_INPUT_FLAGS) --top $(TOP) $(CONFIG_FLAG) \
-	    --src-path genesis_src --out-dir $(OUTPUTDIR) \
-	    --vf-out $(VLOG_VF) $(EXTRA_FLAGS)
+$(VLOG_VF): $(SRC_FILES) $(CONFIG_DEP) $(FLAGSTAMP)
+	$(GEN_CMD)
 
 gen-j2: $(VLOG_VF_J2)
 
-$(VLOG_VF_J2): $(SRC_FILES_J2) $(CONFIG_DEP)
-	$(GENESISPY) --j2 $(GEN_INPUT_FLAGS) --top $(TOP) $(CONFIG_FLAG) \
-	    --src-path $(SRCDIR_J2) --out-dir $(OUTPUTDIR_J2) \
-	    --vf-out $(VLOG_VF_J2) $(EXTRA_FLAGS)
+$(VLOG_VF_J2): $(SRC_FILES_J2) $(CONFIG_DEP) $(FLAGSTAMP_J2)
+	$(GEN_CMD_J2)
 
 cleangen:
 	rm -rf genesis_raw genesis_synth genesis_verif
 	rm -rf $(OUTPUTDIR_J2)
-	rm -f $(DEPEND) $(CLEAN_SH) $(VLOG_VF)
-	rm -f $(DEPEND_J2) $(CLEAN_SH_J2) $(VLOG_VF_J2)
+	rm -f $(DEPEND) $(CLEAN_SH) $(VLOG_VF) $(FLAGSTAMP)
+	rm -f $(DEPEND_J2) $(CLEAN_SH_J2) $(VLOG_VF_J2) $(FLAGSTAMP_J2)
 
 cleansim:
 	rm -rf obj_dir csrc simv.daidir work

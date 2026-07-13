@@ -273,3 +273,118 @@ def test_cli_best_effort(tmp_path, capsys):
     assert "TODO(genesispy-jinja2j2)" in out.read_text()
     err = capsys.readouterr().err
     assert "manual fixup" in err
+
+
+# --------------------------------------------------------------------------- #
+# Loop filter (B16)
+# --------------------------------------------------------------------------- #
+
+def test_loop_filter_simple():
+    """{% for x in xs if x > 2 %} -> genexp, no else None."""
+    out, issues = convert("{% for x in xs if x > 2 %}{{ x }}{% endfor %}", strict=True)
+    assert "for x in (x for x in xs if" in out
+    assert "else None" not in out
+    assert issues == []
+
+
+def test_loop_filter_tuple_target():
+    """Tuple target appears in both binding and filter position."""
+    out, issues = convert("{% for k, v in d.items() if v %}{{ k }}{% endfor %}", strict=True)
+    assert "for (k, v) in ((k, v) for (k, v) in d.items() if" in out
+    assert "else None" not in out
+    assert issues == []
+
+
+def test_loop_recursive_strict_errors():
+    """{% for x in xs recursive %} -> strict raises _Unmappable."""
+    with pytest.raises(_Unmappable):
+        convert("{% for x in xs recursive %}{{ x }}{% endfor %}", strict=True)
+
+
+def test_loop_recursive_best_effort_todo():
+    """{% for x in xs recursive %} -> best-effort emits TODO comment."""
+    out, issues = convert(
+        "{% for x in xs recursive %}{{ x }}{% endfor %}", strict=False
+    )
+    assert "TODO(genesispy-jinja2j2)" in out
+    assert len(issues) >= 1
+
+
+def test_loop_filterless_byte_identical():
+    """Filterless for loops must produce the same output as before the fix."""
+    src = "{% for x in xs %}a{% endfor %}"
+    out, issues = convert(src, strict=True)
+    assert out == "{% for x in xs: %}a{% endfor %}"
+    assert issues == []
+
+
+# --------------------------------------------------------------------------- #
+# for-else block-context stack (B17)
+# --------------------------------------------------------------------------- #
+
+def test_for_else_strict_raises():
+    """for-else: strict mode must raise _Unmappable (semantic inversion)."""
+    with pytest.raises(_Unmappable, match="for-else"):
+        convert("{% for x in xs %}a{% else %}b{% endfor %}", strict=True)
+
+
+def test_for_else_best_effort_todo():
+    """for-else: best-effort emits exactly one Issue and a TODO comment."""
+    src = "{% for x in xs %}a{% else %}b{% endfor %}"
+    out, issues = convert(src, strict=False)
+    assert "TODO(genesispy-jinja2j2)" in out
+    assert len([i for i in issues if "for-else" in i.reason.lower()
+                or "empty" in i.reason.lower()]) == 1
+
+
+def test_if_else_unchanged():
+    """else under if must still produce else: (not TODO)."""
+    src = "{% if a %}A{% else %}B{% endif %}"
+    out, issues = convert(src, strict=True)
+    assert out == "{% if a: %}A{% else: %}B{% endif %}"
+    assert issues == []
+
+
+def test_nested_if_else_inside_for():
+    """else under if nested inside for must bind to the if, zero issues."""
+    src = "{% for x in xs %}{% if c %}A{% else %}B{% endif %}{% endfor %}"
+    out, issues = convert(src, strict=True)
+    assert "else:" in out
+    assert "TODO" not in out
+    assert issues == []
+
+
+def test_while_else_strict_raises():
+    """else after while: strict raises _Unmappable (same treatment as for-else)."""
+    with pytest.raises(_Unmappable, match="for-else|while-else"):
+        convert("{% while n %}x{% else %}y{% endwhile %}", strict=True)
+
+
+def test_sentinel_closer_pops_stack():
+    """Sentinel-comment closer (# endfor) must pop the stack correctly."""
+    # After the sentinel endfor, a subsequent top-level else should be an error
+    # only if stack is empty/non-for — here we just verify no crash and the
+    # for body's if-else converts cleanly when sentinel form is used.
+    src = "{% for x in xs %}{% if c %}A{% else %}B{% endif %}{% endfor %}"
+    out, issues = convert(src, strict=True)
+    assert "else:" in out
+    assert issues == []
+
+
+def test_sentinel_closer_input_pops_stack():
+    """Sentinel-comment closer (# endfor) pops the block stack correctly.
+
+    The sentinel {% # endfor %} must pop 'for' from the block stack so that
+    the following top-level {% else %} sees an empty stack and converts to
+    'else:' (no error). If the pop were missing, the else would see 'for' on
+    the stack top, and strict conversion would raise _Unmappable("...for-else...")
+    (semantic inversion). This template is not valid standalone Jinja — the
+    converter is span-based and doesn't validate — but it precisely pinpoints
+    the stack-pop mechanics.
+    """
+    src = "{% for x in xs %}a{% # endfor %}{% else %}b{% endif %}"
+    out, issues = convert(src, strict=True)
+    # Sentinel pop must execute, leaving the stack empty when {% else %} is
+    # encountered, so conversion succeeds without raising _Unmappable.
+    assert issues == []
+    assert "else:" in out

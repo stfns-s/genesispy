@@ -9,24 +9,43 @@ SRC_J2    := $(TOP).j2.vpy
 SIMULATOR ?= verilator
 VERILINT  ?= verilator
 
-.PHONY: gen gen-j2 cleangen cleansim clean vlint lint sim help
+# Full command lines as variables so the recipe and stamp cannot drift.
+# Note: a double-quote inside WIDTH/DEPTH would break the printf quoting below.
+GEN_CMD    := $(GVPY) --gvpy-strict --mname $(TOP) \
+	    --parameter WIDTH=$(WIDTH) --parameter DEPTH=$(DEPTH) \
+	    $(TOP).vpy
+GEN_CMD_J2 := $(GVPY) --j2 --gvpy-strict --mname $(TOP) \
+	    --parameter WIDTH=$(WIDTH) --parameter DEPTH=$(DEPTH) \
+	    $(SRC_J2)
+
+# Stamp files record the last command line used; rewritten only when content
+# changes, so mtime advances only on a real parameter change.
+FLAGSTAMP    := $(OUT).flags
+FLAGSTAMP_J2 := $(OUT_J2).flags
+
+.PHONY: gen gen-j2 cleangen cleansim clean vlint lint sim help FORCE
+
+# Stamp rules precede gen textually; set default goal explicitly.
+.DEFAULT_GOAL := gen
+
+$(FLAGSTAMP): FORCE
+	@printf '%s\n' "$(GEN_CMD)" | cmp -s - $@ 2>/dev/null || printf '%s\n' "$(GEN_CMD)" > $@
+
+$(FLAGSTAMP_J2): FORCE
+	@printf '%s\n' "$(GEN_CMD_J2)" | cmp -s - $@ 2>/dev/null || printf '%s\n' "$(GEN_CMD_J2)" > $@
 
 gen: $(OUT)
 
-$(OUT): $(TOP).vpy
-	$(GVPY) --gvpy-strict --mname $(TOP) \
-	    --parameter WIDTH=$(WIDTH) --parameter DEPTH=$(DEPTH) \
-	    $< > $@
+$(OUT): $(TOP).vpy $(FLAGSTAMP)
+	$(GEN_CMD) > $@
 
 gen-j2: $(OUT_J2)
 
-$(OUT_J2): $(SRC_J2)
-	$(GVPY) --j2 --gvpy-strict --mname $(TOP) \
-	    --parameter WIDTH=$(WIDTH) --parameter DEPTH=$(DEPTH) \
-	    $< > $@
+$(OUT_J2): $(SRC_J2) $(FLAGSTAMP_J2)
+	$(GEN_CMD_J2) > $@
 
 cleangen:
-	rm -f $(OUT) $(OUT_J2)
+	rm -f $(OUT) $(OUT_J2) $(FLAGSTAMP) $(FLAGSTAMP_J2)
 
 cleansim:
 	rm -rf obj_dir csrc simv.daidir work

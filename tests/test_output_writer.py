@@ -517,3 +517,121 @@ def test_write_file_lists_skips_vlist_when_named_product(manager, tmp_path):
     # Depend target tracks the named product, not the suppressed .vlist.
     assert "manifest.vf" in body
     assert "my_top.vlist" not in body
+
+
+# --------------------------------------------------------------------------- #
+# DFS ordering (F9)
+# --------------------------------------------------------------------------- #
+
+
+def _setup_dfs_order_cache():
+    """Register three files whose alphabetical order differs from DFS order.
+
+    DFS order: z_top.v (synth), m_mid.v (synth_and_verif), a_leaf.v (verif).
+    Alphabetical order would be: a_leaf, m_mid, z_top -- reversed.
+    """
+    cache.OUTFILE_CONTENT_CACHE["z_top.v"] = "module z_top; endmodule\n"
+    cache.OUTFILE_CONTENT_CACHE["m_mid.v"] = "module m_mid; endmodule\n"
+    cache.OUTFILE_CONTENT_CACHE["a_leaf.v"] = "module a_leaf; endmodule\n"
+    cache.OUTFILE_TAGS["z_top.v"] = "synth"
+    cache.OUTFILE_TAGS["m_mid.v"] = "synth_and_verif"
+    cache.OUTFILE_TAGS["a_leaf.v"] = "verif"
+    # Populate OUTFILE_ORDER in DFS (instantiation) order.
+    cache.OUTFILE_ORDER.append("z_top.v")
+    cache.OUTFILE_ORDER.append("m_mid.v")
+    cache.OUTFILE_ORDER.append("a_leaf.v")
+
+
+def test_dfs_order_vlist(manager, tmp_path):
+    """<top>.vlist must list files in DFS order, not alphabetical."""
+    _setup_dfs_order_cache()
+    written = output_writer.flush_to_disk(manager)
+    output_writer.write_file_lists(manager, written)
+
+    vlist = os.path.join(manager.output_dir, "my_top.vlist")
+    with open(vlist) as fh:
+        lines = [os.path.basename(ln.strip()) for ln in fh if ln.strip()]
+    assert lines == ["z_top.v", "m_mid.v", "a_leaf.v"], (
+        f"expected DFS order [z_top, m_mid, a_leaf], got {lines}"
+    )
+
+
+def test_dfs_order_vlist_verif(manager, tmp_path):
+    """<top>.vlist.verif must list files in DFS order (verif + both, filtered)."""
+    _setup_dfs_order_cache()
+    written = output_writer.flush_to_disk(manager)
+    output_writer.write_file_lists(manager, written)
+
+    vlist_verif = os.path.join(manager.output_dir, "my_top.vlist.verif")
+    with open(vlist_verif) as fh:
+        lines = [os.path.basename(ln.strip()) for ln in fh if ln.strip()]
+    # verif-cone = entries with tag != synth: m_mid (both) then a_leaf (verif)
+    assert lines == ["m_mid.v", "a_leaf.v"], (
+        f"expected DFS verif order [m_mid, a_leaf], got {lines}"
+    )
+
+
+def test_dfs_order_vf_out(manager, tmp_path):
+    """--vf-out master file must list files in DFS order."""
+    _setup_dfs_order_cache()
+    written = output_writer.flush_to_disk(manager)
+    vf = str(tmp_path / "out.vf")
+    output_writer.write_product_lists(manager, written, vf, single=True)
+
+    with open(vf) as fh:
+        lines = [os.path.basename(ln.strip()) for ln in fh if ln.strip()]
+    assert lines == ["z_top.v", "m_mid.v", "a_leaf.v"], (
+        f"expected DFS order in .vf, got {lines}"
+    )
+
+
+def test_dfs_order_synth_vf(manager, tmp_path):
+    """--product synth side-file must list files in DFS order (synth-cone)."""
+    _setup_dfs_order_cache()
+    written = output_writer.flush_to_disk(manager)
+    base = str(tmp_path / "out.vf")
+    out = output_writer.write_product_lists(manager, written, base)
+
+    with open(out["synth"]) as fh:
+        lines = [os.path.basename(ln.strip()) for ln in fh if ln.strip()]
+    # synth-cone = tag != verif: z_top (synth) then m_mid (both)
+    assert lines == ["z_top.v", "m_mid.v"], (
+        f"expected DFS synth order [z_top, m_mid], got {lines}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# -MP empty targets in depfile (B19)
+# --------------------------------------------------------------------------- #
+
+
+def test_depfile_contains_mp_empty_targets(manager, tmp_path):
+    """The depfile must include a gcc -MP-style empty target for each prerequisite.
+
+    After the main 'target: prereq...' line, one '<prereq>:' line per
+    prerequisite guards against hard build failures when a prereq is
+    deleted or renamed (stale depfile).
+    """
+    cache.INCLUDED_FILES.append(str(tmp_path / "genesis_src" / "leaf.vpy"))
+    _populate_cache()
+    written = output_writer.flush_to_disk(manager)
+    output_writer.write_file_lists(manager, written)
+
+    depend = os.path.join(manager.output_dir, "my_top.depend")
+    with open(depend) as fh:
+        body = fh.read()
+
+    lines = body.splitlines()
+    # First line is the main dependency rule.
+    assert ":" in lines[0]
+
+    # Every prerequisite must appear as a subsequent empty-target line.
+    prereq_names = [
+        os.path.basename(p)
+        for p in [*manager.parsed_source_files, str(tmp_path / "genesis_src" / "leaf.vpy")]
+    ]
+    for name in prereq_names:
+        empty_targets = [ln for ln in lines[1:] if ln.endswith(":") and name in ln]
+        assert empty_targets, (
+            f"depfile missing -MP empty target for {name!r};\ndepfile:\n{body}"
+        )

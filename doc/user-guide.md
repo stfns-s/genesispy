@@ -64,8 +64,10 @@ pip install -e .
 pip install --target /path/to/install-dir .
 ```
 
-`pip install -e .` exposes `genesispy`, `gvpy`, `genesispy-xml2json`,
-`genesispy-json2xml`, and `genesispy-jinja2j2` as console scripts.
+`pip install -e .` exposes `genesispy`, `gvpy`, and `genesispy-jinja2j2`
+as console scripts. `genesispy-xml2json` and `genesispy-json2xml` are
+in-tree `bin/` scripts, not pip console scripts; run them directly from
+`genesispy/bin/` or add `genesispy/bin/` to your `PATH`.
 
 ### Optional dependency: stock Jinja2 import
 
@@ -798,8 +800,7 @@ to wrap behavior. The original methods are still reachable via
 
 For shared methods that should be visible on every elaborated module,
 write a Python mixin module and have it imported via `--py-import` or
-the `genesispy.user_lib.UserMixin` hook (see
-[interfaces.md](./interfaces.md), section `genesispy.user_lib`). The
+the `genesispy.user_lib.UserMixin` hook (see `src/genesispy/user_lib.py`). The
 mixin's methods become available as `self.<method>` on every
 `UniqueModule`. This replaces Perl Genesis2's `@ISA` global-injection
 pattern.
@@ -819,7 +820,7 @@ are also available (mirrors Genesis2 `do FILE` semantics).
 | `include(path)` | Recursively load another `.cfg` file. |
 | `print_configuration()` | Dump the full param database (stderr; debug aid). |
 | `get_top_name()` | Name of the `--top` module. |
-| `get_synthtop_path()` | Path to the `--synth-top` instance, or `None`. |
+| `get_synthtop_path()` | Absolute path to the synth output directory (`--synth-dir`). |
 | `error(msg)` | Raise `GenesisPyError` (fatal). |
 | `warning(msg)` | Write a warning to stderr; return normally. |
 
@@ -857,7 +858,7 @@ flag style) are listed below. For behaviour-affecting incompatibilities
 - **Parameter accessors** -- `exists_param(name)`, `get_top_param(name)`, and `list_params()` (sorted list of names; distinct from the existing `get_mod_param_list()` which returns a `{name: value}` dict). Mirror Perl UniqueModule.pm:496/:550/:515.
 - **Sub-instance navigation** -- `get_subinst(name)`, `exists_subinst(name)`, `get_subinst_array(pattern="")`, `get_instance_obj(path_or_obj)`, and `search_subinst(...)` are now available on every `UniqueModule` (mirrors Perl UniqueModule.pm:760/780/797/932/1087). `search_subinst` kwargs are **snake_case**: `start_from=`, `depth=`, `reverse=`, `path_regex=`, `iname_regex=`, `mname_regex=`, `bname_regex=`, `sname_regex=`, `has_param_regex=`, `apply_map=`. Translate from Perl Genesis2's CamelCase (`PathRegex`, `INameRegex`, ...) when porting.
 - **`iname` / `mname` / `bname` / `sname` callable** -- on a `UniqueModule` instance, the four short-name properties return a `StrCallable` (a `str` subclass), so both `obj.mname` and `obj.mname()` work the same way (and equal each other as strings). Mirrors Perl `$obj->mname()` / `$obj->bname()`.
-- **`error(...)` / `warning(...)`** -- bare-name `error("msg")` and `warning("msg")` are now bound inside `.vpy` bodies (routing through `self.error` / `self.warning`), mirroring Perl `$myself->error(...)` (UniqueModule.pm:2803). Both forms prefix the message with `<module_name>@<instance_path>` and delegate to `genesispy.errors`. `self.error(msg)` raises `GenesisPyError` (fatal); `self.warning(msg)` returns normally after writing to stderr.
+- **`error(...)` / `warning(...)`** -- bare-name `error("msg")` and `warning("msg")` are now bound inside `.vpy` bodies (routing through `self.error` / `self.warning`), mirroring Perl `$myself->error(...)` (UniqueModule.pm:2803). Both forms prefix the message with `<module_name>@<instance_path>` and delegate to `genesispy.reporting`. `self.error(msg)` raises `GenesisPyError` (fatal); `self.warning(msg)` returns normally after writing to stderr.
 - **`ununique_inst` / `generate_base`** -- preserves the bare base name on first call (matches Perl `UnUniquifiedModules`, UniqueModule.pm:1610). A second call for the same base name with the same resolved params and the same scoped-override subtree aliases the first instance under the new instance name. Different resolved params raise `ElaborationError` with both param dicts (the emitted module name is global, so two distinct elaborations can't both keep the bare name). Differing scoped-override subtrees re-elaborate and compare the generated bodies, mirroring Perl's file comparison (UniqueModule.pm:1674): identical bodies alias, divergence raises.
 - **`synonym(...)` arity** -- the bare-name `synonym(...)` in `.vpy` bodies is an arity dispatcher: `synonym(name)` mirrors the current module's outfile under `name` (genesispy instance-level semantics); `synonym(src, trgt)` registers `trgt` as a class-level template synonym of `src` via `Manager.synonym_class` (Perl semantics). Perl supports only the 2-arg form; the 1-arg form is a genesispy extension.
 - **`sname`** -- mirrors Perl `get_source_name` (UniqueModule.pm:377): returns the source template name (`_synonym_for` set by `Manager.synonym_class` on a synonym-derived class, else the base module name == `bname`).
@@ -945,14 +946,6 @@ j2 equivalent) with no opener on the block stack. Causes:
 - An earlier close was already eaten by a parent block.
 - In j2 mode, a `{% %}` directive whose body strips to exactly `endfor` / `endif` / `endwhile` is always treated as a block close, even if you intended it as a Python expression.
 
-### "ElaborationError: parameter X overridden after register"
-
-A `parameter('X', default)` call ran *after* the same name had been
-set via the override path (CLI `--parameter`, JSON config, parent
-kwargs). Restructure the `.vpy` body so all `parameter()` reads happen
-before any computation that depends on them; or use
-`parameter(..., force=True)` if you intend to lock the value.
-
 ### Tracebacks point at `<gen>.py` line numbers
 
 `template/runtime.py` maintains a `LINE_MAP` that rewrites
@@ -990,8 +983,7 @@ by passing `--log /dev/null`.
 
 ### Debug flags
 
-- `--debug 1` -- enable per-phase progress messages.
-- `--debug 2` -- include traceback context on caught errors.
+- `--debug 1` -- enable per-phase progress messages (the only implemented level).
 - `--log FILE` -- tee errors and warnings to `FILE` in addition to stderr.
 
 ## 15. Behind the curtain
@@ -1109,8 +1101,10 @@ collisions:
 A trailing `}}` in plain text needs no escape -- only `{{` opens an
 expression.
 
-Each ported demo carries a j2 twin source tree under
-`demos/<demo>/genesis_src.j2/` (the gvpy demo carries
+Four of the six Genesis2-derived demos carry a j2 twin source tree under
+`demos/<demo>/genesis_src.j2/` (`regfile`, `iterative_wallace_tree`,
+`many_iterative_wallace_trees`, `random_logic`; `logmult` and `qarith` do
+not). The gvpy demo carries
 `demos/gvpy/example.j2.vpy`), elaborated via `make gen-j2`. Outputs
 land in a parallel `genesis_synth.j2/` directory so the default
 `make gen` flow is untouched.

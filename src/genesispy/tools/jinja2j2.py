@@ -325,6 +325,17 @@ class _ExprRewriter:
         return result
 
 
+def _parse_for_head(env, kw_rest: str):
+    """Parse the head of a for statement and return a jinja2.nodes.For node.
+
+    Raises jinja2.TemplateSyntaxError when ``kw_rest`` is not valid Jinja2
+    for-loop syntax (e.g. already-converted output fed back in, or a
+    ``recursive`` loop modifier).
+    """
+    template = env.parse("{% for " + kw_rest + " %}{% endfor %}")
+    return template.body[0]
+
+
 def _parse_expr(env, source: str, lineno: int):
     """Parse a Jinja2 expression string and return its AST node."""
     # Wrap in a synthetic variable block so we can use env.parse, then peel
@@ -408,19 +419,23 @@ _INCLUDE_LITERAL_RE = re.compile(
 
 
 def _rewrite_stmt_span(env, span: str, *, strict: bool, issues: List[Issue],
-                       lineno: int) -> str:
+                       lineno: int, block_stack: List[str]) -> str:
     _, lws, body, rws, _ = _strip_block_delims(span)
     body_stripped = body.strip()
 
-    # Closers pass through.
+    # Closers pass through; pop the corresponding opener from the stack.
     first = body_stripped.split(None, 1)[0] if body_stripped else ""
     if first in _CLOSERS:
+        if block_stack:
+            block_stack.pop()
         return "{%" + lws + " " + body_stripped + " " + rws + "%}"
 
-    # Sentinel-comment closers (`# endfor` etc.) pass through.
+    # Sentinel-comment closers (`# endfor` etc.) pass through; also pop.
     if body_stripped.startswith("#"):
         sentinel = body_stripped.lstrip("#").strip()
         if sentinel in _CLOSERS:
+            if block_stack:
+                block_stack.pop()
             return "{%" + lws + " # " + sentinel + " " + rws + "%}"
         return "{%" + lws + " " + body_stripped + " " + rws + "%}"
 
@@ -461,27 +476,63 @@ def _rewrite_stmt_span(env, span: str, *, strict: bool, issues: List[Issue],
     # Block openers: ensure trailing colon, rewrite expression part.
     if first in _OPENERS:
         if first == "else":
-            return "{%" + lws + " else: " + rws + "%}"
-        # for/if/elif/while EXPR  (already-trailing colon stripped)
-        kw_rest = body_stripped[len(first):].strip()
-        if kw_rest.endswith(":"):
-            kw_rest = kw_rest[:-1].rstrip()
-        if first == "for":
-            # for TARGET in ITER
-            if " in " not in kw_rest:
-                reason = "malformed 'for' (no 'in')"
+            # else under for/while has Jinja2 semantics (runs only when the
+            # iterable was empty) that differ from Python for-else (runs
+            # whenever the loop wasn't break-ed).  Route to TODO/strict.
+            top = block_stack[-1] if block_stack else "if"
+            if top in ("for", "while"):
+                reason = (
+                    "Jinja2 for-else runs only when the iterable is empty; "
+                    "Python for-else differs -- rewrite manually"
+                )
                 if strict:
                     raise _Unmappable(reason, line=lineno)
                 issues.append(Issue(lineno, 0, reason))
                 return f"{{# TODO(genesispy-jinja2j2): {reason} -- original: {span} #}}"
-            target, iter_src = kw_rest.split(" in ", 1)
-            iter_py = _rewrite_expr(env, iter_src, strict=strict,
-                                    issues=issues, lineno=lineno)
-            return ("{%" + lws + " for " + target.strip() + " in " +
-                    iter_py + ": " + rws + "%}")
-        # if / elif / while
+            # else under if (or empty stack — preserve current behavior)
+            return "{%" + lws + " else: " + rws + "%}"
+        # elif does not change the stack depth
+        if first == "elif":
+            kw_rest = body_stripped[len(first):].strip()
+            if kw_rest.endswith(":"):
+                kw_rest = kw_rest[:-1].rstrip()
+            cond_py = _rewrite_expr(env, kw_rest, strict=strict, issues=issues,
+                                    lineno=lineno)
+            return "{%" + lws + " elif " + cond_py + ": " + rws + "%}"
+        # for/if/while EXPR  (already-trailing colon stripped); push opener.
+        kw_rest = body_stripped[len(first):].strip()
+        if kw_rest.endswith(":"):
+            kw_rest = kw_rest[:-1].rstrip()
+        if first == "for":
+            try:
+                for_node = _parse_for_head(env, kw_rest)
+            except jinja2.TemplateSyntaxError as exc:
+                reason = f"cannot parse 'for' head: {exc.message}"
+                if strict:
+                    raise _Unmappable(reason, line=lineno) from exc
+                issues.append(Issue(lineno, 0, reason))
+                return f"{{# TODO(genesispy-jinja2j2): {reason} -- original: {span} #}}"
+            if for_node.recursive:
+                reason = "recursive 'for' loop has no genesispy-j2 equivalent"
+                if strict:
+                    raise _Unmappable(reason, line=lineno)
+                issues.append(Issue(lineno, 0, reason))
+                return f"{{# TODO(genesispy-jinja2j2): {reason} -- original: {span} #}}"
+            rw = _ExprRewriter(strict=strict, issues=issues, lineno=lineno)
+            target_py = rw.visit(for_node.target)
+            iter_py = rw.visit(for_node.iter)
+            block_stack.append("for")
+            if for_node.test is None:
+                return ("{%" + lws + " for " + target_py + " in " +
+                        iter_py + ": " + rws + "%}")
+            test_py = rw.visit(for_node.test)
+            genexp = f"({target_py} for {target_py} in {iter_py} if {test_py})"
+            return ("{%" + lws + " for " + target_py + " in " +
+                    genexp + ": " + rws + "%}")
+        # if / while
         cond_py = _rewrite_expr(env, kw_rest, strict=strict, issues=issues,
                                 lineno=lineno)
+        block_stack.append(first)
         return "{%" + lws + " " + first + " " + cond_py + ": " + rws + "%}"
 
     # Anything else: pass through verbatim. genesispy-j2 statements are full
@@ -516,6 +567,7 @@ def convert(source: str, *, strict: bool = True
 
     issues: List[Issue] = []
     out: List[str] = []
+    block_stack: List[str] = []
     last = 0
     for m in _SPAN_RE.finditer(source):
         out.append(source[last:m.start()])
@@ -526,7 +578,8 @@ def convert(source: str, *, strict: bool = True
         elif m.group("stmt") is not None:
             out.append(_rewrite_stmt_span(env, m.group("stmt"),
                                           strict=strict, issues=issues,
-                                          lineno=lineno))
+                                          lineno=lineno,
+                                          block_stack=block_stack))
         else:  # var
             out.append(_rewrite_var_span(env, m.group("var"),
                                          strict=strict, issues=issues,

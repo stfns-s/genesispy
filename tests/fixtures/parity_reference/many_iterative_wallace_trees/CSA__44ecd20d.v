@@ -1,0 +1,1 @@
+module CSA__U18 ( input logic [127:0] a,b,c, output logic[127:0] s, co); assign s = a ^ b ^c; assign co = a&b | b&c | a&c; endmodule

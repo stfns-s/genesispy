@@ -14,11 +14,15 @@ and omitted here.
 genesispy canonicalises the parameter dict to JSON (sorted keys, fixed encoding) and hashes it with SHA-256.
 Genesis2 used Perl `Data::Dumper` output hashed with `Digest::SHA`.
 
-The hashes are stable across Python runs and across hosts, but they are **not bit-equal** to the Perl ones.
-Generated unique-module names (`Foo_<hash>`) therefore differ digit-for-digit between the two implementations,
-which propagates to filenames, instance names, and the module list. The parity test suite handles this with a
-name-normaliser that maps Perl uniques to Python uniques by structural position before diffing the emitted
-Verilog.
+The SHA-256 is used as a cache key, not as a visible name component.
+Generated unique-module names differ in format between the two implementations:
+- `unique_inst` (numeric style): `Foo_unq1`, `Foo_unq2`, ...
+- `unique_inst_param` (param style): `Foo_KEY_VAL[_KEY_VAL...]`; non-word values use a short-digest
+  pair (`KEY_<8hexchars>`); on scoped-override paths a `_unqN` counter is appended.
+
+These differ from the Perl `Foo_<sha>` format, which propagates to filenames, instance names, and the
+module list. The parity test suite handles this with a name-normaliser that maps Perl uniques to Python
+uniques by structural position before diffing the emitted Verilog.
 
 ## 2. XML configs are no longer accepted by the core CLI
 

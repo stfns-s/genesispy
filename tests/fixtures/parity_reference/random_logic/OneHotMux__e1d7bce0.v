@@ -1,1 +1,0 @@
-module OneHotMux__U ( input logic [9:0] in [1:0], input logic [1:0] sel, output logic [9:0] out ); always_comb begin out = in[0]; unique case (1'b1) sel[0]: out = in [0]; sel[1]: out = in [1]; endcase assert ($onehot(sel)) else $error("select is not one hot"); end endmodule

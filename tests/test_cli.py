@@ -338,6 +338,35 @@ def test_inputlist_symlink_cycle(tmp_path):
         parse_args(["--input-list", str(link)])
 
 
+def test_inputlist_diamond(tmp_path):
+    # A includes B and C; B and C both include D; D lists d.vpy.
+    # This is a diamond, not a cycle — must succeed with d.vpy exactly once.
+    d_vpy = tmp_path / "d.vpy"
+    d_vpy.write_text("")
+    d = tmp_path / "d.list"
+    d.write_text(f"{d_vpy}\n")
+    b = tmp_path / "b.list"
+    b.write_text(f"--input-list {d}\n")
+    c = tmp_path / "c.list"
+    c.write_text(f"--input-list {d}\n")
+    a = tmp_path / "a.list"
+    a.write_text(f"--input-list {b}\n--input-list {c}\n")
+    ns = parse_args(["--input-list", str(a)])
+    assert ns.input.count(str(d_vpy)) == 1
+
+
+def test_inputlist_repeated_sibling(tmp_path):
+    # The same sub-list referenced twice from one listfile is skipped silently.
+    d_vpy = tmp_path / "d.vpy"
+    d_vpy.write_text("")
+    d = tmp_path / "d.list"
+    d.write_text(f"{d_vpy}\n")
+    a = tmp_path / "a.list"
+    a.write_text(f"--input-list {d}\n--input-list {d}\n")
+    ns = parse_args(["--input-list", str(a)])
+    assert ns.input.count(str(d_vpy)) == 1
+
+
 def test_inputlist_missing_file(tmp_path):
     with pytest.raises(SystemExit):
         parse_args(["--input-list", str(tmp_path / "does_not_exist.list")])
@@ -349,6 +378,19 @@ def test_inputlist_empty_warns(tmp_path, capsys):
     parse_args(["--input-list", str(lf)])
     captured = capsys.readouterr()
     assert "contributed no inputs" in captured.err
+
+
+def test_inputlist_empty_skipped_no_warn(tmp_path, capsys):
+    # An empty listfile referenced a second time (already processed) must NOT
+    # trigger the empty-list warning for the skipped occurrence.
+    lf = tmp_path / "empty.list"
+    lf.write_text("# only a comment\n\n")
+    # Pass the same empty listfile twice via --input-list.
+    parse_args(["--input-list", str(lf), "--input-list", str(lf)])
+    captured = capsys.readouterr()
+    # Warning fires exactly once for the first occurrence; the skip path
+    # must not produce a second occurrence.
+    assert captured.err.count("contributed no inputs") == 1
 
 
 def test_inputlist_duplicate_warns(tmp_path, capsys):

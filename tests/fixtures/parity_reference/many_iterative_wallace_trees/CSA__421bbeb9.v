@@ -1,0 +1,1 @@
+module CSA__U23 ( input logic [133:0] a,b,c, output logic[133:0] s, co); assign s = a ^ b ^c; assign co = a&b | b&c | a&c; endmodule

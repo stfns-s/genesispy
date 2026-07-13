@@ -172,3 +172,71 @@ def test_param_range_redefinition_raises() -> None:
     inst.parameter("WIDTH", 5, min=0, max=10)
     with pytest.raises(ParameterError, match="Re-definition of range"):
         inst.param_range("WIDTH", min=0, max=20)
+
+
+# ------------------------------------------------ F3: Perl range/step rules
+
+
+def test_step_without_min_or_max_raises() -> None:
+    """Rule 1: step requires min or max."""
+    inst = _Mod(StubManager())
+    with pytest.raises(ParameterError, match="Step.*Min.*Max|Min.*Max.*Step"):
+        inst.parameter("X", 4, step=2)
+
+
+def test_step_zero_raises() -> None:
+    """Rule 2: step == 0 is illegal."""
+    inst = _Mod(StubManager())
+    with pytest.raises(ParameterError, match="[Ss]tep.*zero|zero.*[Ss]tep"):
+        inst.parameter("X", 4, min=0, step=0)
+
+
+def test_min_greater_than_max_raises() -> None:
+    """Rule 3: min must be <= max."""
+    inst = _Mod(StubManager())
+    with pytest.raises(ParameterError, match="[Mm]in.*[Mm]ax|[Mm]ax.*[Mm]in"):
+        inst.parameter("X", 4, min=10, max=5)
+
+
+def test_max_min_not_integer_multiple_of_step_raises() -> None:
+    """Rule 4: (max - min) must be an integer multiple of step."""
+    inst = _Mod(StubManager())
+    with pytest.raises(ParameterError, match="[Ss]tep|integer"):
+        inst.parameter("X", 2, min=0, max=10, step=3)
+
+
+def test_value_off_step_grid_from_min_raises() -> None:
+    """Rule 5a: value must be on step grid anchored at min."""
+    inst = _Mod(StubManager())
+    with pytest.raises(ParameterError, match="[Ss]tep"):
+        inst.parameter("X", 3, min=0, max=8, step=2)
+
+
+def test_value_off_step_grid_from_max_only_raises() -> None:
+    """Rule 5b: value must be on step grid anchored at max when only max defined."""
+    inst = _Mod(StubManager())
+    with pytest.raises(ParameterError, match="[Ss]tep"):
+        inst.parameter("X", 3, max=8, step=2)
+
+
+def test_valid_stepped_value_passes() -> None:
+    """Rule 5: value on step grid passes."""
+    inst = _Mod(StubManager())
+    val = inst.parameter("X", 6, min=0, max=8, step=2)
+    assert val == 6
+
+
+def test_parameter_range_redefinition_via_parameter_raises() -> None:
+    """Rule 6: calling parameter() with range kwargs when range already set raises."""
+    inst = _Mod(StubManager())
+    inst.parameter("WIDTH", 5, min=0, max=10)
+    with pytest.raises(ParameterError, match="Re-definition of range"):
+        inst.parameter("WIDTH", 5, min=0, max=20)
+
+
+def test_param_range_after_parameter_min_raises() -> None:
+    """param_range after parameter(..., min=...) already raises (existing guard)."""
+    inst = _Mod(StubManager())
+    inst.parameter("WIDTH", 5, min=0, max=10)
+    with pytest.raises(ParameterError, match="Re-definition of range"):
+        inst.param_range("WIDTH", min=0, max=10)

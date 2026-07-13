@@ -1,4 +1,4 @@
-"""Genesis2 (Perl) ``.vp`` / ``.vph`` -> genesispy (Python) ``.vpy`` translator.
+"""Genesis2 (Perl) ``.vp`` / ``.vph`` / ``.svp`` / ``.svph`` -> genesispy (Python) ``.vpy`` / ``.svpy`` translator.
 
 Source-to-source translator that takes a Perl-templated Verilog file (the
 Genesis2 input format) and emits a Python-templated Verilog file (the
@@ -620,27 +620,28 @@ def render_expr(children: list[dict], ctx: WalkCtx) -> str:
             pyflags = _regex_flags_to_python(flags)
             fl = f", {pyflags}" if pyflags else ""
             if v == "=~":
-                rendered.append(f'(re.search(r"{body}", {left}{fl}) is not None)')
+                rendered.append(f'(re.search({body!r}, {left}{fl}) is not None)')
             else:
-                rendered.append(f'(re.search(r"{body}", {left}{fl}) is None)')
+                rendered.append(f'(re.search({body!r}, {left}{fl}) is None)')
             i += 2
             continue
         # Fat comma -> keyword arg. Caller (render_call) handles it.
-        # Range operator: NUM .. NUM -> range(start, end+1)
+        # Range operator: lo .. hi -> range(lo, hi+1)
+        # Perl's `..` binds looser than arithmetic, so everything after `..`
+        # belongs to the right operand: `0..$N-1` means `0..($N-1)`.
+        # Consume all remaining tokens as the right-hand expression.
         if (
             t == "Token::Operator" and v in ("..", "...")
             and rendered and isinstance(rendered[-1], str)
             and i + 1 < len(children)
         ):
             left = rendered.pop()
-            right_node = children[i + 1]
-            right = render_token_or_node(right_node, ctx)
+            right = render_expr(children[i + 1:], ctx)
             if v == "..":
                 rendered.append(f"range({left}, ({right}) + 1)")
             else:
                 rendered.append(f"range({left}, {right})")
-            i += 2
-            continue
+            break
         # Arrow deref: $obj->{key} / $obj->[idx] / $obj->method(...)
         if t == "Token::Operator" and v == "->":
             # Look ahead: next child is Structure (Subscript), List, or Word.
@@ -692,8 +693,8 @@ def render_expr(children: list[dict], ctx: WalkCtx) -> str:
         # Unary built-in without parens: ``defined $x``, ``scalar @a``, etc.
         if (
             t == "Token::Word"
-            and v in ("defined", "exists", "scalar", "length", "keys", "values",
-                      "int", "abs", "ref", "lc", "uc")
+            and v in ("defined", "exists", "delete", "scalar", "length", "keys", "values",
+                      "chomp", "int", "abs", "ref", "lc", "uc")
             and i + 1 < len(children)
             and children[i + 1]["t"] in ("Token::Symbol", "Token::Cast",
                                           "Structure::Subscript")
@@ -731,6 +732,11 @@ def render_expr(children: list[dict], ctx: WalkCtx) -> str:
             try:
                 rendered.append(render_builtin(v, synthetic, ctx))
             except Unmappable:
+                # exists/delete must not silently emit invalid Python;
+                # re-raise so the unmappable chokepoint can handle it.
+                # (ref shares this latent fallback but is out of scope here.)
+                if v in ("exists", "delete"):
+                    raise
                 rendered.append(f"{v}({operand})")
             i = j
             continue
@@ -796,6 +802,22 @@ def render_list(n: dict, ctx: WalkCtx) -> str:
     return "(" + ", ".join(rendered) + ")"
 
 
+def _render_pairs_as_dict(items: list[list[dict]], ctx: WalkCtx) -> str:
+    """Render a list of ``key => value`` items as a Python dict literal.
+
+    Every item must contain a top-level ``=>``.  Raises ``Unmappable`` (via
+    ``split_fat_comma``) on any item that does not.
+    """
+    has_fat = [any(_is_op(c, "=>") for c in item) for item in items]
+    if not all(has_fat):
+        raise Unmappable("mixed fat-comma / non-fat-comma list in hash literal")
+    rendered = []
+    for item in items:
+        k, v = split_fat_comma(item)
+        rendered.append(f"{render_dict_key(k, ctx)}: {render_expr(v, ctx)}")
+    return "{" + ", ".join(rendered) + "}"
+
+
 def render_constructor(n: dict, ctx: WalkCtx) -> str:
     """``[1,2,3]`` -> list literal; ``{a => 1}`` -> dict literal."""
     inner = _inner_statement(n)
@@ -805,11 +827,7 @@ def render_constructor(n: dict, ctx: WalkCtx) -> str:
     # Distinguish dict vs list: dict iff items contain top-level ``=>``.
     is_dict = any(any(_is_op(c, "=>") for c in item) for item in inner_items)
     if is_dict:
-        rendered = []
-        for item in inner_items:
-            k, v = split_fat_comma(item)
-            rendered.append(f"{render_dict_key(k, ctx)}: {render_expr(v, ctx)}")
-        return "{" + ", ".join(rendered) + "}"
+        return _render_pairs_as_dict(inner_items, ctx)
     rendered = [render_expr(it, ctx) for it in inner_items]
     # If braces -> set? Perl doesn't have set literals; treat as anon hash if
     # empty pair or list otherwise. Default: list.
@@ -904,6 +922,40 @@ def render_call_args(
     return ", ".join(parts)
 
 
+def _split_container_key(args_list: dict, ctx: WalkCtx) -> tuple[str, str] | None:
+    """Try to split a hash-subscript argument into (container_expr, key_expr).
+
+    Returns (container, key) if the single argument ends with a
+    Structure::Subscript node; None otherwise.
+
+    Templates cannot express this split because it requires token-structure
+    access and ctx side-effects (sigil stripping, import injection) that
+    only the if-chain in render_builtin can handle.
+    """
+    inner = _inner_statement(args_list)
+    if inner is None:
+        return None
+    items = split_top_level_commas(_significant_children(inner))
+    if len(items) != 1:
+        return None
+    tokens = items[0]
+    if not tokens or tokens[-1]["t"] != "Structure::Subscript":
+        return None
+    subscript = tokens[-1]
+    container_tokens = tokens[:-1]
+    if not container_tokens:
+        return None
+    container = render_expr(container_tokens, ctx)
+    # Extract the key from the subscript: bareword -> repr; otherwise render.
+    sub_inner = _inner_statement(subscript)
+    sub_items = _significant_children(sub_inner) if sub_inner else []
+    if len(sub_items) == 1 and sub_items[0]["t"] == "Token::Word":
+        key = repr(sub_items[0]["v"])
+    else:
+        key = render_expr(sub_items, ctx)
+    return container, key
+
+
 def render_builtin(name: str, args_list: dict, ctx: WalkCtx) -> str:
     tmpl = M.BUILTIN_MAP[name]
     if tmpl is None:
@@ -929,9 +981,23 @@ def render_builtin(name: str, args_list: dict, ctx: WalkCtx) -> str:
         ctx.imports.add("sys")
         return f"print({', '.join(rendered)}, file=sys.stderr)"
     if name == "push":
-        return f"{rendered[0]}.append({', '.join(rendered[1:])})"
+        if len(rendered) < 1:
+            raise Unmappable("push with no array")
+        vals = rendered[1:]
+        if len(vals) == 0:
+            raise Unmappable("push with no values")
+        if len(vals) == 1:
+            return f"{rendered[0]}.append({vals[0]})"
+        return f"{rendered[0]}.extend([{', '.join(vals)}])"
     if name == "unshift":
-        return f"{rendered[0]}.insert(0, {', '.join(rendered[1:])})"
+        if len(rendered) < 1:
+            raise Unmappable("unshift with no array")
+        vals = rendered[1:]
+        if len(vals) == 0:
+            raise Unmappable("unshift with no values")
+        if len(vals) == 1:
+            return f"{rendered[0]}.insert(0, {vals[0]})"
+        return f"{rendered[0]}[0:0] = [{', '.join(vals)}]"
     if name == "pop":
         return f"{rendered[0]}.pop()"
     if name == "shift":
@@ -963,12 +1029,24 @@ def render_builtin(name: str, args_list: dict, ctx: WalkCtx) -> str:
     if name == "print":
         return f"print({', '.join(rendered)})"
     if name == "exists":
-        # exists $h{k} -- but here args have been parsed.
-        if len(rendered) == 1:
-            # Probably came as exists($h{k}); we don't have easy access to the
-            # split. Best-effort: passthrough.
+        pair = _split_container_key(args_list, ctx)
+        if pair is None:
             raise Unmappable("exists() with non-trivial arg")
-        return f"({rendered[1]} in {rendered[0]})"
+        container, key = pair
+        return f"({key} in {container})"
+    if name == "delete":
+        pair = _split_container_key(args_list, ctx)
+        if pair is None:
+            raise Unmappable("delete() with non-subscript arg")
+        container, key = pair
+        return f"{container}.pop({key}, None)"
+    if name == "chomp":
+        # Statement-position only in practice; nested-expression use
+        # produces syntactically broken Python but is vanishingly rare.
+        if not rendered:
+            raise Unmappable("chomp with no argument")
+        arg = rendered[0]
+        return f"{arg} = ({arg}).rstrip('\\n')"
     raise Unmappable(f"builtin {name!r}")
 
 
@@ -1162,6 +1240,30 @@ def _translate_variable(n: dict, ctx: WalkCtx) -> StatementResult:
     lhs_sigil = ""
     if children and children[0]["t"] == "Token::Symbol":
         lhs_sigil = children[0]["v"][:1]
+    # ``%h = (k => v, ...)`` with a Structure::List RHS: work on AST nodes so
+    # fat-comma pairs become a proper dict literal rather than dict(k => v).
+    if (
+        lhs_sigil == "%"
+        and len(children) == 3
+        and children[1].get("t") == "Token::Operator"
+        and children[1].get("v") == "="
+        and children[2]["t"] == "Structure::List"
+    ):
+        var_name = _strip_sigil(children[0]["v"])
+        list_node = children[2]
+        inner = _inner_statement(list_node)
+        if inner is None:
+            # Empty hash ``%h = ()``.
+            return StatementResult(lines=[f"{var_name} = dict([])"])
+        items = split_top_level_commas(_significant_children(inner))
+        has_fat = [any(_is_op(c, "=>") for c in item) for item in items]
+        if all(has_fat):
+            return StatementResult(lines=[f"{var_name} = {_render_pairs_as_dict(items, ctx)}"])
+        if not any(has_fat):
+            # Flat k,v,k,v list: keep existing dict([...]) path.
+            body = ", ".join(render_expr(it, ctx) for it in items)
+            return StatementResult(lines=[f"{var_name} = dict([{body}])"])
+        raise Unmappable("mixed fat-comma / non-fat-comma list in hash literal")
     expr = render_expr(children, ctx)
     # `@arr = (1, 2, 3)` -> `arr = [1, 2, 3]`; `%h = (k => v)` -> dict literal.
     if lhs_sigil in ("@", "%") and "=" in expr:
@@ -1586,43 +1688,6 @@ def translate_backtick_expr(perl_src: str, helper: Helper, ctx: WalkCtx) -> str:
     return ""
 
 
-def translate_verilog_line(line: str, helper: Helper, ctx: WalkCtx,
-                           todos: list[str], src_line: int) -> str:
-    """Translate backtick spans inside a Verilog body line.
-
-    Lines that look like Verilog compiler directives (``\\`timescale``,
-    ``\\`define``, ``\\`include`` etc. -- a backtick followed by an
-    identifier with no matching close) are passed through with the leading
-    backtick backslash-escaped, so the genesispy parser treats it as
-    literal text.
-    """
-    # First, count unescaped backticks in the *original* line. If odd, the
-    # line has at least one lone backtick (typically a Verilog directive).
-    stripped = re.sub(r"\\.", "", line)  # remove escaped chars
-    n_ticks = stripped.count("`")
-    if n_ticks % 2 == 1:
-        # Find the first unescaped lone backtick (one with no matching close
-        # later in the line) and escape just that one.
-        # Simple heuristic: a leading ``\\`<word>`` directive.
-        m = re.match(r"^(\s*)`([A-Za-z_]\w*)", line)
-        if m:
-            line = m.group(1) + "\\`" + m.group(2) + line[m.end():]
-    out = []
-    last = 0
-    for m in BACKTICK_RE.finditer(line):
-        out.append(line[last:m.start()])
-        body = m.group(1)
-        try:
-            py = translate_backtick_expr(body, helper, ctx)
-            out.append(f"`{py}`")
-        except Unmappable as e:
-            todos.append(f"line {src_line}: backtick `{body}`: {e}")
-            out.append(m.group(0))
-        last = m.end()
-    out.append(line[last:])
-    return "".join(out)
-
-
 # Brace-shape patterns: open/close detection for line-by-line block tracking.
 _BLOCK_OPEN_END = re.compile(r"\{\s*$")
 _BLOCK_CLOSE_START = re.compile(r"^\s*\}")
@@ -1679,7 +1744,7 @@ class FileTranslator:
         # Closer alone: ``}`` -> pop, emit endX.
         if perl_no_cmt == "}":
             if not self.stack:
-                self._emit_todo(out, rec.line_no, "stray `}`", perl)
+                self._handle_unmappable(out, rec.line_no, "stray `}`", perl)
                 return
             top = self.stack.pop()
             sentinel = self._sentinel_for(top.kind)
@@ -1690,7 +1755,7 @@ class FileTranslator:
         chain = _line_chain(perl)
         if chain:
             if not self.stack:
-                self._emit_todo(out, rec.line_no, "stray `} elsif/else`", perl)
+                self._handle_unmappable(out, rec.line_no, "stray `} elsif/else`", perl)
                 return
             # Pop the current branch's indent; same `if` chain continues.
             self.stack.pop()
@@ -1707,7 +1772,7 @@ class FileTranslator:
                     out.append(f"//; {self._indent_dir()}else:")
                 self.stack.append(_BlockState("if", rec.line_no))
             except Unmappable as e:
-                self._emit_todo(out, rec.line_no, str(e), perl)
+                self._handle_unmappable(out, rec.line_no, str(e), perl)
             return
         # Opener: ``KEYWORD (...) {`` at end.
         if _line_opens_block(perl):
@@ -1719,7 +1784,7 @@ class FileTranslator:
                     out.append(f"//; {self._indent_dir()}{line}")
                 self.stack.append(_BlockState(kind, rec.line_no))
             except Unmappable as e:
-                self._emit_todo(out, rec.line_no, str(e), perl)
+                self._handle_unmappable(out, rec.line_no, str(e), perl)
             return
         # Plain statement.
         try:
@@ -1730,9 +1795,9 @@ class FileTranslator:
             for line in py_lines:
                 out.append(f"//; {self._indent_dir()}{line}")
         except Unmappable as e:
-            self._emit_todo(out, rec.line_no, str(e), perl)
+            self._handle_unmappable(out, rec.line_no, str(e), perl)
 
-    def _emit_todo(self, out: list[str], src_line: int, reason: str, perl: str) -> None:
+    def _handle_unmappable(self, out: list[str], src_line: int, reason: str, perl: str) -> None:
         msg = f"line {src_line}: {reason}: {perl!r}"
         self.todos.append(msg)
         if self.strict:
@@ -1802,17 +1867,70 @@ class FileTranslator:
             for line in py_lines:
                 out.append(f"//; {self._indent_dir()}{line}")
         except Unmappable as e:
-            self._emit_todo(out, rec.line_no, str(e), perl)
+            self._handle_unmappable(out, rec.line_no, str(e), perl)
+
+    def _handle_verilog(self, rec: Record, out: list[str]) -> None:
+        """Translate backtick spans inside a Verilog body line.
+
+        Lines that look like Verilog compiler directives (``\\`timescale``,
+        ``\\`define``, ``\\`include`` etc. -- a backtick followed by an
+        identifier with no matching close) are passed through with the leading
+        backtick backslash-escaped, so the genesispy parser treats it as
+        literal text.
+
+        For any backtick span that cannot be translated: call
+        _handle_unmappable (records todo, raises in strict mode, emits marker
+        in best-effort mode) then splice the failed span back with an escaped
+        backtick so the output still passes parse_vpy.
+        """
+        line = rec.text
+        # Escape lone compiler directives so the genesispy parser sees literal
+        # text rather than an unterminated expression.  A lone backtick is one
+        # that leaves the total unescaped count odd.  We look for unescaped
+        # backticks followed by [A-Za-z_] whose line prefix is either all
+        # whitespace (line-start directive) or contains a // comment start
+        # (comment-prefixed directive, e.g. `// \`include "foo.v"`).
+        # Loop: a single pass may not be enough when both a comment-prefixed
+        # directive and a real paired span appear on the same line.
+        # Even-count pathological comments (e.g. `// \`A or \`B`) are out of
+        # reach of this rule; they surface via the B13 chokepoint instead.
+        _LONE_DIR_RE = re.compile(r"^(.*?)`([A-Za-z_])")
+        while True:
+            stripped = re.sub(r"\\.", "", line)
+            if stripped.count("`") % 2 == 0:
+                break
+            m = _LONE_DIR_RE.search(line)
+            if not m:
+                break
+            prefix = m.group(1)
+            # Accept only: all-whitespace prefix, or prefix containing "//".
+            if not (prefix.strip() == "" or "//" in prefix):
+                break
+            line = prefix + "\\`" + m.group(2) + line[m.end():]
+        result_parts: list[str] = []
+        last = 0
+        for m in BACKTICK_RE.finditer(line):
+            result_parts.append(line[last:m.start()])
+            body = m.group(1)
+            try:
+                py = translate_backtick_expr(body, self.helper, self.ctx)
+                result_parts.append(f"`{py}`")
+            except Unmappable as e:
+                # Emit the TODO marker lines before the Verilog line, then
+                # splice the failed span back with escaped backticks so the
+                # output still parses.
+                self._handle_unmappable(out, rec.line_no, f"backtick expr: {e}", body)
+                result_parts.append(f"\\`{body}\\`")
+            last = m.end()
+        result_parts.append(line[last:])
+        out.append("".join(result_parts))
 
     def translate(self, source: str) -> TranslationResult:
         records = _merge_continuations(classify(source))
         out: list[str] = []
         for rec in records:
             if rec.kind == "verilog":
-                line = translate_verilog_line(
-                    rec.text, self.helper, self.ctx, self.todos, rec.line_no
-                )
-                out.append(line)
+                self._handle_verilog(rec, out)
             elif rec.kind == "directive":
                 self._handle_directive(rec, out)
             elif rec.kind == "block":
@@ -1838,7 +1956,7 @@ class FileTranslator:
 # CLI.
 # ---------------------------------------------------------------------------
 
-DEFAULT_EXT_MAP = {".vp": ".vpy", ".vph": ".vpy"}
+DEFAULT_EXT_MAP = {".vp": ".vpy", ".vph": ".vpy", ".svp": ".svpy", ".svph": ".svpy"}
 
 
 def translate_file(src: Path, dst: Path, helper: Helper, strict: bool) -> TranslationResult:
@@ -1874,11 +1992,11 @@ def _dst_for(src: Path, root: Path | None, out: Path | None) -> Path:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="genesispy-vp2vpy",
-        description="Translate Genesis2 (Perl) .vp/.vph templates to "
-                    "genesispy (Python) .vpy.",
+        description="Translate Genesis2 (Perl) .vp/.vph/.svp/.svph templates to "
+                    "genesispy (Python) .vpy/.svpy.",
     )
     p.add_argument("inputs", nargs="+", type=Path,
-                   help="input .vp/.vph file(s) or directory")
+                   help="input .vp/.vph/.svp/.svph file(s) or directory")
     p.add_argument("-o", "--out-dir", type=Path, default=None,
                    help="write translated files into this directory; "
                         "default: sibling to each input")

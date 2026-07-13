@@ -56,7 +56,7 @@ never imports frontend.
 - `tools/xml_json.py` -- standalone XML/JSON helper (not used by the elaboration core; invoked by
   `bin/genesispy-xml2json` / `bin/genesispy-json2xml`).
 - `output_writer.py` -- flush cache to disk, write `.vlist` / `.depend` / `genesispy_clean.sh`.
-- `errors.py` -- exception hierarchy and `error()` / `warning()` reporters.
+- `reporting.py` -- exception hierarchy and `error()` / `warning()` reporters.
 
 The `template/` directory is a separate package because its job is the
 input-syntax frontend: a different input language (Jinja, native Python,
@@ -159,13 +159,21 @@ happens in `unique_module.py` / `user_lib.py` / `cache.py` / `config_handler.py`
 
 ## 5. Dedup model
 
-`cache.py` exposes three module-level singletons, reset between runs by `cache.clear_all()` (test-only):
+`cache.py` exposes seven module-level singletons, reset between runs by `cache.clear_all()` (test-only):
 
 - `MODULE_CACHE: Dict[str, UniqueModule]` -- `unique_name` -> elaborated instance.
 - `MODULE_NAME_NUM_DERIVS: Dict[str, int]` -- base name -> next derivative index (drives `Foo`, `Foo_unq1`,
   `Foo_unq2`, ...); advanced via `cache.next_derivation`.
 - `OUTFILE_CONTENT_CACHE: Dict[str, str]` -- emitted filename (`<unique_module_name><suffix>`) -> Verilog
   text. Flushed by `output_writer.flush_to_disk`.
+- `UNUNIQUE_REGISTRY: Dict[str, Dict]` -- base name -> ununique_inst call record; deduplication for
+  `ununique_inst` / `generate_base`.
+- `OUTFILE_TAGS: Dict[str, str]` -- filename -> `'synth' | 'verif' | 'synth_and_verif'`; built by
+  Manager before flush from a path-based DFS over the elaborated instance tree.
+- `OUTFILE_ORDER: List[str]` -- output filenames in DFS first-seen walk order; used by output_writer
+  to emit product lists in a consistent order matching Perl Manager.pm:1330-1395.
+- `INCLUDED_FILES: List[str]` -- resolved paths of `include()`'d template files; consumed by
+  `output_writer.write_file_lists` as the `.depend` prerequisite list.
 
 Cache keys come from `hashing.sha256_param_signature(module_name, params)` -- canonical-JSON SHA-256 hex
 digest, stable across Python runs (see [genesis2-incompatibilities.md](./genesis2-incompatibilities.md) §1
@@ -190,14 +198,14 @@ module at different paths therefore stay distinct when their descendants have di
 even before the descendants run. Implementation: `unique_module._scoped_subtree_signature`, mirroring
 Perl `UniqueModule.pm:415-440`.
 
-`unique_inst_param` uses a single stage: the resolved-name itself (`Foo_N8_W16`) is the cache key, so it
-needs no pre/post split.
+`unique_inst_param` uses a single stage: the cache key is
+`"<base>::param::<sha256-of-resolved-params>"` (plus `"::sub::<sha256>"` on scoped-override paths),
+so it needs no pre/post split. The resolved name (`Foo_N8_W16`) is the emitted module name, not the key.
 
 Variants:
 
 - `unique_inst` -- numeric suffix, two-stage dedup (above).
-- `unique_inst_param` -- single-stage; unique name encodes the parameter values (`Foo_N8_W16`), so the
-  resolved-name itself is the cache key.
+- `unique_inst_param` -- single-stage; cache key is `"<base>::param::<sha256>"` (not the resolved name).
 - `ununique_inst` / `generate_base` -- emits under the bare base name (no `_unqN`), deduped via
   `cache.UNUNIQUE_REGISTRY`: a second call with the same resolved params and scoped-override subtree
   aliases the first instance; different params raise; a different subtree re-elaborates under a temp

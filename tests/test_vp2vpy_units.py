@@ -12,11 +12,19 @@ Skipped when ``perl`` + ``PPI`` aren't available
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
+
 import pytest
 
 from genesispy.tools.vp2vpy import (
-    FileTranslator, Helper, translate_perl_snippet, translate_backtick_expr,
+    DEFAULT_EXT_MAP,
+    FileTranslator,
+    Helper,
     WalkCtx,
+    _dst_for,
+    _resolve_inputs,
+    translate_backtick_expr,
+    translate_perl_snippet,
 )
 
 
@@ -76,6 +84,9 @@ def _xlate_file(helper, source: str) -> str:
     ("$x--;",                             "x -= 1"),
     ("$x += 5;",                          "x += 5"),
     ("push @arr, 4;",                     "arr.append(4)"),
+    ("push @arr, 1, 2;",                  "arr.extend([1, 2])"),
+    ("unshift @arr, 4;",                  "arr.insert(0, 4)"),
+    ("unshift @arr, 1, 2;",               "arr[0:0] = [1, 2]"),
     ("pop @arr;",                         "arr.pop()"),
 ])
 def test_assignments_and_array_ops(helper, perl, want):
@@ -123,6 +134,26 @@ def test_foreach(helper):
     assert "# endfor" in out
 
 
+def test_foreach_range_with_arithmetic_rhs(helper):
+    # Perl `..` binds looser than arithmetic: `0..$N-1` means `0..($N-1)`.
+    # Wrong (pre-fix): `range(0, (N) + 1) - 1`  (stray subtraction outside call)
+    # Correct: the full `N - 1` expression is the upper bound inside range().
+    out = _xlate_file(helper, "//; foreach my $i (0..$N-1) {\nbody\n//; }\n")
+    assert "range(0, (N - 1) + 1)" in out
+
+
+def test_foreach_range_simple_regression(helper):
+    # `1..$N` — no arithmetic on rhs; must still work after the precedence fix.
+    out = _xlate_file(helper, "//; foreach my $i (1..$N) {\nbody\n//; }\n")
+    assert "range(1, (N) + 1)" in out
+
+
+def test_foreach_range_with_arithmetic_rhs_add(helper):
+    # `0..$N+2` — arithmetic on rhs, addition variant.
+    out = _xlate_file(helper, "//; foreach my $i (0..$N+2) {\nbody\n//; }\n")
+    assert "range(0, (N + 2) + 1)" in out
+
+
 def test_while(helper):
     out = _xlate_file(helper, "//; while ($i < 10) {\nbody\n//; }\n")
     assert "while i < 10:" in out
@@ -154,14 +185,37 @@ def test_postfix_if(helper):
 
 def test_regex_match(helper):
     got = _xlate_stmt(helper, 'if ($s =~ m/foo/i) { 1; }')
-    assert 're.search(r"foo"' in got
+    assert "re.search('foo'" in got
     assert "re.I" in got
 
 
 def test_regex_negative_match(helper):
     got = _xlate_stmt(helper, 'if ($s !~ /foo/) { 1; }')
-    assert 're.search(r"foo"' in got
+    assert "re.search('foo'" in got
     assert "is None" in got
+
+
+def test_regex_quote_in_pattern(helper):
+    # Pattern containing a double-quote: /^"/ must yield compilable Python.
+    got = _xlate_expr(helper, '$s =~ /^"/')
+    assert "re.search" in got
+    compile(got, "<t>", "eval")
+
+
+def test_regex_digit_pattern_regression(helper):
+    # \\d+ must survive repr and still match digits.
+    got = _xlate_expr(helper, r'$s =~ /\d+/')
+    assert "re.search" in got
+    compile(got, "<t>", "eval")
+    assert "\\d" in got
+
+
+def test_regex_not_match_compiles(helper):
+    # !~ branch must also yield compilable Python.
+    got = _xlate_expr(helper, '$s !~ /^"/')
+    assert "re.search" in got
+    assert "is None" in got
+    compile(got, "<t>", "eval")
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +381,51 @@ def test_verilog_directive_escaped(helper, verilog, want):
 
 
 # ---------------------------------------------------------------------------
+# F5: comment-prefixed compiler directives must have their backtick escaped.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("verilog,want", [
+    ('// `include "foo.v"\n',   "\\`include"),
+    ('wire w; // `FOO\n',       "\\`FOO"),
+])
+def test_comment_directive_escaped(helper, verilog, want):
+    """Backtick-prefixed directives after a // comment must be escaped (F5)."""
+    out = _xlate_file(helper, verilog)
+    assert want in out, f"want {want!r} in {out!r}"
+
+
+def test_comment_directive_zero_todos(helper):
+    """Escaping a comment-prefixed directive must not produce any TODO markers."""
+    result = FileTranslator(helper).translate('// `include "foo.v"\n')
+    assert result.todos == [], f"unexpected todos: {result.todos!r}"
+
+
+def test_comment_paired_backtick_not_escaped(helper):
+    """A paired backtick span in a comment must NOT be escaped (regression)."""
+    # endmodule // `mname` has an even backtick count: both must remain unescaped.
+    out = _xlate_file(helper, "endmodule // `mname`\n")
+    # The translated output keeps a backtick span (either `mname` or `mname()`).
+    assert "\\`mname\\`" not in out, f"paired span was wrongly escaped:\n{out}"
+
+
+def test_comment_directive_parse_vpy_roundtrip(helper):
+    """Escaped comment directive must survive parse_vpy without ParseError."""
+    import os
+    import tempfile
+    from genesispy.template.parser import parse_vpy
+    ft = FileTranslator(helper)
+    result = ft.translate('// `include "foo.v"\n')
+    with tempfile.NamedTemporaryFile(suffix=".vpy", mode="w", delete=False) as f:
+        f.write(result.text)
+        fname = f.name
+    try:
+        py = parse_vpy(fname)
+        compile(py, fname, "exec")
+    finally:
+        os.unlink(fname)
+
+
+# ---------------------------------------------------------------------------
 # Indent + sentinel placement (the parser's strict rule).
 # ---------------------------------------------------------------------------
 
@@ -400,3 +499,206 @@ def test_ternary_unmatched_falls_back_to_todo(helper):
     # '?' with no ':' -> Unmappable -> TODO passthrough via FileTranslator.
     out = _xlate_file(helper, "//; my $x = $a ? $b;\n")
     assert "TODO vp2vpy" in out
+
+
+# ---------------------------------------------------------------------------
+# B13: backtick-span Unmappable in Verilog body lines (chokepoint tests).
+# ---------------------------------------------------------------------------
+
+# "assign x = `m/foo/`;" — m/foo/ reliably raises Unmappable (bare m//).
+
+_BACKTICK_UNMAPPABLE_LINE = "assign x = `m/foo/`;\n"
+_BACKTICK_UNMAPPABLE_SOURCE = _BACKTICK_UNMAPPABLE_LINE
+
+
+def test_verilog_backtick_unmappable_strict_raises(helper):
+    """strict=True: translate() raises Unmappable for a backtick-span that cannot be mapped."""
+    from genesispy.tools.vp2vpy import Unmappable
+    ft = FileTranslator(helper, strict=True)
+    with pytest.raises(Unmappable):
+        ft.translate(_BACKTICK_UNMAPPABLE_SOURCE)
+
+
+def test_verilog_backtick_unmappable_non_strict_marker(helper):
+    """strict=False: output contains TODO marker, todos list is non-empty."""
+    ft = FileTranslator(helper, strict=False)
+    result = ft.translate(_BACKTICK_UNMAPPABLE_SOURCE)
+    assert "# TODO vp2vpy:" in result.text, (
+        f"expected TODO marker in output:\n{result.text}"
+    )
+    assert result.todos, f"expected todos to be non-empty, got {result.todos!r}"
+
+
+def test_verilog_backtick_unmappable_non_strict_escaped(helper):
+    """strict=False: failed backtick span is escaped so parse_vpy accepts the output."""
+    import os
+    import tempfile
+
+    from genesispy.template.parser import parse_vpy
+    ft = FileTranslator(helper, strict=False)
+    result = ft.translate(_BACKTICK_UNMAPPABLE_SOURCE)
+    # No unescaped backtick span of the unmappable body survives.
+    assert "`m/foo/`" not in result.text, (
+        f"unescaped backtick span still in output:\n{result.text}"
+    )
+    with tempfile.NamedTemporaryFile(suffix=".vpy", mode="w", delete=False) as f:
+        f.write(result.text)
+        fname = f.name
+    try:
+        py = parse_vpy(fname)
+        compile(py, fname, "exec")
+    finally:
+        os.unlink(fname)
+
+
+# ---------------------------------------------------------------------------
+# B11: hash-literal fat-comma lists emit dict literals.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("perl,want", [
+    ("my %h = (a => 1, b => 2);",   "h = {'a': 1, 'b': 2}"),
+    ("my %h = ($k => $v);",         "h = {k: v}"),
+])
+def test_hash_fat_comma_dict_literal(helper, perl, want):
+    got = _xlate_stmt(helper, perl)
+    assert want in got, f"want {want!r} in {got!r}"
+
+
+def test_hash_empty_preserved(helper):
+    # Empty hash: keep current output (dict([])).
+    got = _xlate_stmt(helper, "my %h = ();")
+    assert "h = dict([])" in got, f"unexpected output: {got!r}"
+
+
+def test_hash_flat_no_fat_comma_preserved(helper):
+    # Flat k,v list with no fat-comma: existing dict([...]) path preserved.
+    got = _xlate_stmt(helper, "my %h = (a, 1, b, 2);")
+    assert "dict([" in got, f"unexpected output: {got!r}"
+
+
+def test_hash_mixed_list_emits_todo(helper):
+    # Mixed: some items with fat-comma, some without -> Unmappable -> TODO marker.
+    out = _xlate_file(helper, "//; my %h = (a => 1, 2);\n")
+    assert "# TODO vp2vpy:" in out, f"expected TODO marker in:\n{out}"
+
+
+def test_chokepoint_invariant_directive(helper):
+    """Directive-level Unmappable: strict raises ⟺ non-strict emits marker ⟺ todo recorded."""
+    from genesispy.tools.vp2vpy import Unmappable
+    source = "//; my $x = $a ? $b;\n"   # ternary with no ':' -> Unmappable
+    ft_strict = FileTranslator(helper, strict=True)
+    with pytest.raises(Unmappable):
+        ft_strict.translate(source)
+    ft_lax = FileTranslator(helper, strict=False)
+    result = ft_lax.translate(source)
+    assert "# TODO vp2vpy:" in result.text
+    assert result.todos
+
+
+def test_chokepoint_invariant_verilog_backtick(helper):
+    """Verilog-backtick Unmappable: strict raises ⟺ non-strict emits marker ⟺ todo recorded."""
+    from genesispy.tools.vp2vpy import Unmappable
+    ft_strict = FileTranslator(helper, strict=True)
+    with pytest.raises(Unmappable):
+        ft_strict.translate(_BACKTICK_UNMAPPABLE_SOURCE)
+    ft_lax = FileTranslator(helper, strict=False)
+    result = ft_lax.translate(_BACKTICK_UNMAPPABLE_SOURCE)
+    assert "# TODO vp2vpy:" in result.text
+    assert result.todos
+
+
+# ---------------------------------------------------------------------------
+# exists / delete / chomp (B10, B14).
+# ---------------------------------------------------------------------------
+
+def test_exists_bareword_key(helper):
+    """exists $h{k} -> ('k' in h), not exists(...)."""
+    got = _xlate_expr(helper, "exists $h{k}")
+    assert "('k' in h)" in got, f"got: {got!r}"
+
+
+def test_exists_variable_key(helper):
+    """exists $h{$key} -> (key in h)."""
+    got = _xlate_expr(helper, "exists $h{$key}")
+    assert "(key in h)" in got, f"got: {got!r}"
+
+
+def test_exists_nontrivial_routes_to_todo(helper):
+    """Non-subscript exists arg -> TODO marker, no bare exists( call."""
+    # exists($x) is a proxy for any non-subscript argument: it hits
+    # Unmappable -> _handle_unmappable -> marker.
+    source = "//; my $r = exists($x);\n"
+    ft = FileTranslator(helper, strict=False)
+    result = ft.translate(source)
+    assert "# TODO vp2vpy:" in result.text, f"no marker in:\n{result.text}"
+    # No uncommented Python exists( call should survive.
+    # Filter out TODO marker lines and the commented-out Perl echo.
+    live_lines = [
+        ln for ln in result.text.splitlines()
+        if "# TODO vp2vpy:" not in ln and "# my $r" not in ln
+    ]
+    assert not any("exists(" in ln for ln in live_lines), (
+        f"bare exists( survived in live output:\n{result.text}"
+    )
+
+
+def test_delete_bareword_key(helper):
+    """delete $h{k} -> h.pop('k', None)."""
+    got = _xlate_stmt(helper, "delete $h{k};")
+    assert "h.pop('k', None)" in got, f"got: {got!r}"
+
+
+def test_chomp_stmt(helper):
+    """chomp $line; -> line = (line).rstrip('\\n')."""
+    got = _xlate_stmt(helper, "chomp $line;")
+    assert got.startswith("line ="), f"got: {got!r}"
+    assert ".rstrip(" in got, f"got: {got!r}"
+
+
+# ---------------------------------------------------------------------------
+# F6: .svp / .svph extension map (pure-path tests; no helper required).
+# Note: pytestmark on this module skips without perl+PPI, so these tests
+# are also gated by that mark. They exercise no Perl logic.
+# ---------------------------------------------------------------------------
+
+def test_default_ext_map_svp():
+    """DEFAULT_EXT_MAP includes .svp -> .svpy and .svph -> .svpy."""
+    assert DEFAULT_EXT_MAP[".svp"] == ".svpy"
+    assert DEFAULT_EXT_MAP[".svph"] == ".svpy"
+
+
+def test_dst_for_svp_direct():
+    """.svp direct argument maps to .svpy output."""
+    result = _dst_for(Path("a/foo.svp"), root=None, out=None)
+    assert result == Path("a/foo.svpy"), f"got: {result}"
+
+
+def test_dst_for_svph_direct():
+    """.svph direct argument maps to .svpy output."""
+    result = _dst_for(Path("a/foo.svph"), root=None, out=None)
+    assert result == Path("a/foo.svpy"), f"got: {result}"
+
+
+def test_dst_for_vp_unchanged():
+    """.vp still maps to .vpy (regression guard)."""
+    result = _dst_for(Path("a/foo.vp"), root=None, out=None)
+    assert result == Path("a/foo.vpy"), f"got: {result}"
+
+
+def test_resolve_inputs_directory_finds_svp(tmp_path):
+    """Directory input resolver picks up .svp and .vp files."""
+    (tmp_path / "x.vp").write_text("// vp\n")
+    (tmp_path / "y.svp").write_text("// svp\n")
+    found = _resolve_inputs([tmp_path])
+    names = {p.name for p in found}
+    assert "x.vp" in names, f"missing x.vp in {names}"
+    assert "y.svp" in names, f"missing y.svp in {names}"
+
+
+def test_resolve_inputs_directory_svp_dst_maps_to_svpy(tmp_path):
+    """A .svp found via directory resolution produces a .svpy destination."""
+    (tmp_path / "y.svp").write_text("// svp\n")
+    found = _resolve_inputs([tmp_path])
+    svp = next(p for p in found if p.suffix == ".svp")
+    dst = _dst_for(svp, root=tmp_path, out=tmp_path / "out")
+    assert dst.suffix == ".svpy", f"expected .svpy, got {dst.suffix}"

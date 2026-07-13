@@ -498,8 +498,12 @@ class Manager:
         seen on both sides).  Synonyms inherit the resolved tag.
         """
         cache.OUTFILE_TAGS.clear()
+        cache.OUTFILE_ORDER.clear()
         if self._top_inst is None:
             return
+
+        # seen_order tracks first-seen filenames so synonyms don't re-append.
+        seen_order: set = set()
 
         def _promote(name: str, new_tag: str) -> None:
             # Once 'synth_and_verif', sticky: never demoted to a single tag.
@@ -508,6 +512,9 @@ class Manager:
                 cache.OUTFILE_TAGS[name] = new_tag
             elif existing != "synth_and_verif":
                 cache.OUTFILE_TAGS[name] = "synth_and_verif"
+            if name not in seen_order:
+                seen_order.add(name)
+                cache.OUTFILE_ORDER.append(name)
 
         for inst, is_synth in self._top_inst.get_prod_list_insts(self.synth_top):
             fname = inst._outfile_name
@@ -537,7 +544,7 @@ class Manager:
             self.clean()
             return 0
 
-        if not self.input_files:
+        if not self.input_files and not self.gen_only:
             # Default invocation: warn, exit 0 (Wave-1 stub behaviour).
             warning("genesispy: stub")
             return 0

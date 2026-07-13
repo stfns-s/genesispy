@@ -109,6 +109,37 @@ def test_override_param() -> None:
     assert top.get_param("WIDTH") == 32
 
 
+# Pin D22b-1: define_param re-entry semantics when state is OVERRIDDEN.
+def test_define_param_reentry_overridden_keeps_value_updates_metadata() -> None:
+    """Re-entering define_param on an OVERRIDDEN param keeps the override value,
+    replaces default, and updates doc/type when non-None."""
+    top = Top(StubManager())
+    top.define_param("WIDTH", default=8, doc="original doc", type="int")
+    top.override_param("WIDTH", 32)
+    # Re-enter with new default, new doc, new type.
+    top.define_param("WIDTH", default=16, doc="updated doc", type="uint")
+    p = top._params["WIDTH"]
+    assert p["value"] == 32, "override value must be preserved"
+    assert p["default"] == 16, "default must be replaced by re-entry"
+    assert p["doc"] == "updated doc", "doc must be updated when non-None"
+    assert p["type"] == "uint", "type must be updated when non-None"
+
+
+def test_define_param_reentry_overridden_none_doc_type_preserved() -> None:
+    """Re-entering define_param with doc=None and type=None leaves previous
+    doc/type unchanged (only default is always replaced)."""
+    top = Top(StubManager())
+    top.define_param("WIDTH", default=8, doc="keep me", type="int")
+    top.override_param("WIDTH", 32)
+    # Re-enter omitting doc and type (both default to None).
+    top.define_param("WIDTH", default=64)
+    p = top._params["WIDTH"]
+    assert p["value"] == 32, "override value must be preserved"
+    assert p["default"] == 64, "default must be replaced"
+    assert p["doc"] == "keep me", "doc must be unchanged when re-entry passes None"
+    assert p["type"] == "int", "type must be unchanged when re-entry passes None"
+
+
 def test_parameter_declarative_registers_and_returns_default() -> None:
     top = Top(StubManager())
     assert top.parameter("WIDTH", 8) == 8
@@ -569,7 +600,7 @@ def test_unique_inst_param_disambiguates_parents_on_override_path() -> None:
 
     # Different subtree overrides -> distinct names, both files emitted.
     assert a.get_unique_module_name() != b.get_unique_module_name()
-    assert re.fullmatch(r"Outer_DEPTH4_unq\d+", a.get_unique_module_name())
+    assert re.fullmatch(r"Outer_DEPTH_4_unq\d+", a.get_unique_module_name())
     assert f"{a.get_unique_module_name()}.v" in cache.OUTFILE_CONTENT_CACHE
     assert f"{b.get_unique_module_name()}.v" in cache.OUTFILE_CONTENT_CACHE
 
@@ -656,3 +687,102 @@ def test_ununique_inst_differing_sig_identical_body_aliases() -> None:
     assert not [
         k for k in cache.OUTFILE_CONTENT_CACHE if "_UnunqMidStable_tmp" in k
     ]
+
+
+# ---------------------------------------------------------------- B6 -- unique_inst_param K_V suffix
+def test_unique_inst_param_kv_separator_prevents_name_collision() -> None:
+    """N=44 and N4=4 must produce different unique module names and
+    both must appear as separate entries in OUTFILE_CONTENT_CACHE.
+    Without the K_V separator, both collapse to suffix 'N44'."""
+    top = Top(StubManager())
+    a = top.unique_inst_param(Leaf, "u_a", N=44)
+    b = top.unique_inst_param(Leaf, "u_b", N4=4)
+    assert a.get_unique_module_name() != b.get_unique_module_name(), (
+        f"N=44 and N4=4 produced the same unique name: {a.get_unique_module_name()!r}"
+    )
+    fname_a = f"{a.get_unique_module_name()}.v"
+    fname_b = f"{b.get_unique_module_name()}.v"
+    assert fname_a in cache.OUTFILE_CONTENT_CACHE, f"{fname_a!r} not in OUTFILE_CONTENT_CACHE"
+    assert fname_b in cache.OUTFILE_CONTENT_CACHE, f"{fname_b!r} not in OUTFILE_CONTENT_CACHE"
+
+
+def test_unique_inst_param_same_params_still_dedups() -> None:
+    """Equal params must still dedup to the same unique module name (cache parity)."""
+    top = Top(StubManager())
+    a = top.unique_inst_param(Leaf, "u_a", WIDTH=8)
+    b = top.unique_inst_param(Leaf, "u_b", WIDTH=8)
+    assert a.get_unique_module_name() == b.get_unique_module_name()
+
+
+def test_unique_inst_param_suffix_uses_underscore_separator() -> None:
+    """The emitted name must use KEY_VALUE form (Perl _${abbrev}_${val} parity)."""
+    top = Top(StubManager())
+    a = top.unique_inst_param(Leaf, "u_a", WIDTH=8)
+    name = a.get_unique_module_name()
+    assert re.search(r"WIDTH_8", name), (
+        f"Expected KEY_VAL separator in name, got: {name!r}"
+    )
+
+
+# ---------------------------------------------------------------- F2 -- duplicate instance name guard
+@pytest.mark.parametrize("method,kwargs", [
+    ("unique_inst",       {}),
+    ("unique_inst_param", {}),
+    ("ununique_inst",     {}),
+])
+def test_duplicate_inst_name_raises_elaboration_error(method: str, kwargs: dict) -> None:
+    """Re-using an instance name under the same parent must raise ElaborationError.
+    """
+    top = Top(StubManager())
+    getattr(top, method)(Leaf, "u_dup", **kwargs)
+    with pytest.raises(ElaborationError, match="u_dup"):
+        getattr(top, method)(Leaf, "u_dup", **kwargs)
+
+
+def test_duplicate_inst_name_clone_inst_raises_elaboration_error() -> None:
+    """clone_inst with a name already in use under the same parent must raise."""
+    top = Top(StubManager())
+    src = top.unique_inst(Leaf, "u_src")
+    top.unique_inst(Leaf, "u_taken")
+    with pytest.raises(ElaborationError, match="u_taken"):
+        top.clone_inst(src, "u_taken")
+
+
+def test_duplicate_inst_name_different_parents_ok() -> None:
+    """Same instance name under DIFFERENT parents must not raise."""
+
+    class Mid(UniqueModule):
+        pass
+
+    top = Top(StubManager())
+    a = top.unique_inst(Mid, "u_mid_a")
+    b = top.unique_inst(Mid, "u_mid_b")
+    # Both mid instances get the same inst_name child -> no error expected.
+    a.unique_inst(Leaf, "u_leaf")
+    b.unique_inst(Leaf, "u_leaf")
+
+
+def test_retry_after_execute_failure_succeeds() -> None:
+    """After execute() raises, the same instance name must be usable on retry.
+
+    This pins the cleanup-on-failure behavior: the failed registration must
+    be removed from _sub_instances so the guard does not fire on the retry.
+    """
+
+    class Flaky(UniqueModule):
+        calls = 0
+        fail_first = True
+
+        def execute(self) -> None:
+            type(self).calls += 1
+            if type(self).fail_first and type(self).calls == 1:
+                raise RuntimeError("boom")
+            super().execute()
+
+    top = Top(StubManager())
+    with pytest.raises(RuntimeError, match="boom"):
+        top.unique_inst(Flaky, "u_flaky")
+
+    Flaky.fail_first = False
+    child = top.unique_inst(Flaky, "u_flaky")
+    assert child.get_instance_name() == "u_flaky"

@@ -6,6 +6,8 @@ correctly handle the JSON-native shape used by genesispy core.
 
 from __future__ import annotations
 
+import pytest
+
 from genesispy import config_handler as ch
 
 
@@ -126,3 +128,40 @@ def test_find_param_first_match_wins():
         ]
     }
     assert ch._find_param(db, "X") == 1
+
+
+# Pin D22b-2: scalar coercion and plain-container recursion in _unwrap_array.
+def test_unwrap_array_string_scalars_coerced() -> None:
+    """String elements are coerced: int-like -> int, float-like -> float,
+    'true'/'false' -> bool."""
+    assert ch._unwrap_array(["8", "2.5", "true"]) == [8, 2.5, True]
+
+
+def test_unwrap_array_nested_plain_dict_leaf_coerced() -> None:
+    """Plain dict nested inside a list has its string-scalar leaves coerced."""
+    assert ch._unwrap_array([{"a": "4", "b": "false"}]) == [{"a": 4, "b": False}]
+
+
+def test_unwrap_hash_string_scalars_coerced() -> None:
+    """String values in a plain hash are coerced to native types."""
+    assert ch._unwrap_hash({"x": "10", "flag": "true"}) == {"x": 10, "flag": True}
+
+
+def test_val_carried_container_unwraps_and_coerces() -> None:
+    """A __Val__-carried value (a list here) is returned as-is after normalise;
+    int elements pass through unchanged."""
+    db = {"Parameters": [{"Name": "WS", "__Val__": [1, 2, 3]}]}
+    assert ch._find_param(db, "WS") == [1, 2, 3]
+
+
+# Pin D22b resolution: nested wrapper dicts pass through unchanged.
+# _normalise_value does not detect sentinel keys inside a plain dict child,
+# so the wrapper key is preserved as-is.  xml2json never emits nested wrappers;
+# only hand-crafted JSON reaches this path.
+def test_unwrap_hash_nested_wrapper_passes_through() -> None:
+    """A nested __ArrayType__ wrapper inside _unwrap_hash is not unwrapped.
+
+    The sentinel key passes through untouched -- this is the defined scope
+    of the unwrap helpers (D22b resolution)."""
+    result = ch._unwrap_hash({"d": {"__ArrayType__": [1, 2]}})
+    assert result == {"d": {"__ArrayType__": [1, 2]}}

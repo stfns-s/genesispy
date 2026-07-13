@@ -101,6 +101,13 @@ UNUNIQUE_REGISTRY: Dict[str, Dict[str, Any]] = {}
 # 'verif' (matches Perl SynthTop=undef default).
 OUTFILE_TAGS: Dict[str, str] = {}
 
+# Output filenames in DFS first-seen walk order, populated by Manager
+# _populate_outfile_tags alongside OUTFILE_TAGS.  output_writer uses this
+# to emit product lists in a single consistent order (matching Perl
+# Manager.pm:1330-1395).  Keys not present here (test-only raw entries)
+# fall back to alphabetical after all ordered entries.
+OUTFILE_ORDER: List[str] = []
+
 # Resolved paths of include()'d template files, appended by
 # user_config._include.  Consumed together with Manager.parsed_source_files
 # by output_writer.write_file_lists as the .depend prerequisite list.
@@ -114,6 +121,7 @@ def clear_all() -> None:
     MODULE_NAME_NUM_DERIVS.clear()
     OUTFILE_CONTENT_CACHE.clear()
     OUTFILE_TAGS.clear()
+    OUTFILE_ORDER.clear()
     UNUNIQUE_REGISTRY.clear()
     INCLUDED_FILES.clear()
     # Recycled tmpdir paths could otherwise inherit a stale .vpy mapping.

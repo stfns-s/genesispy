@@ -121,8 +121,12 @@ def _parse_cmdln_param(
 
 
 def _unwrap_array(node: Any) -> list:
-    """Convert a JSON-native ``__ArrayType__`` value to a Python list,
-    recursively normalising nested wrapped children."""
+    """Convert a JSON-native ``__ArrayType__`` value to a Python list.
+
+    Recurses into plain lists and dicts, coercing scalar leaves.  A dict
+    value that itself carries a sentinel key (``__ArrayType__``,
+    ``__HashType__``, ``__Val__``) is NOT unwrapped -- the sentinel key
+    passes through untouched."""
     if isinstance(node, list):
         return [_normalise_value(v) for v in node]
     if not isinstance(node, dict):
@@ -131,15 +135,25 @@ def _unwrap_array(node: Any) -> list:
 
 
 def _unwrap_hash(node: Any) -> dict:
-    """Convert a JSON-native ``__HashType__`` value to a Python dict,
-    recursively normalising nested wrapped children."""
+    """Convert a JSON-native ``__HashType__`` value to a Python dict.
+
+    Recurses into plain lists and dicts, coercing scalar leaves.  A dict
+    value that itself carries a sentinel key is NOT unwrapped -- the
+    sentinel key passes through untouched."""
     if not isinstance(node, dict):
         return {}
     return {k: _normalise_value(v) for k, v in node.items()}
 
 
 def _normalise_value(v: Any) -> Any:
-    """Normalise a JSON-native value, recursing into nested wrappers."""
+    """Normalise a JSON-native value.
+
+    Recurses into plain lists and dicts, coercing scalar leaves.  Sentinel
+    keys (``__ArrayType__``, ``__HashType__``, ``__Val__``) inside a nested
+    dict are NOT detected -- they pass through with the key preserved.
+    In practice this is harmless: ``genesispy-xml2json`` unwraps all nesting
+    at conversion time, so tool-produced configs never contain nested
+    wrappers; only hand-crafted JSON can trigger this."""
     if isinstance(v, list):
         return [_normalise_value(x) for x in v]
     if isinstance(v, dict):

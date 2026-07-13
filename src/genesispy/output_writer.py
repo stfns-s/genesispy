@@ -38,7 +38,7 @@ import shlex
 import shutil
 import stat
 import sys
-from typing import Dict, Iterable, List, TextIO, Tuple
+from typing import Dict, Iterable, List, TextIO, Tuple, Union
 
 from . import cache
 
@@ -130,16 +130,21 @@ def _top_name(manager) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def flush_to_disk(manager) -> Dict[str, List[str]]:
+def flush_to_disk(manager) -> Dict[str, Union[List[str], List[Tuple[str, str]]]]:
     """Walk :data:`cache.OUTFILE_CONTENT_CACHE` and write each entry to disk.
 
     Partitioning follows :data:`cache.OUTFILE_TAGS` (populated by
     Manager): ``'synth'`` and ``'synth_and_verif'`` -> ``synth_dir``;
-    ``'verif'`` (and any unmapped file) -> ``verif_dir``.  Returns
-    ``{'synth': [...], 'verif': [...], 'synth_and_verif': [...]}``
-    lists of *written or already-up-to-date* destination paths,
-    suitable for downstream :func:`write_file_lists` /
-    :func:`write_product_lists` consumption.
+    ``'verif'`` (and any unmapped file) -> ``verif_dir``.  Returns a dict
+    with four keys:
+
+    * ``'synth'``, ``'verif'``, ``'synth_and_verif'``: ``List[str]`` of
+      destination paths per tag bucket.
+    * ``'ordered'``: ``List[Tuple[str, str]]`` of ``(dest_path, tag)`` in
+      DFS first-seen order (keys absent from :data:`cache.OUTFILE_ORDER`
+      follow alphabetically).  Used by :func:`write_file_lists` and
+      :func:`write_product_lists` to derive all product lists with a
+      consistent single ordering.
 
     Idempotent: an entry whose on-disk content matches the cached
     content is left untouched.  Mirrors Perl
@@ -155,6 +160,11 @@ def flush_to_disk(manager) -> Dict[str, List[str]]:
         "synth": [],
         "verif": [],
         "synth_and_verif": [],
+        # Ordered sequence of (dest_path, tag) in DFS first-seen order.
+        # Keys not present in OUTFILE_ORDER follow alphabetically after all
+        # ordered entries (preserves prior sorted behaviour for test-only
+        # raw cache entries).  List writers use this for consistent ordering.
+        "ordered": [],
     }
 
     tags: Dict[str, str] = cache.OUTFILE_TAGS
@@ -162,15 +172,17 @@ def flush_to_disk(manager) -> Dict[str, List[str]]:
     # Track per-realpath so synth/verif basename collisions warn.
     seen_bases: Dict[Tuple[str, str], str] = {}
 
-    # Sort for deterministic output.
-    # Cache keys are written with their per-module suffix in
-    # UniqueModule._flush_outfile / synonym, so _canonical_filename's
-    # default fallback ('.v' if no known extension) only kicks in for raw
-    # cache entries registered by tests or library callers. Extra
-    # user-configured output extensions (from manager.extension_map) are
-    # treated as 'known' so e.g. 'foo.tv' isn't re-suffixed to 'foo.tv.v'.
+    # Build iteration order: DFS-recorded names first (in order), then any
+    # remaining cache keys alphabetically.  This way test-only raw entries
+    # (no OUTFILE_ORDER entry) keep today's sorted behaviour so existing
+    # tests that build tags by hand stay green.
     extra_known = _manager_extra_known(manager)
-    for raw_name in sorted(cache.OUTFILE_CONTENT_CACHE.keys()):
+    order_index = {name: i for i, name in enumerate(cache.OUTFILE_ORDER)}
+    all_keys = sorted(
+        cache.OUTFILE_CONTENT_CACHE.keys(),
+        key=lambda k: (order_index.get(k, len(cache.OUTFILE_ORDER)), k),
+    )
+    for raw_name in all_keys:
         content = cache.OUTFILE_CONTENT_CACHE[raw_name]
         filename = _canonical_filename(raw_name, extra_known=extra_known)
         base = os.path.basename(filename)
@@ -216,11 +228,11 @@ def flush_to_disk(manager) -> Dict[str, List[str]]:
         dest_path = os.path.join(target_dir, base)
         _write_if_changed(dest_path, content)
         written[tag].append(dest_path)
+        written["ordered"].append((dest_path, tag))
 
     if manager.debug:
-        for kind, paths in written.items():
-            for p in paths:
-                print(f"output_writer: wrote {kind} -> {p}")
+        for dest_path, kind in written["ordered"]:
+            print(f"output_writer: wrote {kind} -> {dest_path}")
 
     return written
 
@@ -255,11 +267,13 @@ def write_file_lists(
 
     out: Dict[str, str] = {}
 
-    synth_paths = written.get("synth", [])
-    verif_paths = written.get("verif", [])
-    both_paths = written.get("synth_and_verif", [])
+    # Derive all lists from the single DFS-ordered sequence so every product
+    # file uses the same order (mirrors Perl Manager.pm:1330-1395 single list
+    # filtered per destination).
+    ordered: List[Tuple[str, str]] = written.get("ordered", [])
+    full_paths = [p for p, _t in ordered]
+    verif_list_paths = [p for p, t in ordered if t != "synth"]
 
-    full_paths = synth_paths + both_paths + verif_paths
     full_vlist = os.path.join(output_dir, f"{top}.vlist")
 
     if emit_vlist:
@@ -267,7 +281,6 @@ def write_file_lists(
         _write_if_changed(full_vlist, body)
         out["synth_vlist"] = full_vlist
 
-        verif_list_paths = verif_paths + both_paths
         if verif_list_paths:
             verif_vlist = os.path.join(output_dir, f"{top}.vlist.verif")
             body = _join_paths(verif_list_paths)
@@ -289,11 +302,17 @@ def write_file_lists(
     depend_override = manager.depend_file
     depend_path = depend_override or os.path.join(output_dir, f"{top}.depend")
     depend_target = full_vlist if emit_vlist else (manager.product_file or full_vlist)
-    deps_str = " ".join(_portable_path(s) for s in sources)
+    portable_sources = [_portable_path(s) for s in sources]
+    deps_str = " ".join(portable_sources)
     if deps_str:
         depend_body = f"{_portable_path(depend_target)}: {deps_str}\n"
     else:
         depend_body = f"{_portable_path(depend_target)}:\n"
+    # gcc -MP style: one empty target per prerequisite so a deleted or renamed
+    # source does not cause "No rule to make target" when a stale depfile is
+    # -include'd.
+    for src in portable_sources:
+        depend_body += f"{src}:\n"
     _write_if_changed(depend_path, depend_body)
     out["depend"] = depend_path
 
@@ -453,12 +472,15 @@ def write_product_lists(
     Returns a dict mapping ``"master"``/``"synth"``/``"verif"`` to the
     written paths (``"synth"``/``"verif"`` omitted when ``single``).
     """
-    synth_paths = written.get("synth", [])
-    verif_paths = written.get("verif", [])
-    both_paths = written.get("synth_and_verif", [])
+    # Derive all lists from the single DFS-ordered sequence (same source as
+    # write_file_lists) so membership and ordering are consistent everywhere.
+    ordered: List[Tuple[str, str]] = written.get("ordered", [])
+    master_paths = [p for p, _t in ordered]
+    synth_cone = [p for p, t in ordered if t != "verif"]
+    verif_cone = [p for p, t in ordered if t != "synth"]
 
     out: Dict[str, str] = {}
-    _write_if_changed(base, _join_paths(synth_paths + verif_paths + both_paths))
+    _write_if_changed(base, _join_paths(master_paths))
     out["master"] = base
 
     if single:
@@ -472,9 +494,9 @@ def write_product_lists(
         synth_path = stem + ".synth" + ext
         verif_path = stem + ".verif" + ext
 
-    _write_if_changed(synth_path, _join_paths(synth_paths + both_paths))
+    _write_if_changed(synth_path, _join_paths(synth_cone))
     out["synth"] = synth_path
-    _write_if_changed(verif_path, _join_paths(verif_paths + both_paths))
+    _write_if_changed(verif_path, _join_paths(verif_cone))
     out["verif"] = verif_path
 
     return out

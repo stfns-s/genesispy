@@ -702,17 +702,27 @@ def _expand_listfiles(
     listfiles: List[str],
     parser: argparse.ArgumentParser,
     *,
-    seen: Optional[set] = None,
+    ancestors: Optional[tuple] = None,
+    processed: Optional[set] = None,
 ) -> Tuple[List[str], List[str], List[str]]:
     """Recursively expand ``--input-list`` files.
 
     Returns ``(inputs, srcpaths, includepaths)`` accumulated across all
-    listfiles in order. Cycles raise via ``parser.error``. Empty listfiles
-    (no inputs produced) emit a warning. Duplicate input paths (within or
-    across listfiles) emit a warning but are kept.
+    listfiles in order. True cycles (a listfile that is its own ancestor)
+    raise via ``parser.error``. A listfile that has already been fully
+    expanded (diamond / repeated reference) is skipped silently — no error,
+    no duplicate inputs. Empty listfiles (no inputs produced) emit a warning.
+    Duplicate input paths (within or across listfiles) emit a warning but are
+    kept.
+
+    ``ancestors`` is a tuple of realpaths on the current recursion stack, used
+    to detect true cycles.  ``processed`` is a shared set of realpaths that
+    have already been fully expanded, used to skip diamonds silently.
     """
-    if seen is None:
-        seen = set()
+    if ancestors is None:
+        ancestors = ()
+    if processed is None:
+        processed = set()
     inputs: List[str] = []
     srcpaths: List[str] = []
     incpaths: List[str] = []
@@ -724,9 +734,12 @@ def _expand_listfiles(
             abs_lf = os.path.realpath(lf)
         except OSError as exc:
             parser.error(f"--input-list: cannot resolve {lf!r}: {exc}")
-        if abs_lf in seen:
+        if abs_lf in ancestors:
             parser.error(f"--input-list: cycle detected on {lf!r}")
-        seen.add(abs_lf)
+        # Already fully expanded in a prior branch (diamond / repeated ref) —
+        # skip silently to avoid duplicates and spurious empty-list warnings.
+        if abs_lf in processed:
+            continue
 
         try:
             with open(lf, "r", encoding="utf-8") as fh:
@@ -735,6 +748,7 @@ def _expand_listfiles(
             parser.error(f"--input-list: cannot read {lf!r}: {exc}")
 
         produced_inputs = 0
+        child_ancestors = ancestors + (abs_lf,)
         for lineno, raw in enumerate(lines, 1):
             directive, tokens = _parse_listfile_line(raw)
             if not tokens:
@@ -744,7 +758,7 @@ def _expand_listfiles(
                 produced_inputs += len(tokens)
             elif directive == "--input-list":
                 sub_in, sub_src, sub_inc = _expand_listfiles(
-                    tokens, parser, seen=seen
+                    tokens, parser, ancestors=child_ancestors, processed=processed
                 )
                 inputs.extend(sub_in)
                 srcpaths.extend(sub_src)
@@ -759,6 +773,7 @@ def _expand_listfiles(
                     f"--input-list {lf!r}:{lineno}: unknown directive {directive!r}"
                 )
 
+        processed.add(abs_lf)
         if produced_inputs == 0:
             warning(f"--input-list: {lf} contributed no inputs")
 

@@ -89,6 +89,9 @@ def test_translate_and_parse(src: Path, helper, tmp_path):
     assert "# TODO vp2vpy:" not in result.text, (
         f"{src}: translator emitted unresolved TODOs:\n{result.text}"
     )
+    assert not result.todos, (
+        f"{src}: translator recorded unresolved todos: {result.todos}"
+    )
     out_path = tmp_path / src.with_suffix(".vpy").name
     out_path.write_text(result.text, encoding="utf-8")
     py = parse_vpy(str(out_path))

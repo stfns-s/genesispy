@@ -31,7 +31,7 @@ from genesispy.cli import parse_args
 from genesispy.manager import Manager
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _parity_normalize import normalize, parse_header  # noqa: E402
+from _parity_normalize import build_variant_map, normalize, parse_header  # noqa: E402
 
 DEMOS_DIR = Path(__file__).resolve().parents[1] / "demos"
 REF_ROOT = Path(__file__).resolve().parent / "fixtures" / "parity_reference"
@@ -92,6 +92,7 @@ def _collect(workdir: Path) -> Tuple[set, Dict[str, set]]:
     """Return (all_bases, {base: {normalised_body, ...}}) by reading all .v."""
     bases: set = set()
     rows: list[Tuple[str, str]] = []
+    texts: Dict[str, str] = {}
     for sub in ("genesis_synth", "genesis_verif"):
         d = workdir / sub
         if not d.is_dir():
@@ -104,9 +105,11 @@ def _collect(workdir: Path) -> Tuple[set, Dict[str, set]]:
                 continue
             bases.add(base)
             rows.append((base, text))
+            texts[str(path)] = text
+    vmap = build_variant_map(texts, bases)
     buckets: Dict[str, set] = {}
     for base, text in rows:
-        buckets.setdefault(base, set()).add(normalize(text, bases))
+        buckets.setdefault(base, set()).add(normalize(text, bases, vmap))
     return bases, buckets
 
 
