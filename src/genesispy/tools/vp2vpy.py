@@ -481,6 +481,10 @@ def render_token(n: dict, ctx: WalkCtx) -> str:
             return "[" + ", ".join(repr(w) for w in words) + "]"
         raise Unmappable(f"qw token: {v!r}")
     if t == "Token::Operator":
+        if v in ("?", ":"):
+            # Ternaries are rewritten structurally in render_expr; a ?/:
+            # reaching the token level must never emit verbatim.
+            raise Unmappable(f"ternary operator {v!r} in unsupported position")
         # Translate at the token level so we never rewrite a method-access
         # ``.`` into a string-concat ``+``.
         mapped = M.INFIX_OPERATOR_MAP.get(v)
@@ -516,8 +520,72 @@ def render_token(n: dict, ctx: WalkCtx) -> str:
 # ---------------------------------------------------------------------------
 
 
+_ASSIGN_OPS = frozenset({
+    "=", "+=", "-=", "*=", "/=", "%=", "**=", "&=", "|=", "^=",
+    "<<=", ">>=", ".=", "x=", "//=", "||=", "&&=",
+})
+
+
+def _find_top_level_ternary(children: list[dict]) -> int | None:
+    """Index of the first top-level ``?`` operator, or None.
+
+    A ``:`` with no preceding ``?`` at this level has no ternary reading
+    (e.g. a variable attribute) -> Unmappable, so the statement drivers
+    record a TODO instead of emitting the token verbatim.
+    """
+    for i, c in enumerate(children):
+        if _is_op(c, "?"):
+            return i
+        if _is_op(c, ":"):
+            raise Unmappable("ternary ':' with no preceding '?'")
+    return None
+
+
+def _render_ternary(children: list[dict], q: int, ctx: WalkCtx) -> str:
+    """``c ? a : b`` -> ``(a if c else b)``; recursion handles nesting.
+
+    Perl ``?:`` binds tighter than assignment and ``render_expr`` receives
+    whole ``x = c ? a : b`` sequences, so everything through the last
+    top-level assignment operator before the ``?`` is rendered as a prefix
+    rather than swallowed into the condition. Right-associative chains
+    (``a ? b : c ? d : e``) fall out of the recursive ``render_expr`` calls
+    on the branch slices.
+    """
+    a = -1
+    for i in range(q):
+        if children[i]["t"] == "Token::Operator" and children[i].get("v") in _ASSIGN_OPS:
+            a = i
+    depth = 0
+    colon = None
+    for i in range(q + 1, len(children)):
+        if _is_op(children[i], "?"):
+            depth += 1
+        elif _is_op(children[i], ":"):
+            if depth == 0:
+                colon = i
+                break
+            depth -= 1
+    if colon is None:
+        raise Unmappable("ternary '?' with no matching ':'")
+    cond = children[a + 1:q]
+    true_b = children[q + 1:colon]
+    false_b = children[colon + 1:]
+    if not cond or not true_b or not false_b:
+        raise Unmappable("ternary with an empty operand")
+    py = (
+        f"({render_expr(true_b, ctx)} if {render_expr(cond, ctx)} "
+        f"else {render_expr(false_b, ctx)})"
+    )
+    if a >= 0:
+        return f"{render_expr(children[:a + 1], ctx)} {py}"
+    return py
+
+
 def render_expr(children: list[dict], ctx: WalkCtx) -> str:
     """Render a token sequence (the body of a Statement or List) as Python."""
+    q = _find_top_level_ternary(children)
+    if q is not None:
+        return _render_ternary(children, q, ctx)
     # First pass: collapse adjacent (function-word, list) and (symbol, subscript).
     rendered: list[str | dict] = []
     i = 0
@@ -1103,6 +1171,8 @@ def _translate_variable(n: dict, ctx: WalkCtx) -> StatementResult:
             rhs.startswith("(")
             and rhs.endswith(")")
             and _outer_parens_enclose_all(rhs)
+            # A rendered conditional `(a if c else b)` is not a Perl list.
+            and not re.search(r"\bif\b", rhs)
         ):
             body = rhs[1:-1]
             if lhs_sigil == "@":

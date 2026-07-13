@@ -339,3 +339,64 @@ def test_directive_indent_format(helper):
     # (depth=1 in genesispy's parser).
     assert "//;     j = i" in out  # 1 space after //; + 4 spaces of indent
     assert "//; # endfor" in out
+
+
+# ---------------------------------------------------------------------------
+# Helper pipe framing (review B4): non-ASCII payloads must not deadlock.
+# ---------------------------------------------------------------------------
+
+def test_non_ascii_payload_roundtrip():
+    """Perl helper framed in characters while Python framed in bytes; any
+    multi-byte character wedged both processes. Guarded by a worker-thread
+    timeout so a regression fails instead of hanging pytest.
+    """
+    import concurrent.futures
+
+    h = Helper()
+    h.start()
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(_xlate_stmt, h, 'my $x = "µm — dash";')
+            try:
+                got = fut.result(timeout=30)
+            except concurrent.futures.TimeoutError:
+                h.close()  # kills perl -> unblocks the worker thread
+                pytest.fail("helper deadlocked on non-ASCII payload (B4)")
+    finally:
+        h.close()
+    assert "µm" in got, f"non-ASCII lost: {got!r}"
+    assert "dash" in got
+    assert "Âµ" not in got, f"double-encoded response: {got!r}"
+
+
+# ---------------------------------------------------------------------------
+# Ternary ?: (review B5): structural translation to Python conditionals.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("perl,want", [
+    ("$c ? $a : $b",             "(a if c else b)"),
+    ("$x > 0 ? 'pos' : 'neg'",   "('pos' if x > 0 else 'neg')"),
+    # Right-associative chain.
+    ("$a ? $b : $c ? $d : $e",   "(b if a else (d if c else e))"),
+    # Nesting in the true branch.
+    ("$a ? $b ? $c : $d : $e",   "((c if b else d) if a else e)"),
+])
+def test_ternary_expr(helper, perl, want):
+    got = _xlate_expr(helper, perl)
+    assert want in got, f"want {want!r} in {got!r}"
+
+
+@pytest.mark.parametrize("perl,want", [
+    ("my $x = $c ? 1 : 2;",                "x = (1 if c else 2)"),
+    ("$x = $w ? $w : 0;",                  "x = (w if w else 0)"),
+    ("foo($c ? $a : $b, 3);",              "(a if c else b)"),
+])
+def test_ternary_stmt(helper, perl, want):
+    got = _xlate_stmt(helper, perl)
+    assert want in got, f"want {want!r} in {got!r}"
+
+
+def test_ternary_unmatched_falls_back_to_todo(helper):
+    # '?' with no ':' -> Unmappable -> TODO passthrough via FileTranslator.
+    out = _xlate_file(helper, "//; my $x = $a ? $b;\n")
+    assert "TODO vp2vpy" in out

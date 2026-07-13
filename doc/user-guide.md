@@ -139,13 +139,13 @@ source .venv/bin/activate
 |--------------------------|----------------------------------------------------------------------|
 | `.vpy`                   | Verilog template with embedded Python (`//;` lines, backtick expressions). Parsed into a generated `.py`, executed, and emitted as `.v`. |
 | `.svpy`                  | Same as `.vpy` but emits `.sv` by default (SystemVerilog).           |
-| Generated `<stem>.py`    | Intermediate Python written under `genesis_raw/` (or `/tmp/genesispy_*` with `--use-tmp`). Removed after elaboration unless `--gen-raw` is passed. |
+| Generated `<stem>.py`    | Intermediate Python written under `genesis_raw/` (or `/tmp/genesispy_*` with `--use-tmp`). Persists after the run; removed by `--clean`, `--stdout`, or the `--use-tmp` exit cleanup. |
 | Emitted `.v` / `.sv`     | Per-unique-module Verilog under `genesis_synth/` or `genesis_verif/`, named `<unique_module_name>.v`. |
 | `.json` (config)         | Per-instance parameter overrides, passed via `--json-cfg`. Hierarchical schema (`SubInstances`, `Parameters`, `ImmutableParameters`). Replaces Genesis2's XML config. |
 | `.py` / `.cfg` (config)  | Python config script, passed via `--cfg`. Uses `configure(name, value)`. Runs under `exec()` with a sandboxed namespace; full helper list in §11.6. |
 | `<top>.vlist`            | Full compile-order file list (every emitted file regardless of synth/verif tag). |
 | `<top>.vlist.verif`      | Verif + synth_and_verif file list (only when at least one verif-tagged file exists). |
-| `<top>.depend`           | Make-style dependency list (override path with `--depend FILE`). |
+| `<top>.depend`           | Make-style dependency list; prerequisites are the parsed input templates plus `include()`'d files (override path with `--depend FILE`). |
 | `genesispy_clean.sh`     | Per-run cleanup script that removes everything `genesispy` produced. |
 | `.xml` (legacy)          | Genesis2 XML config. Not accepted by the core CLI; convert with `genesispy-xml2json in.xml out.json` and pass the resulting JSON. |
 
@@ -219,8 +219,8 @@ A parameter's value is determined in the following order (lowest to
 highest):
 
 1. **In-source default** -- the second argument to `parameter('NAME', default)` in the `.vpy` file. Used when nothing else fires.
-2. **JSON config** (`--json-cfg`) -- per-instance overrides scoped by instance path. Beats the in-source default. Legacy XML configs convert via `genesispy-xml2json`.
-3. **`.cfg` Python configs** (`--cfg`) -- call `configure(name, value)`. Beats JSON.
+2. **`.cfg` Python configs** (`--cfg`) -- call `configure(name, value)`. Beats the in-source default.
+3. **JSON config** (`--json-cfg`) -- per-instance overrides scoped by instance path. Beats `.cfg`. Legacy XML configs convert via `genesispy-xml2json`.
 4. **CLI `--parameter NAME=VALUE`** (or `-p`, same in gvpy now) -- beats everything passed in files.
 5. **Parent's `unique_inst(...)` kwargs** (also `unique_inst_param`, `clone_inst`, `ununique_inst`) -- beats CLI. When the parent writes `unique_inst('wallace', 'wallace_2', N=2)`, the child sees `N=2` before its body runs, regardless of any config or CLI value.
 6. **`parameter('X', val, force=True)`** -- writes at FORCED priority and locks against further override; subsequent parent kwargs, configs, and CLI re-applies are ignored. Mirrors Perl's `force` flag (UniqueModule.pm:1981).
@@ -282,8 +282,9 @@ A `.vpy` file is Verilog with two extensions: Python control lines and
 backtick-interpolated expressions. Below is a representative example:
 
 ```verilog
-// (timescale|default_nettype|include|ifdef|...) need no literal escaping
-`timescale 1ps/1ps
+// Verilog compiler directives need a backslash-escaped backtick: a bare
+// backtick opens a genesispy expression and raises ParseError.
+\`timescale 1ps/1ps
 //; WIDTH = parameter("WIDTH", 8)
 //; DEPTH = parameter("DEPTH", 4)
 module `mname()` #(
@@ -482,7 +483,7 @@ make gen                                # default (no config) -- widths=[4,8]
 make gen JSON_CONFIG=config.json        # JSON overrides defaults -- widths=[2,5,16,32,64]
 # Legacy XML: convert once with `genesispy-xml2json config.xml config.json`
 make gen CFG_CONFIG=config.py           # .cfg overrides -- widths=[3,7,11]
-make gen JSON_CONFIG=config.json CFG_CONFIG=config.py  # layered: cfg wins per key
+make gen JSON_CONFIG=config.json CFG_CONFIG=config.py  # layered: JSON wins per key
 make sim                                # default SIMULATOR=verilator
 make sim SIMULATOR=vcs                  # override
 make clean
@@ -660,8 +661,8 @@ output.
 - `--py-import NAME` -- import a Python module before parsing. Repeatable.
 - `--parse-only` -- run only the parse phase (`.vpy` -> `.py`); skip elaboration.
 - `-j2`, `--j2` -- parse templates with the j2 (Jinja2-like) flavour (Appendix A). Stock Jinja2 sources do not parse here as-is; see `genesispy-jinja2j2`.
-- `--gen-raw` -- keep the raw directory after elaboration (preserving the generated `<stem>.py` intermediates) and also dump the raw per-module Verilog into `<raw_dir>/`. Without this flag the raw dir is removed at end of run.
-- `--raw-dir DIR` -- override the raw_dir location (default `./genesis_raw`). Mutually exclusive with `--use-tmp`/`--keep-tmp`. Orthogonal to `--gen-raw`: without `--gen-raw` the directory is still removed after elaboration.
+- `--gen-raw` -- also dump the raw per-module Verilog into `<raw_dir>/` next to the generated `<stem>.py` intermediates.
+- `--raw-dir DIR` -- override the raw_dir location (default `./genesis_raw`). Mutually exclusive with `--use-tmp`/`--keep-tmp`. The directory persists after the run; `--clean` and `--stdout` remove it.
 - `--use-tmp` -- place the raw directory under a `/tmp` scratch dir.
 - `--keep-tmp` -- keep the `/tmp` scratch dir after exit (implies `--use-tmp`).
 
@@ -841,6 +842,7 @@ flag style) are listed below. For behaviour-affecting incompatibilities
 - **Config input** -- XML support removed from the core CLI; convert legacy XML once with `genesispy-xml2json in.xml out.json` and pass `--json-cfg out.json`. The reverse helper `genesispy-json2xml` is provided for symmetry.
 - **`ImmutableParameters` (input config)** -- ignored by both engines. Genesis2 `ConfigHandler.pm:875-919` reads only `{Parameters}` from input XML; `{ImmutableParameters}` is touched only by the writeback path (`ConfigHandler.pm:677, 724`). genesispy matches via `_FIND_PARAM_SKIP_KEYS` in `config_handler.py:_find_param`. The tag is writeback-only metadata in both engines. To actually pin past a parent's `unique_inst` kwarg, use `force_param` (Genesis2) / `parameter(..., force=True)` (genesispy); both write at `IMMUTABLE`.
 - **`//;` body language** -- Perl -> Python.
+- **Verilog compiler directives need `` \` `` escaping** -- Genesis2 passes bare `` `timescale ``, `` `default_nettype ``, `` `include ``, `` `uvm_* `` through to the output (Manager.pm:810-820); in genesispy every backtick opens an expression, so a bare directive raises `ParseError`. Write `` \`timescale 1ps/1ps `` to emit a literal backtick. `genesispy-vp2vpy` inserts the escape automatically.
 - **`--cfg` config files** -- Perl `eval` -> Python `exec()` (trusted-input, full `__builtins__` exposed -- mirrors Perl `do FILE`). Files are plain Python; `.py` is preferred over `.cfg`.
 - **CLI flag style** -- GNU `--input`/`-i`, `--top`/`-t`, ... (Genesis2 used Perl-style `-input`, `-top`).
 - **`--input-list` listfile syntax** -- GNU directives only (`--input/--input-list/--src-path/--inc-path`); Genesis2 used `-input/-inputlist/-srcpath/-incpath`. Bare paths default to `--input`.
@@ -856,7 +858,7 @@ flag style) are listed below. For behaviour-affecting incompatibilities
 - **Sub-instance navigation** -- `get_subinst(name)`, `exists_subinst(name)`, `get_subinst_array(pattern="")`, `get_instance_obj(path_or_obj)`, and `search_subinst(...)` are now available on every `UniqueModule` (mirrors Perl UniqueModule.pm:760/780/797/932/1087). `search_subinst` kwargs are **snake_case**: `start_from=`, `depth=`, `reverse=`, `path_regex=`, `iname_regex=`, `mname_regex=`, `bname_regex=`, `sname_regex=`, `has_param_regex=`, `apply_map=`. Translate from Perl Genesis2's CamelCase (`PathRegex`, `INameRegex`, ...) when porting.
 - **`iname` / `mname` / `bname` / `sname` callable** -- on a `UniqueModule` instance, the four short-name properties return a `StrCallable` (a `str` subclass), so both `obj.mname` and `obj.mname()` work the same way (and equal each other as strings). Mirrors Perl `$obj->mname()` / `$obj->bname()`.
 - **`error(...)` / `warning(...)`** -- bare-name `error("msg")` and `warning("msg")` are now bound inside `.vpy` bodies (routing through `self.error` / `self.warning`), mirroring Perl `$myself->error(...)` (UniqueModule.pm:2803). Both forms prefix the message with `<module_name>@<instance_path>` and delegate to `genesispy.errors`. `self.error(msg)` raises `GenesisPyError` (fatal); `self.warning(msg)` returns normally after writing to stderr.
-- **`ununique_inst` / `generate_base`** -- preserves the bare base name on first call (matches Perl `UnUniquifiedModules`, UniqueModule.pm:1610). A second call for the same base name with the same resolved params aliases the first instance under the new instance name. Different resolved params raise `ElaborationError` with both param dicts (the emitted module name is global, so two distinct elaborations can't both keep the bare name).
+- **`ununique_inst` / `generate_base`** -- preserves the bare base name on first call (matches Perl `UnUniquifiedModules`, UniqueModule.pm:1610). A second call for the same base name with the same resolved params and the same scoped-override subtree aliases the first instance under the new instance name. Different resolved params raise `ElaborationError` with both param dicts (the emitted module name is global, so two distinct elaborations can't both keep the bare name). Differing scoped-override subtrees re-elaborate and compare the generated bodies, mirroring Perl's file comparison (UniqueModule.pm:1674): identical bodies alias, divergence raises.
 - **`synonym(...)` arity** -- the bare-name `synonym(...)` in `.vpy` bodies is an arity dispatcher: `synonym(name)` mirrors the current module's outfile under `name` (genesispy instance-level semantics); `synonym(src, trgt)` registers `trgt` as a class-level template synonym of `src` via `Manager.synonym_class` (Perl semantics). Perl supports only the 2-arg form; the 1-arg form is a genesispy extension.
 - **`sname`** -- mirrors Perl `get_source_name` (UniqueModule.pm:377): returns the source template name (`_synonym_for` set by `Manager.synonym_class` on a synonym-derived class, else the base module name == `bname`).
 - **`--json-out`** (Perl `-hierarchy`) -- same three-file output and same `HierarchyTop` schema, but emitted as JSON (use `genesispy-json2xml` for XML). Sibling filenames diverge from Perl: Perl emits `<f>`/`small_<f>`/`tiny_<f>`; genesispy splits `<f>` into `<stem><ext>` and emits `<stem><ext>`/`<stem>-small<ext>`/`<stem>-tiny<ext>`. The `tiny` variant filters by `priority >= EXTERNAL_PARAM_FILE`; genesispy's flat-key config lookup cannot replicate Perl's `inherit_param`-aware priority assignment, so the `tiny` set may be a strict superset of Perl's (params Perl tags as inherited may appear as user-overrides in genesispy).
@@ -920,7 +922,7 @@ parity test is `test_parity/test_vp2vpy_parity.py`.
 
 A `genesispy` run produces:
 
-- `genesis_raw/<stem>.py` -- generated Python intermediate per `.vpy` input. The raw directory is removed at end of run unless `--gen-raw` is set (which also writes the per-module `.v` siblings into it). `--raw-dir DIR` relocates the directory; `--use-tmp` puts it under `/tmp/genesispy_*` (auto-cleaned at exit; `--keep-tmp` preserves the scratch).
+- `genesis_raw/<stem>.py` -- generated Python intermediate per `.vpy` input. The raw directory persists after the run (removed by `--clean` or `--stdout`); `--gen-raw` additionally writes the per-module `.v` siblings into it. `--raw-dir DIR` relocates the directory; `--use-tmp` puts it under `/tmp/genesispy_*` (auto-cleaned at exit; `--keep-tmp` preserves the scratch).
 - `genesis_synth/<module>.v` -- elaborated Verilog for instances at or under `--synth-top`. (Empty when `--synth-top` is omitted.)
 - `genesis_verif/<module>.v` -- elaborated Verilog for instances outside the synth cone (everything when `--synth-top` is omitted, mirroring Genesis2's `SynthTop=undef` default).
 - `<outputdir>/<top>.vlist` -- full compile-order file list (every emitted `.v`, regardless of synth/verif tag). Suppressed when `--product` or `--vf-out` is set.
@@ -955,10 +957,10 @@ before any computation that depends on them; or use
 
 `template/runtime.py` maintains a `LINE_MAP` that rewrites
 `File "<gen>.py", line N` frames back to the `.vpy` source. When that
-remap is absent, you are looking at the generated intermediate; pass
-`--gen-raw` plus `--debug 1` to keep the `.py` under `genesis_raw/`
-for inspection, and check that the failing line matches what you
-expected the template to emit.
+remap is absent, you are looking at the generated intermediate; the
+`.py` stays under `genesis_raw/` after the run, so open it there and
+check that the failing line matches what you expected the template to
+emit.
 
 ### `include("file.vpy")` raises `FileNotFoundError`
 

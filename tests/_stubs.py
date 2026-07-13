@@ -78,6 +78,7 @@ class StubManager:
         self.synth_top: Optional[str] = None
         self.debug: int = debug
         self.src_path: list = []
+        self.parsed_source_files: list = []
         self.inc_path: list = []
         self.cfg_path: list = []
         self.output_dir: str = ""

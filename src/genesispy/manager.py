@@ -72,6 +72,10 @@ class Manager:
             raise GenesisPyError(str(exc)) from exc
 
         self.input_files = list(args.input)
+        # Resolved input-template paths, recorded by parse_files; consumed
+        # (with cache.INCLUDED_FILES) by output_writer.write_file_lists as
+        # the .depend prerequisite list.
+        self.parsed_source_files: List[str] = []
         self.parameter_overrides = list(args.parameter)
         self.json_cfg = args.json_cfg
         self.json_out = args.json_out
@@ -249,6 +253,7 @@ class Manager:
         allowed = frozenset(self.extension_map.keys())
         for src in self.input_files:
             path = self.find_file(src) if not os.path.isabs(src) else src
+            self.parsed_source_files.append(path)
             out_suffix = self._output_suffix_for(path)
             py_path = emitter.write_module(
                 path,

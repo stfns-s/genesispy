@@ -276,8 +276,16 @@ def write_file_lists(
 
     # Depfile: '<target>: <input1.vpy> <input2.vpy> ...'
     # Target is the .vlist when we emit one, otherwise the named product
-    # file the caller is writing instead.
-    sources = list(manager.src_path)
+    # file the caller is writing instead. Prerequisites are the parsed
+    # input templates plus include()'d files -- NOT the --src-path search
+    # directories.
+    seen: set = set()
+    sources: List[str] = []
+    for s in list(manager.parsed_source_files) + list(cache.INCLUDED_FILES):
+        key = os.path.abspath(s)
+        if key not in seen:
+            seen.add(key)
+            sources.append(s)
     depend_override = manager.depend_file
     depend_path = depend_override or os.path.join(output_dir, f"{top}.depend")
     depend_target = full_vlist if emit_vlist else (manager.product_file or full_vlist)

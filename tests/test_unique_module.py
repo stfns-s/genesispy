@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from genesispy import cache
+from genesispy.reporting import ElaborationError
 from genesispy.unique_module import UniqueModule
 
 from ._stubs import StubConfigHandler, StubManager
@@ -174,6 +177,8 @@ def test_unique_inst_param_encodes_params_in_name() -> None:
     a = top.unique_inst_param(Leaf, "u_a", WIDTH=8)
     assert "WIDTH" in a.get_unique_module_name()
     assert "8" in a.get_unique_module_name()
+    # Off any override path the name is param-only (no _unqN suffix).
+    assert "_unq" not in a.get_unique_module_name()
 
 
 def test_no_module_cache_skips_writes() -> None:
@@ -543,3 +548,111 @@ def test_ununique_inst_honours_scoped_cmdln_override() -> None:
     assert observed["X"] == 2, (
         "scoped --parameter top.child.X=2 was ignored by ununique_inst"
     )
+
+
+# Review 2026-07-12 B1 -- unique_inst_param names must not collide when
+# descendants carry different scoped overrides.
+def test_unique_inst_param_disambiguates_parents_on_override_path() -> None:
+    class Inner(UniqueModule):
+        pass
+
+    class Outer(UniqueModule):
+        pass
+
+    mgr = _real_cfg_manager([
+        "Top.u_a.u_in.WIDTH=8",
+        "Top.u_b.u_in.WIDTH=16",
+    ])
+    top = Top(mgr)
+    a = top.unique_inst_param(Outer, "u_a", DEPTH=4)
+    b = top.unique_inst_param(Outer, "u_b", DEPTH=4)
+
+    # Different subtree overrides -> distinct names, both files emitted.
+    assert a.get_unique_module_name() != b.get_unique_module_name()
+    assert re.fullmatch(r"Outer_DEPTH4_unq\d+", a.get_unique_module_name())
+    assert f"{a.get_unique_module_name()}.v" in cache.OUTFILE_CONTENT_CACHE
+    assert f"{b.get_unique_module_name()}.v" in cache.OUTFILE_CONTENT_CACHE
+
+    # Each Outer's Inner sees its own scoped override.
+    in_a = a.unique_inst(Inner, "u_in")
+    in_b = b.unique_inst(Inner, "u_in")
+    assert in_a.parameter("WIDTH", 1) == 8
+    assert in_b.parameter("WIDTH", 1) == 16
+
+
+def test_unique_inst_param_same_subtree_sig_still_dedups() -> None:
+    class Outer(UniqueModule):
+        pass
+
+    mgr = _real_cfg_manager([
+        "Top.u_a.u_in.WIDTH=8",
+        "Top.u_b.u_in.WIDTH=8",
+    ])
+    top = Top(mgr)
+    a = top.unique_inst_param(Outer, "u_a", DEPTH=4)
+    b = top.unique_inst_param(Outer, "u_b", DEPTH=4)
+
+    # Identical subtree shape -> cache hit, one name, one _unqN burned.
+    assert b._clone_of is not None
+    assert a.get_unique_module_name() == b.get_unique_module_name()
+    assert cache.MODULE_NAME_NUM_DERIVS["Outer"] == 1
+
+
+# Review 2026-07-12 B2 -- ununique_inst must not silently alias when
+# descendant scoped overrides differ and actually change the body.
+class _UnunqInner(UniqueModule):
+    def execute(self):
+        super().execute()
+        self.parameter("WIDTH", 1)
+
+
+class _UnunqMidDiverging(UniqueModule):
+    """Body references its Inner's unique name -> differs across overrides."""
+
+    def execute(self):
+        inner = self.unique_inst(_UnunqInner, "u_in")
+        self.emit(inner.instantiate())
+        super().execute()
+
+
+class _UnunqMidStable(UniqueModule):
+    """Body ignores the overridden descendant -> identical across overrides."""
+
+    def execute(self):
+        self.emit("wire w;")
+        super().execute()
+
+
+def _two_override_parents():
+    class Outer(UniqueModule):
+        pass
+
+    mgr = _real_cfg_manager([
+        "Top.u_a.u_mid.u_in.WIDTH=8",
+        "Top.u_b.u_mid.u_in.WIDTH=16",
+    ])
+    top = Top(mgr)
+    a = top.unique_inst(Outer, "u_a")
+    b = top.unique_inst(Outer, "u_b")
+    assert b._clone_of is None, "differing sigs must elaborate both parents"
+    return a, b
+
+
+def test_ununique_inst_divergent_subtree_override_raises() -> None:
+    a, b = _two_override_parents()
+    a.ununique_inst(_UnunqMidDiverging, "u_mid")
+    with pytest.raises(ElaborationError, match="does not match previous"):
+        b.ununique_inst(_UnunqMidDiverging, "u_mid")
+
+
+def test_ununique_inst_differing_sig_identical_body_aliases() -> None:
+    a, b = _two_override_parents()
+    first = a.ununique_inst(_UnunqMidStable, "u_mid")
+    second = b.ununique_inst(_UnunqMidStable, "u_mid")
+    assert second is not first
+    assert second.get_unique_module_name() == "_UnunqMidStable"
+    assert "_UnunqMidStable.v" in cache.OUTFILE_CONTENT_CACHE
+    # The matching temp generation must leave no residue in the cache.
+    assert not [
+        k for k in cache.OUTFILE_CONTENT_CACHE if "_UnunqMidStable_tmp" in k
+    ]

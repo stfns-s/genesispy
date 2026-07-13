@@ -47,13 +47,19 @@ class Manager:
     top: str | None
     debug: int
     src_path: list[str]
+    # Resolved input-template paths, appended by parse_files() (one per
+    # --input after find_file resolution). Consumed together with
+    # cache.INCLUDED_FILES by output_writer.write_file_lists as the
+    # `.depend` prerequisite list.
+    parsed_source_files: list[str]
     inc_path: list[str]
     output_dir: str
     # Scratch directory for generated .py files and (when --gen-raw is set)
     # raw Verilog dumps. Defaults to "./genesis_raw"; overridden by --raw-dir
     # DIR; relocated under <tmp_scratch>/genesis_raw when --use-tmp is set
-    # (--raw-dir and --use-tmp are mutually exclusive). Removed by
-    # flush_outputs/clean unless --gen-raw kept it on disk.
+    # (--raw-dir and --use-tmp are mutually exclusive). Persists after the
+    # run; removed by clean(), by --stdout at end of run, and by the
+    # --use-tmp exit cleanup.
     raw_dir: str
     synth_dir: str
     verif_dir: str
@@ -290,9 +296,16 @@ class UniqueModule:
     def clone_inst(self, src_inst: "UniqueModule",
                    new_name: str) -> "UniqueModule": ...
     # ununique_inst preserves the bare base name on first call (no `_unqN`).
-    # Second call for the same base name with identical resolved params
-    # aliases the previous instance under the new inst_name (Perl
-    # UnUniquifiedModules parity); differing params raises ElaborationError.
+    # Second call for the same base name:
+    #   - identical resolved params AND identical scoped-subtree signature
+    #     -> aliases the previous instance under the new inst_name (Perl
+    #     UnUniquifiedModules parity);
+    #   - differing params, same subtree signature -> raises ElaborationError;
+    #   - differing subtree signatures -> re-elaborates under a temp name and
+    #     compares the generated body (blank lines and comments ignored)
+    #     against the previous UN-uniquified generation (Perl
+    #     UniqueModule.pm:1674): identical bodies reuse the previous file,
+    #     divergence raises ElaborationError.
     # Tracked via cache.UNUNIQUE_REGISTRY.
     def ununique_inst(self, module_cls: type | str, inst_name: str,
                       **params) -> "UniqueModule": ...
@@ -521,28 +534,38 @@ Perl's ``shared-ref`` UniqueModule.pm globals.
 ```python
 # Dedup-signature -> elaborated instance, plus instance-name -> instance.
 # Keys live in two disjoint namespaces partitioned by the `::` separator:
-#   "<base>::<sha256>"        pre-elaboration param key (unique_inst)
-#   "<base>::post::<sha256>"  post-elaboration full-param key
-#   "<base>::param::<sha256>" parametric form (unique_inst_param)
+#   "<base>::<sha256>[::sub::<sha256>]"        pre-elaboration param key (unique_inst)
+#   "<base>::post::<sha256>[::sub::<sha256>]"  post-elaboration full-param key
+#   "<base>::param::<sha256>[::sub::<sha256>]" parametric form (unique_inst_param)
+# The optional `::sub::` tail (unique_module._subtree_tag) folds the
+# scoped-subtree override signature into the key: instances whose
+# descendants carry different scoped CLI overrides get separate entries.
+# unique_inst_param additionally appends `_unqN` to the emitted module
+# *name* when that tail is non-empty (Perl gen_override_path_ext parity,
+# UniqueModule.pm:1431).
 # Plain instance identifiers (`<base>_unqN`, user synonyms) MUST NOT
 # contain `::`; cache.register asserts this so a future synonym name can
 # never collide with a dedup signature.
 MODULE_CACHE: _JournaledDict          # _JournaledDict <: dict
 
-# Base-class-name -> next derivative counter (drives `Foo_unq1`, `Foo_unq2`).
-# Advanced via cache.next_derivation. Best-effort contiguous; post-elaboration
-# dedup may leave gaps when a rollback fires.
+# Base-class-name -> next derivative counter (drives `Foo_unq1`, `Foo_unq2`
+# for unique_inst, and for unique_inst_param names on override paths).
+# Namespaced keys like `<base>::ununq_tmp` number ununique_inst's temp
+# re-elaborations. Advanced via cache.next_derivation. Best-effort
+# contiguous; post-elaboration dedup may leave gaps when a rollback fires.
 MODULE_NAME_NUM_DERIVS: Dict[str, int]
 
 # Filename -> emitted Verilog text. Flushed by output_writer.flush_to_disk.
 OUTFILE_CONTENT_CACHE: _JournaledDict # _JournaledDict <: dict
 
-# Base-name -> {"instance": UniqueModule, "params": dict[str, Any]}.
-# Tracks `ununique_inst` calls so a second call with the same base name
-# either aliases the previously generated instance (identical resolved
-# params) or raises (different params). Global scope, not per-parent,
-# because the on-disk filename is global. Mirrors Perl
-# UnUniquifiedModules + does_generate_same.
+# Base-name -> {"instance": UniqueModule, "params": dict[str, Any],
+# "subtree_sig": tuple}. Tracks `ununique_inst` calls; a second call with
+# the same base name aliases the previous instance (identical resolved
+# params and subtree signature), raises (different params), or
+# re-elaborates and compares generated bodies (different subtree
+# signatures; divergence raises). Global scope, not per-parent, because
+# the on-disk filename is global. Mirrors Perl UnUniquifiedModules +
+# does_generate_same + compare_generated_files.
 UNUNIQUE_REGISTRY: Dict[str, Dict[str, Any]]
 
 # Filename -> 'synth' | 'verif' | 'synth_and_verif'. Built by Manager
@@ -550,6 +573,12 @@ UNUNIQUE_REGISTRY: Dict[str, Dict[str, Any]]
 # Empty when synth_top is None -> output_writer treats unmapped files as
 # 'verif'. Mirrors Perl Manager.pm:1330-1395.
 OUTFILE_TAGS: Dict[str, str]
+
+# Resolved paths of include()'d template files, appended by
+# user_config._include. Consumed together with Manager.parsed_source_files
+# by output_writer.write_file_lists as the `.depend` prerequisite list.
+# Append order; deduped at read time. Cleared by clear_all().
+INCLUDED_FILES: List[str]
 
 
 def clear_all() -> None: ...

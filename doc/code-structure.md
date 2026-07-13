@@ -198,7 +198,10 @@ Variants:
 - `unique_inst` -- numeric suffix, two-stage dedup (above).
 - `unique_inst_param` -- single-stage; unique name encodes the parameter values (`Foo_N8_W16`), so the
   resolved-name itself is the cache key.
-- `ununique_inst` / `generate_base` -- no dedup; always allocates a fresh `Foo_unq{N}` and re-executes.
+- `ununique_inst` / `generate_base` -- emits under the bare base name (no `_unqN`), deduped via
+  `cache.UNUNIQUE_REGISTRY`: a second call with the same resolved params and scoped-override subtree
+  aliases the first instance; different params raise; a different subtree re-elaborates under a temp
+  name and compares the generated bodies (identical -> alias, divergent -> raise).
 - `clone_inst` / `synonym` -- registers an alias; no new Verilog is emitted. `OUTFILE_CONTENT_CACHE` is
   mirrored under the synonym name.
 
@@ -260,7 +263,7 @@ Selected flags (`genesispy --help` is authoritative for the full list, including
 | `--extension EXT_IN=EXT_OUT`  | Map an input extension to an output extension (repeatable; default `.vpy=.v`, `.svpy=.sv`). |
 | `--system-verilog` / `-sv`     | Shorthand for `--extension .vpy=.sv`. Conflicts with an explicit `--extension .vpy=...`. |
 | `--product FILE`              | Write `FILE.synth` / `FILE.verif` (Genesis2 semantics).                       |
-| `--vf-out FILE`               | Permanent alias for `--product FILE.vf` (auto-appends `.vf`); conflicts with `--product`. |
+| `--vf-out FILE`               | Single-file product list (auto-appends `.vf`; no `.synth`/`.verif` side-files, unlike `--product`); conflicts with `--product`. |
 | `--json-out`                   | Dump resolved configuration tree.                                             |
 
 ## 9. `gvpy` CLI

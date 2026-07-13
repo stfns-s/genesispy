@@ -63,27 +63,34 @@ class _JournaledDict(dict):
 # `::` separator:
 #   * dedup signatures used by unique_inst / unique_inst_param to collapse
 #     equivalent elaborations:
-#       "<base>::<sha256>"          (pre-elaboration param key)
-#       "<base>::post::<sha256>"    (post-elaboration full-param key)
-#       "<base>::param::<sha256>"   (parametric form)
+#       "<base>::<sha256>[::sub::<sha256>]"        (pre-elaboration param key)
+#       "<base>::post::<sha256>[::sub::<sha256>]"  (post-elaboration full-param key)
+#       "<base>::param::<sha256>[::sub::<sha256>]" (parametric form)
+#     The optional `::sub::` tail (unique_module._subtree_tag) folds the
+#     scoped-subtree override signature into the key, separating instances
+#     whose descendants carry different scoped CLI overrides.
 #   * registered instance identifiers (`<base>_unqN`, plus user-supplied
 #     synonyms) — these must NOT contain `::`; cache.register asserts this
 #     so a future synonym name can never collide with a dedup signature.
 MODULE_CACHE: _JournaledDict = _JournaledDict()
 
 # Base-class-name -> next derivative counter.  Drives unique-name suffixes
-# such as ``Foo_unq2``.
+# such as ``Foo_unq2`` (unique_inst, plus unique_inst_param on override
+# paths).  Namespaced keys like ``<base>::ununq_tmp`` number the temp
+# generations of ununique_inst's re-elaborate-and-compare path.
 MODULE_NAME_NUM_DERIVS: Dict[str, int] = {}
 
 # Filename -> emitted Verilog text.  Flushed on demand (e.g. by Manager).
 OUTFILE_CONTENT_CACHE: _JournaledDict = _JournaledDict()
 
-# Base-name -> {"instance": UniqueModule, "params": dict[str, Any]}.
-# Tracks `ununique_inst` calls so a second call with the same base name
-# either aliases the previously generated instance (identical resolved
-# params) or raises (different params).  Mirrors Perl
-# UnUniquifiedModules + does_generate_same (UniqueModule.pm:1610-1700);
-# global scope (not per-parent) because the on-disk filename is global.
+# Base-name -> {"instance": UniqueModule, "params": dict[str, Any],
+# "subtree_sig": tuple}.  Tracks `ununique_inst` calls; a second call with
+# the same base name aliases the previous instance (identical resolved
+# params and subtree signature), raises (different params), or
+# re-elaborates and compares generated bodies (different subtree
+# signatures).  Mirrors Perl UnUniquifiedModules + does_generate_same +
+# compare_generated_files (UniqueModule.pm:1610-1700, :3130); global
+# scope (not per-parent) because the on-disk filename is global.
 UNUNIQUE_REGISTRY: Dict[str, Dict[str, Any]] = {}
 
 
@@ -94,6 +101,12 @@ UNUNIQUE_REGISTRY: Dict[str, Dict[str, Any]] = {}
 # 'verif' (matches Perl SynthTop=undef default).
 OUTFILE_TAGS: Dict[str, str] = {}
 
+# Resolved paths of include()'d template files, appended by
+# user_config._include.  Consumed together with Manager.parsed_source_files
+# by output_writer.write_file_lists as the .depend prerequisite list.
+# Append order; deduped at read time.
+INCLUDED_FILES: List[str] = []
+
 
 def clear_all() -> None:
     """Reset every singleton.  Intended for tests."""
@@ -102,6 +115,7 @@ def clear_all() -> None:
     OUTFILE_CONTENT_CACHE.clear()
     OUTFILE_TAGS.clear()
     UNUNIQUE_REGISTRY.clear()
+    INCLUDED_FILES.clear()
     # Recycled tmpdir paths could otherwise inherit a stale .vpy mapping.
     from .template import runtime as _rt
     _rt.clear_line_maps()

@@ -39,7 +39,8 @@ INFIX_OPERATOR_MAP: dict[str, str] = {
     # Range -> handled specially (Python ``range``).
     "..": None, "...": None,
     # Defined-or already covered by ``//``.
-    # Ternary ?: handled structurally.
+    # Ternary ?: handled structurally in vp2vpy.render_expr (no map entry;
+    # a ?/: token outside a recognisable ternary raises Unmappable).
 }
 
 PREFIX_OPERATOR_MAP: dict[str, str] = {

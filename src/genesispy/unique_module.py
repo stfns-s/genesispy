@@ -42,6 +42,37 @@ def _subtree_tag(subtree_sig) -> str:
     return "::sub::" + hashlib.sha256(repr(subtree_sig).encode()).hexdigest()
 
 
+def _comparable_lines(text: str, style) -> List[str]:
+    """Lines of ``text`` minus blanks and comments, for structural diffing.
+
+    ``style`` is ``manager.output_comment``: a ``str`` line-comment prefix,
+    or an ``(open, close)`` tuple whose whole-line delimiters bracket block
+    comments (the ``to_verilog`` banner shape). Mirrors the comment/blank
+    skipping in Perl ``compare_generated_files`` (UniqueModule.pm:3170).
+    """
+    out: List[str] = []
+    if isinstance(style, tuple):
+        open_d, close_d = (d.strip() for d in style)
+        in_block = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            if in_block:
+                if stripped == close_d:
+                    in_block = False
+                continue
+            if stripped == open_d:
+                in_block = True
+                continue
+            if stripped:
+                out.append(line)
+    else:
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith(style):
+                out.append(line)
+    return out
+
+
 class UniqueModule:
     """Base class for elaborated hardware modules.
 
@@ -597,6 +628,12 @@ class UniqueModule:
         unique_name = (
             f"{module_cls.__name__}_{suffix}" if suffix else module_cls.__name__
         )
+        if subtree_sig:
+            # On an override path the param suffix alone is ambiguous: two
+            # same-param parents whose descendants carry different scoped
+            # overrides must emit distinct files (Perl gen_override_path_ext,
+            # UniqueModule.pm:1431/:2789 -- counter shared with unique_inst).
+            unique_name += f"_unq{cache.next_derivation(module_cls.__name__)}"
         child._unique_module_name = unique_name
 
         self._sub_instances[inst_name] = child
@@ -651,28 +688,36 @@ class UniqueModule:
         replaced by a hand-written macro at PNR).
 
         Second call with the **same** base name:
-          - identical resolved params -> alias the previously elaborated
-            instance under the new ``inst_name`` (Perl uses the same file).
-          - differing resolved params -> raise ``ElaborationError`` with
-            a Perl-style message and both param dicts (the on-disk
-            filename is global, so two distinct elaborations can't both
-            keep the bare name).
-
-        Comparison is on the **resolved param dict** before elaboration —
-        cheap and exact under the genesispy invariant that ``execute()``
-        is deterministic in its inputs (no time/random calls in module
-        bodies during elaboration). This diverges from Perl, which
-        byte-compares the generated files, but reaches the same verdict
-        for any compliant module body.
+          - identical resolved params and identical scoped-subtree
+            signature -> alias the previously elaborated instance under
+            the new ``inst_name`` (Perl uses the same file).
+          - differing resolved params, same subtree signature -> raise
+            ``ElaborationError`` with a Perl-style message and both param
+            dicts (the on-disk filename is global, so two distinct
+            elaborations can't both keep the bare name).
+          - differing subtree signatures -> re-elaborate under a temp name
+            and compare the generated body (blank lines and comments
+            ignored) against the previous generation; identical bodies
+            reuse the previous file, divergence raises
+            ``ElaborationError`` (mirrors Perl's optimistic-reuse guard at
+            UniqueModule.pm:1642 and the compare/rename at :1674-1700).
         """
         if isinstance(module_cls, str):
             module_cls = self._manager.resolve_module_class(module_cls)
         # Same scoped-override layering as unique_inst / unique_inst_param.
         eff = self._resolve_params(module_cls, inst_name, params)
         base_name = module_cls.__name__
+        child_path = self._instance_path_segments() + (inst_name,)
+        subtree_sig = self._scoped_subtree_signature(child_path)
 
         existing = cache.UNUNIQUE_REGISTRY.get(base_name)
         if existing is not None:
+            if subtree_sig != existing["subtree_sig"]:
+                # Differing descendant scoped overrides: optimistic reuse
+                # is unsafe -- re-elaborate and compare generated bodies.
+                return self._reelaborate_ununique(
+                    module_cls, inst_name, eff, base_name
+                )
             if eff == existing["params"]:
                 # Identical params: alias the previously emitted module.
                 return self._clone_from_cached(existing["instance"], inst_name)
@@ -697,8 +742,81 @@ class UniqueModule:
         cache.UNUNIQUE_REGISTRY[base_name] = {
             "instance": child,
             "params": dict(eff),
+            "subtree_sig": subtree_sig,
         }
         return child
+
+    def _reelaborate_ununique(
+        self,
+        module_cls,
+        inst_name: str,
+        eff: Dict[str, Any],
+        base_name: str,
+    ) -> "UniqueModule":
+        """Second ``ununique_inst`` for ``base_name`` on a different
+        override path: re-elaborate under a temp name and compare with the
+        previous UN-uniquified generation (Perl UniqueModule.pm:1613-1700).
+        """
+        child = module_cls._new_as_son(self)
+        child._instance_name = inst_name
+        for k, v in eff.items():
+            child.override_param(k, v)
+        # Perl uses base_tmp<rand(10000)>; a namespaced derivation counter
+        # keeps temp names deterministic without disturbing the _unqN
+        # numbering for base_name.
+        n = cache.next_derivation(f"{base_name}::ununq_tmp")
+        tmp_name = f"{base_name}_tmp{n}"
+        child._unique_module_name = tmp_name
+        self._sub_instances[inst_name] = child
+        self._execute_child(child)
+
+        suffix = type(child)._OUTPUT_SUFFIX
+        tmp_file = f"{tmp_name}{suffix}"
+        base_file = f"{base_name}{suffix}"
+        if not self._compare_generated_files(
+            tmp_file, base_file, {tmp_name: base_name}
+        ):
+            # Keep tmp_file in OUTFILE_CONTENT_CACHE so the user can diff
+            # the two generations (Perl :1685 keeps the temp file too).
+            raise ElaborationError(
+                f"ununique_inst: Newly generated UN-uniquified {base_name} "
+                f"does not match previous UN-uniquified generation! "
+                f"Compare {tmp_file} and previously generated {base_file}"
+            )
+        # Bodies match: drop the temp entry and point the child at the
+        # previously created module/file (Perl :1692-1700). Must be `del`,
+        # not .pop() -- only __setitem__/__delitem__ are journaled for the
+        # nested-inside-unique_inst case.
+        del cache.OUTFILE_CONTENT_CACHE[tmp_file]
+        child._unique_module_name = base_name
+        child._outfile_name = base_file
+        return child
+
+    def _compare_generated_files(
+        self, file_a: str, file_b: str, name_map: Dict[str, str]
+    ) -> bool:
+        """Structural equality of two cached generated files.
+
+        Port of Perl ``compare_generated_files`` (UniqueModule.pm:3130):
+        line-by-line comparison ignoring blank lines and comments, with a
+        word-boundary ``name_map`` applied to ``file_a`` (temp -> base
+        module names). ``file_b`` missing from the cache means its
+        generation is still in flight (recursion) -> no match.
+        """
+        if file_a not in cache.OUTFILE_CONTENT_CACHE:
+            raise ElaborationError(
+                f"compare_generated_files: can't find {file_a} in the "
+                f"output cache"
+            )
+        if file_b not in cache.OUTFILE_CONTENT_CACHE:
+            return False
+        style = getattr(self._manager, "output_comment", "//")
+        lines_a = _comparable_lines(cache.OUTFILE_CONTENT_CACHE[file_a], style)
+        lines_b = _comparable_lines(cache.OUTFILE_CONTENT_CACHE[file_b], style)
+        for key in sorted(name_map):
+            pat = re.compile(rf"(^|(?<=\W)){re.escape(key)}(?=\W|$)")
+            lines_a = [pat.sub(name_map[key], ln) for ln in lines_a]
+        return lines_a == lines_b
 
     def generate(self, module_cls, inst_name: str, **params: Any) -> "UniqueModule":
         """Perl-compat shortcut: dispatch to unique_inst or unique_inst_param.

@@ -146,6 +146,11 @@ def _include(path: str) -> None:
     allowed = frozenset(ext_map.keys()) if ext_map else None
     syntax = getattr(_active_manager, "syntax", "genesis")
     comment = getattr(_active_manager, "source_comment", "//")
+    # Record for the .depend prerequisite list (nested includes recurse
+    # through _include, so every level registers itself).
+    from . import cache
+
+    cache.INCLUDED_FILES.append(resolved)
     src = parse_vpy(resolved, allowed, syntax=syntax, comment=comment)
     # Register a line map so tracebacks from the included .vpy point at the
     # author's source lines, not the generated Python.

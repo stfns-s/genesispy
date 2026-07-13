@@ -35,8 +35,9 @@ def manager(tmp_path):
     m.raw_dir = str(tmp_path / "raw")
     m.synth_dir = str(tmp_path / "synth")
     m.verif_dir = str(tmp_path / "verif")
-    m.src_path = [str(tmp_path / "src" / "foo.vpy"),
-                  str(tmp_path / "src" / "bar.vpy")]
+    m.src_path = [str(tmp_path / "src")]
+    m.parsed_source_files = [str(tmp_path / "src" / "foo.vpy"),
+                             str(tmp_path / "src" / "bar.vpy")]
     return m
 
 
@@ -224,8 +225,27 @@ def test_write_file_lists_creates_vlist_and_depend(manager):
         depend_body = fh.read()
     assert depend_body.startswith(_basename_match(synth_vlist) + ":") or \
         synth_vlist in depend_body
-    assert "foo.vpy" in depend_body
-    assert "bar.vpy" in depend_body
+    _target, _, prereqs = depend_body.partition(":")
+    dep_list = prereqs.split()
+    # Prerequisites are the parsed input files, never a search directory.
+    assert output_writer._portable_path(str(manager.src_path[0])) not in dep_list
+    assert any(d.endswith("foo.vpy") for d in dep_list)
+    assert any(d.endswith("bar.vpy") for d in dep_list)
+
+
+def test_depend_includes_included_files_and_dedups(manager, tmp_path):
+    _populate_cache()
+    cache.INCLUDED_FILES.append(str(tmp_path / "inc" / "macros.vpy"))
+    cache.INCLUDED_FILES.append(manager.parsed_source_files[0])  # dup of foo
+    written = output_writer.flush_to_disk(manager)
+    output_writer.write_file_lists(manager, written)
+
+    depend = os.path.join(manager.output_dir, "my_top.depend")
+    with open(depend) as fh:
+        _target, _, prereqs = fh.read().partition(":")
+    dep_list = prereqs.split()
+    assert any(d.endswith("macros.vpy") for d in dep_list)
+    assert sum(1 for d in dep_list if d.endswith("foo.vpy")) == 1
 
 
 def _basename_match(path: str) -> str:

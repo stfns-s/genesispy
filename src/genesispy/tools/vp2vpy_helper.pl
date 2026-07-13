@@ -17,8 +17,11 @@ use warnings;
 use PPI;
 use JSON::PP;
 
-binmode STDIN,  ':encoding(UTF-8)';
-binmode STDOUT, ':encoding(UTF-8)';
+# Raw handles: the framing protocol counts bytes on both sides (the Python
+# peer frames strictly in bytes). UTF-8 decode/encode happens exactly once,
+# in read_frame / write_frame.
+binmode STDIN,  ':raw';
+binmode STDOUT, ':raw';
 $| = 1;
 
 my $JSON = JSON::PP->new->utf8(0)->allow_nonref(1);
@@ -61,27 +64,29 @@ sub parse_one {
 }
 
 sub read_frame {
-    my $fh = shift;
+    my ($fh) = @_;
     my $hdr = <$fh>;
     return undef unless defined $hdr;
     chomp $hdr;
     return undef if $hdr eq '';
-    my $n = int $hdr;
+    my $n = int $hdr;    # byte count, as framed by the Python side
     return '' if $n == 0;
     my $buf = '';
-    while (length($buf) < $n) {
+    while (length($buf) < $n) {    # raw handle: length() counts bytes
         my $r = read($fh, $buf, $n - length($buf), length($buf));
         last if !defined $r || $r == 0;
     }
+    # Payload is UTF-8 bytes; decode in place so PPI sees characters. On
+    # invalid UTF-8, utf8::decode leaves $buf as bytes -- PPI still parses
+    # and the helper still answers, so no hang either way.
+    utf8::decode($buf);
     return $buf;
 }
 
 sub write_frame {
-    my $payload = shift;
-    # Frame the response in bytes (not characters): the Python reader pulls
-    # exactly the byte count we announce, then decodes UTF-8 on its side.
-    # JSON::PP with ``->utf8(0)`` returns a Perl string; encode to bytes
-    # only if it's still flagged as a character string.
+    my ($payload) = @_;
+    # Encode exactly once: JSON::PP with ``->utf8(0)`` returns a character
+    # string; STDOUT is :raw, so we produce the bytes and count them here.
     my $bytes = $payload;
     utf8::encode($bytes) if utf8::is_utf8($bytes);
     print length($bytes), "\n", $bytes;
@@ -90,7 +95,10 @@ sub write_frame {
 # Allow one-shot CLI invocation: `perl vp2vpy_helper.pl --once <<<'perl'`
 if (@ARGV && $ARGV[0] eq '--once') {
     my $src = do { local $/; <STDIN> };
-    print $JSON->encode(parse_one($src // ''));
+    utf8::decode($src) if defined $src;
+    my $out = $JSON->encode(parse_one($src // ''));
+    utf8::encode($out) if utf8::is_utf8($out);
+    print $out;
     exit 0;
 }
 

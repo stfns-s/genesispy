@@ -513,9 +513,8 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         help=(
             "Override the raw_dir location (default: ./genesis_raw). "
-            "Mutually exclusive with --use-tmp/--keep-tmp. Orthogonal to "
-            "--gen-raw: without --gen-raw the directory is still removed "
-            "after elaboration."
+            "Mutually exclusive with --use-tmp/--keep-tmp. The directory "
+            "persists after the run; --clean and --stdout remove it."
         ),
     )
     g_phase.add_argument(
