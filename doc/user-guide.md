@@ -839,10 +839,24 @@ uses `w_in` / `w_out`). Working examples live in
 ### 11.3 gvpy-only: raw-Python include via `pinclude(...)`
 
 Inside `gvpy`-driven flows, `pinclude("helpers.py")` execs a plain
-`.py` file in the caller's namespace -- useful for sharing helper
-functions when you don't want the included file to look like a
-template. Bound to `None` in standard `genesispy` runs; calling it
-there raises `TypeError`.
+`.py` file -- useful for sharing helper functions when you don't want
+the included file to look like a template.
+
+As with `include()`, the body runs in a fresh namespace rather than the
+caller's: the caller's variables are not visible to it, and names it
+binds do not come back. That namespace is smaller than `include()`'s --
+`self`, `emit`, `parameter`, `__file__`, `__name__`, and the usual
+builtins, nothing else. The remaining bare-name aliases are absent, so
+`unique_inst`, `error`, `mname` and the rest raise `NameError`; reach
+them through `self`. Values travel in and out on `self`, the same way
+as for `include()` above.
+
+Relative paths resolve against `--inc-path DIR` (repeatable; defaults
+to the current directory). A file found in none of them raises
+`FileNotFoundError`.
+
+`pinclude` is bound to `None` in standard `genesispy` runs; calling it
+there raises `TypeError: 'NoneType' object is not callable`.
 
 ### 11.4 Rebinding bare-name aliases
 

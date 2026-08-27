@@ -19,6 +19,10 @@
 #   SIMULATOR     (xrun | vcs | vlog | verilator | iverilog; default: verilator)
 #   SIM_TOP       (default: $(TOP))
 #   VERILINT      (slang | verilator; default: verilator)
+#   VERILATOR_FLAGS, SLANG_FLAGS
+#                 (extra flags for the matching `vlint` linter, e.g. a
+#                  warning waiver for generated code that lints clean
+#                  elsewhere)
 
 ifeq ($(strip $(TOP)),)
 $(error genesispy.mk: TOP is not set)
@@ -47,6 +51,9 @@ OUTPUTDIR ?= genesis_synth
 SIM_TOP   ?= $(TOP)
 SIMULATOR ?= verilator
 VERILINT  ?= verilator
+
+VERILATOR_FLAGS ?=
+SLANG_FLAGS     ?=
 
 GENESISPY ?= genesispy
 XML2JSON  ?= genesispy-xml2json
@@ -144,9 +151,9 @@ lint: pylint vlint
 
 vlint: gen
 ifeq ($(VERILINT),slang)
-	slang --lint-only -Weverything -Wpedantic --top $(SIM_TOP) -f $(VLOG_VF)
+	slang --lint-only -Weverything -Wpedantic $(SLANG_FLAGS) --top $(SIM_TOP) -f $(VLOG_VF)
 else ifeq ($(VERILINT),verilator)
-	verilator --lint-only --top-module $(SIM_TOP) -f $(VLOG_VF)
+	verilator --lint-only $(VERILATOR_FLAGS) --top-module $(SIM_TOP) -f $(VLOG_VF)
 else
 	$(error vlint: unknown VERILINT='$(VERILINT)' (slang|verilator))
 endif
@@ -190,4 +197,6 @@ help:
 	@echo "  OUTPUTDIR   = $(OUTPUTDIR)"
 	@echo "  SIMULATOR   = $(SIMULATOR)"
 	@echo "  VERILINT    = $(VERILINT)"
+	@echo "  VERILATOR_FLAGS = $(VERILATOR_FLAGS)"
+	@echo "  SLANG_FLAGS     = $(SLANG_FLAGS)"
 endif

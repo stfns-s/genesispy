@@ -44,6 +44,8 @@ Common overrides:
 - `CFG_CONFIG=<file>` -- passed as `--cfg`; composes with `JSON_CONFIG`. JSON has higher priority for keys
   set in both
 - `EXTRA_FLAGS=...` -- passed verbatim to `genesispy`
+- `VERILATOR_FLAGS=...` / `SLANG_FLAGS=...` -- extra flags for the matching `vlint` linter. `regfile` uses
+  the former to waive a WIDTHEXPAND warning on an intended zero-extension
 
 See `genesispy/doc/user-guide.md` section 9 for the full `genesispy` flag list.
 

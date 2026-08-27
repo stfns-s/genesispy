@@ -563,6 +563,9 @@ are not visible to the included body, and names the body binds are not returned 
 the only channel between the two. Demos pass arguments as a `self.include_params` dict; that attribute is
 a user-level convention, not framework state (nothing in `src/` reads, writes, or clears it).
 
+`gvpy_cli._install_pinclude` does the same for `pinclude`, with a narrower namespace: `self`, `emit`,
+`parameter`, `__file__`, `__name__` and builtins only -- none of the other aliases above.
+
 ## genesispy.cache
 
 Process-wide singletons backing elaboration dedup and outfile flushing.
