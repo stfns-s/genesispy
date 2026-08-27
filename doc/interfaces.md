@@ -557,6 +557,12 @@ pinclude                # gvpy-only; None outside gvpy contexts
 These are plain Python locals: a user `.vpy` may rebind them (e.g. `parameter = ...`) and standard Python
 scoping wins.
 
+`user_config._include` builds that namespace fresh for each included file -- `self`, the aliases above,
+`__file__`, `__name__`, `__builtins__` -- and discards it after `exec`. The caller's `execute()` locals
+are not visible to the included body, and names the body binds are not returned to the caller. `self` is
+the only channel between the two. Demos pass arguments as a `self.include_params` dict; that attribute is
+a user-level convention, not framework state (nothing in `src/` reads, writes, or clears it).
+
 ## genesispy.cache
 
 Process-wide singletons backing elaboration dedup and outfile flushing.

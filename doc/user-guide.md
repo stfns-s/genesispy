@@ -767,18 +767,74 @@ classes in a module-level registry).
 
 ### 11.2 Sharing `.vpy` snippets via `include(...)`
 
-`include("file.vpy")` parses another `.vpy` and runs its body inside
-the *current* module's `execute()` namespace. Variables, parameters,
-and any signals emitted by the included file land in the caller's
-module:
+`include("file.vpy")` parses another `.vpy` and runs its body with
+`self` bound to the current module. Parameters registered and text
+emitted by the included file land in the caller's module:
 
 ```python
 //; include("common_ports.vpy")
 //; include("debug_signals.vpy")
 ```
 
+Python variables do not cross the boundary in either direction. The
+body runs in a fresh namespace holding `self`, the bare-name aliases
+(`parameter`, `emit`, `mname`, ...) and `__builtins__`. The caller's
+`execute()` locals are not visible to the snippet, and names the
+snippet binds do not come back to the caller. Everything shared
+travels through `self`.
+
 `include()` resolves against `--inc-path DIR` (repeatable). Mirrors
 Genesis2's `//;include("file.vp")` semantics.
+
+#### Passing arguments to a snippet
+
+`include()` takes a path and nothing else, so arguments travel as an
+attribute on `self`. The convention used by the demos is
+`self.include_params`: assign a dict immediately before each call.
+
+Caller:
+
+```verilog
+//; self.include_params = {'func_name': 'rq_q4d12_q2d6', 'q_in': 'Q4.12', 'q_out': 'Q2.6'}
+//; include("requant.vpy")
+```
+
+Snippet, reading it once at the top and supplying its own defaults:
+
+```verilog
+//; h          = self.include_params
+//; func_name  = h.get('func_name', 'f_requant')
+//; q_in       = h['q_in']
+//; q_out      = h['q_out']
+//; round_mode = h.get('round_mode', 'trunc')
+```
+
+`include_params` is a plain Python attribute -- genesispy neither
+creates nor clears it. Re-assign it before every `include(...)` rather
+than mutating the previous dict: a snippet that reads it without a
+preceding assignment sees whatever the last caller left behind, or
+raises `AttributeError` if nothing ever set it.
+
+To return a value, the snippet sets an attribute on `self` named after
+what it generated, merging into whatever is already registered under
+that name:
+
+```verilog
+//; _d = getattr(self, func_name, {})
+//; _d['out_width'] = w_out
+//; setattr(self, func_name, _d)
+```
+
+The caller reads it back under the same name:
+
+```verilog
+//; slm_out = getattr(self, slm_fname)['out_width']
+```
+
+Pick one key vocabulary per project and stay with it; the demos are
+not consistent with each other (`logmult` uses `out_width`, `qarith`
+uses `w_in` / `w_out`). Working examples live in
+`demos/logmult/genesis_src/` and `demos/qarith/genesis_src/`.
 
 ### 11.3 gvpy-only: raw-Python include via `pinclude(...)`
 
