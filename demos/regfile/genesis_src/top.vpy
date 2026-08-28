@@ -79,4 +79,17 @@ module `mname`();
       // registered outputs
       .SoftReset_q(SoftReset2)
       );
+
+   // Nothing drives Clk, so the flops wait on an edge that never arrives;
+   // without this, verilator's --timing loop runs forever. The block uses its
+   // own macro, not SIMULATION, so the parity normaliser can drop it: the
+   // Genesis2 reference has no equivalent, but its SIMULATION blocks are still
+   // compared.
+\`ifdef GENESISPY_SIM_STOP
+   initial begin
+      #1;
+      $finish;
+   end
+\`endif
+
 endmodule // `mname`

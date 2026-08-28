@@ -95,6 +95,15 @@ _BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
 _WS_RE = re.compile(r"\s+")
 
 
+# Macros whose `ifdef body is dropped entirely rather than kept. These guard
+# genesispy-only code that the Genesis2 reference has no equivalent for, so
+# comparing it would always fail. Keep this list minimal: everything not named
+# here is still compared, including the `ifdef SIMULATION testbenches.
+_DROPPED_IFDEF_MACROS = frozenset({"GENESISPY_SIM_STOP"})
+
+_IFDEF_RE = re.compile(r"`ifn?def\s+(\w+)")
+
+
 def _strip_ifdef_blocks(text: str) -> str:
     r"""Drop `ifdef X ... [`else ...] `endif wrappers.
 
@@ -104,18 +113,24 @@ def _strip_ifdef_blocks(text: str) -> str:
     preprocessor directives, while genesispy .vpy templates wrap testbench
     code in `ifdef SIMULATION` and add `ifdef VCS / `else / `endif
     alternate forms — both should normalise to the same Verilog as Perl.
+
+    A macro in ``_DROPPED_IFDEF_MACROS`` is the exception: its body is dropped
+    on both sides.
     """
     out: List[str] = []
-    # stack entries: "keep" if we currently keep lines, "drop" otherwise.
-    # On `else`, flip the top entry. On `endif`, pop.
+    # stack entries: "keep" if we currently keep lines, "drop" for the branch
+    # `else switched off, "drop_all" for a macro whose whole block goes. On
+    # `else, flip keep <-> drop; "drop_all" is unaffected. On `endif, pop.
     stack: List[str] = []
     for line in text.splitlines():
         s = line.lstrip()
         if s.startswith("`ifdef") or s.startswith("`ifndef"):
-            stack.append("keep")
+            m = _IFDEF_RE.match(s)
+            macro = m.group(1) if m else ""
+            stack.append("drop_all" if macro in _DROPPED_IFDEF_MACROS else "keep")
             continue
         if s.startswith("`else"):
-            if stack:
+            if stack and stack[-1] != "drop_all":
                 stack[-1] = "drop" if stack[-1] == "keep" else "keep"
             continue
         if s.startswith("`endif"):

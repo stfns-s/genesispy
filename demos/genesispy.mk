@@ -158,19 +158,22 @@ else
 	$(error vlint: unknown VERILINT='$(VERILINT)' (slang|verilator))
 endif
 
+# GENESISPY_SIM_STOP enables the `$finish` in demos that have no stimulus of
+# their own, so their `sim` run terminates instead of waiting on a clock edge
+# that never arrives.
 sim: gen
 ifeq ($(SIMULATOR),xrun)
-	xrun -sv -access +rwc -64bit +define+SIMULATION -f $(VLOG_VF) -top $(SIM_TOP)
+	xrun -sv -access +rwc -64bit +define+SIMULATION+GENESISPY_SIM_STOP -f $(VLOG_VF) -top $(SIM_TOP)
 else ifeq ($(SIMULATOR),vcs)
-	vcs -sverilog +define+SIMULATION -f $(VLOG_VF) -top $(SIM_TOP) -o simv && ./simv
+	vcs -sverilog +define+SIMULATION+GENESISPY_SIM_STOP -f $(VLOG_VF) -top $(SIM_TOP) -o simv && ./simv
 else ifeq ($(SIMULATOR),vlog)
-	vlog -sv +define+SIMULATION -f $(VLOG_VF) && vsim -c -do "run -all; quit" $(SIM_TOP)
+	vlog -sv +define+SIMULATION+GENESISPY_SIM_STOP -f $(VLOG_VF) && vsim -c -do "run -all; quit" $(SIM_TOP)
 else ifeq ($(SIMULATOR),verilator)
 	verilator --binary -Wno-fatal --timing --assert -CFLAGS -std=c++20 \
-	    +define+SIMULATION --top-module $(SIM_TOP) -f $(VLOG_VF) \
+	    +define+SIMULATION+GENESISPY_SIM_STOP --top-module $(SIM_TOP) -f $(VLOG_VF) \
 	    -Mdir obj_dir && obj_dir/V$(SIM_TOP)
 else ifeq ($(SIMULATOR),iverilog)
-	iverilog -g2012 -DSIMULATION -s $(SIM_TOP) -o $(SIM_TOP).vvp -f $(VLOG_VF) && vvp $(SIM_TOP).vvp
+	iverilog -g2012 -DSIMULATION -DGENESISPY_SIM_STOP -s $(SIM_TOP) -o $(SIM_TOP).vvp -f $(VLOG_VF) && vvp $(SIM_TOP).vvp
 else
 	$(error sim: unknown SIMULATOR='$(SIMULATOR)' (xrun|vcs|vlog|verilator|iverilog))
 endif

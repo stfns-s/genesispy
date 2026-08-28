@@ -76,6 +76,15 @@ module `mname()` #(
     // Literal backtick passthrough
     // escaped: \`not_an_expr\`
 
+    // Nothing drives clk, so the shift register waits on an edge that never
+    // arrives; without this, verilator's --timing loop runs forever.
+\`ifdef SIMULATION
+    initial begin
+        #1;
+        $finish;
+    end
+\`endif
+
 endmodule
 
 // Minimal stub so the generated file elaborates standalone.
