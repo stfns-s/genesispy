@@ -29,6 +29,11 @@
 //; b_pad         = f"{log_sum_width - b_log_width}'d0,"
 //; out_width     = product_width if take_antilog else log_sum_width + 1
 //; antilog_width = (2**log_sum_width) + 1
+//; # the antilog of a fractional log is a root, not a shift, so only emit
+//; # the helper when the core left the result in the log domain unscaled
+//; emit_antilog  = (not take_antilog) and not a_log_frac_bits and not b_log_frac_bits
+//; log_shift     = a_log_frac_bits + b_log_frac_bits + 1
+//; neg_term      = "" if approx_output_negate else " + 1'b1"
 //; a_log_func    = func_name + "_loga"
 //; b_log_func    = func_name + "_logb"
 //; antilog_func  = func_name + "_antilog"
@@ -48,7 +53,7 @@
 function `out_type` [`out_width-1`:0] `func_name`;
 input signed [`a_msb`:0] a;
 input signed [`b_msb`:0] b;
-reg          [`out_width`:0] zero;
+reg          [`out_width-1`:0] zero;
 begin
 	zero = { `out_width` { a == `a_msb+1`'d0 || b == `b_msb+1`'d0 } } ;
 	case ( { a[`a_width-1`], b[`b_width-1`] } )  // synthesis full_case parallel_case
@@ -60,24 +65,32 @@ begin
 end
 endfunction
 //; else:
+//;     if emit_antilog:
 // optional antilog of a `func_name`_core result
 function signed [`product_width-1`:0] `antilog_func`;
 input [`log_sum_width`:0]   l; // `"sm" if sign_mag_output else "signed"`
-reg   [`antilog_width-1`:0] antilog;
+reg   [`product_width-1`:0] mag;
 reg   [`product_width-1`:0] zero;
 reg                 l_s;
 reg   [`log_sum_width-1`:0] l_m;
 begin
 	zero = { `product_width` { l == 'd0 } };
-//;     if sign_mag_output:
+//;         if sign_mag_output:
 	{ l_s, l_m } = l;
-//;     else:
-	{ l_s, l_m } = { l[`log_sum_width`], l[`log_sum_width`] ? ~l[`log_sum_width-1`:0] : l[`log_sum_width-1`:0] };
-//;     # endif
-	antilog = (1<<l_m)>>`a_log_frac_bits+b_log_frac_bits+1`;
-	`antilog_func` = { l_s, l_s ? ~antilog[`product_width-2`:0] : antilog[`product_width-2`:0] } & ~zero;
+//;         else:
+	l_s = l[`log_sum_width`];
+	// undo the core's own negate, so the magnitude comes back as it went in
+	if (l_s) l_m = ~l[`log_sum_width-1`:0]`neg_term`;
+	else     l_m = l[`log_sum_width-1`:0];
+//;         # endif
+	// one shifter, not up then down: (1 << l_m) >> shift is 2**(l_m - shift)
+	mag = `product_width`'d0;
+	if (l_m >= `log_sum_width`'d`log_shift`) mag = `product_width`'d1 << (l_m - `log_shift`);
+	if (l_s) `antilog_func` = (~mag`neg_term`) & ~zero;
+	else     `antilog_func` = mag & ~zero;
 end
 endfunction
+//;     # endif
 // core function
 function `out_type` [`out_width-1`:0] `core_func`;
 input [`a_log_width+1`:0] zslog2a; // { zero_flag, sign, log }

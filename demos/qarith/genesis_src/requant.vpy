@@ -18,6 +18,12 @@
 //; s_out, m_out, n_out = _parse_q(q_out)
 //; w_in   = m_in + n_in
 //; w_out  = m_out + n_out
+//; if w_in < 1 or w_out < 1:
+//;     error(f"{func_name}: {q_in} -> {q_out}: a Q format needs at least one bit")
+//; # endif
+//; if (s_in and m_in < 1) or (s_out and m_out < 1):
+//;     error(f"{func_name}: {q_in} -> {q_out}: a signed Q format needs an integer bit for the sign")
+//; # endif
 //; shift  = n_in - n_out
 //; acc_w  = w_in + abs(shift) + 2
 //; imax   = (1 << (w_out - 1)) - 1 if s_out else (1 << w_out) - 1
@@ -28,8 +34,8 @@
 //; tie_val  = (1 << (shift - 1)) if shift > 0 else 0
 //; _d = getattr(self, func_name, {}); _d['w_in'] = w_in; _d['w_out'] = w_out; setattr(self, func_name, _d)
 // `func_name`: `q_in` -> `q_out`, round=`round_mode`, saturate.
-function [`m_out-1`:`-n_out`] `func_name`;
-	input [`m_in-1`:`-n_in`] x;
+function `"signed " if s_out else ""`[`m_out-1`:`-n_out`] `func_name`;
+	input `"signed " if s_in else ""`[`m_in-1`:`-n_in`] x;
 	reg signed [`acc_w-1`:0] xs, acc;
 	begin
 //; if s_in:

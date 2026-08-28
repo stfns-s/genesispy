@@ -20,7 +20,7 @@
 //; s_o, m_o, n_o = _pq(h['q_out'])
 //; w_i = m_i + n_i
 //; op  = '~' if approx else '-'
-function [`m_o-1`:`-n_o`] `func_name`;
+function `"signed " if s_o else ""`[`m_o-1`:`-n_o`] `func_name`;
 	input [`m_a-1`:`-n_a`] x;
 	reg signed [`w_i-1`:0] xs;
 	begin

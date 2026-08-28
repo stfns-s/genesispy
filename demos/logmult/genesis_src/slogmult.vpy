@@ -53,7 +53,7 @@ begin
 	`core_func` = res;
 //; # endif
 	// synthesis translate_off
-	if ( log2b > `out_width-a_width` ) $display("Assertion failed in %m log2b > %d", `product_width-out_width`);
+	if ( log2b > `out_width-a_width` ) $display("Assertion failed in %m log2b > %d", `out_width-a_width`);
 	// synthesis translate_on
 end
 endfunction

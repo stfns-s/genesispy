@@ -166,7 +166,7 @@ else ifeq ($(SIMULATOR),vcs)
 else ifeq ($(SIMULATOR),vlog)
 	vlog -sv +define+SIMULATION -f $(VLOG_VF) && vsim -c -do "run -all; quit" $(SIM_TOP)
 else ifeq ($(SIMULATOR),verilator)
-	verilator --binary -Wno-fatal --timing -CFLAGS -std=c++20 \
+	verilator --binary -Wno-fatal --timing --assert -CFLAGS -std=c++20 \
 	    +define+SIMULATION --top-module $(SIM_TOP) -f $(VLOG_VF) \
 	    -Mdir obj_dir && obj_dir/V$(SIM_TOP)
 else ifeq ($(SIMULATOR),iverilog)

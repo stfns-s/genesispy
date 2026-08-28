@@ -19,7 +19,7 @@
 //; s_i, m_i, n_i = _pq(h['q_int'])
 //; s_o, m_o, n_o = _pq(h['q_out'])
 //; w_i = m_i + n_i
-function [`m_o-1`:`-n_o`] `func_name`;
+function `"signed " if s_o else ""`[`m_o-1`:`-n_o`] `func_name`;
 	input [`m_a-1`:`-n_a`] a;
 	input [`m_b-1`:`-n_b`] b;
 	reg signed [`w_i-1`:0] as, bs;

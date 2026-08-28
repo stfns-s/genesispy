@@ -95,6 +95,11 @@
 //;     # endfor
 //;     return rows
 //; # enddef
+//; # A signed result assigned into a wider variable must sign-extend; _sx turns a
+//; # raw output code into its signed value, _sd emits it as a sized literal.
+//; _sx = lambda v, w: v - (1 << w) if (v >> (w - 1)) & 1 else v
+//; _sd = lambda v, w: f"{w}'sd{v}" if v >= 0 else f"-{w}'sd{-v}"
+//; WIDE_PAD = 4
 //; # requant instances: (q_in, q_out, round_mode)
 //; REQUANT = [
 //;     ('Q4.12', 'Q2.6',  'half_even'),
@@ -122,7 +127,7 @@ module `mname` ();
 //;     s_out, m_out, n_out = _parse_q(q_out)
 //;     self.include_params = {'func_name': name, 'q_in': q_in, 'q_out': q_out, 'round_mode': mode, 'osym': False}
 //;     include("requant.vpy")
-//;     meta.append({'name': name, 'arity': 1, 'ports': [(m_in, n_in)], 'wo': m_out + n_out, 'label': f"{q_in}->{q_out} {mode}", 'vecs': _vectors('requant', [q_in], q_in, q_out, mode, False, False)})
+//;     meta.append({'name': name, 'arity': 1, 'ports': [(m_in, n_in)], 'wo': m_out + n_out, 'sgn': s_out, 'label': f"{q_in}->{q_out} {mode}", 'vecs': _vectors('requant', [q_in], q_in, q_out, mode, False, False)})
 //; # endfor
 //; for op, fmts, q_out, mode, osym, approx in OPS:
 //;     name = _opname(op, fmts, q_out, osym, approx)
@@ -138,7 +143,7 @@ module `mname` ();
 //;     s_out, m_out, n_out = _parse_q(q_out)
 //;     ports = [(_parse_q(f)[1], _parse_q(f)[2]) for f in fmts]
 //;     lbl = f"{op} {' '.join(fmts)} -> {q_out}" + (' sym' if osym else '') + (' approx' if approx else '')
-//;     meta.append({'name': name, 'arity': len(fmts), 'ports': ports, 'wo': m_out + n_out, 'label': lbl, 'vecs': _vectors(op, fmts, q_int, q_out, mode, osym, approx)})
+//;     meta.append({'name': name, 'arity': len(fmts), 'ports': ports, 'wo': m_out + n_out, 'sgn': s_out, 'label': lbl, 'vecs': _vectors(op, fmts, q_int, q_out, mode, osym, approx)})
 //; # endfor
 
 \`ifdef SIMULATION
@@ -150,6 +155,10 @@ module `mname` ();
 //;     # endfor
    reg [`e['wo'] - 1`:0] `e['name']`_exp [0:`nv - 1`];
    reg [`e['wo'] - 1`:0] `e['name']`_res;
+//;     if e['sgn']:
+   reg signed [`e['wo'] + WIDE_PAD - 1`:0] `e['name']`_wide;
+   reg signed [`e['wo'] + WIDE_PAD - 1`:0] `e['name']`_wexp [0:`nv - 1`];
+//;     # endif
 //; # endfor
    initial begin
       errors = 0;
@@ -160,6 +169,9 @@ module `mname` ();
       `e['name']`_in`k`[`j`] = `mk + nk`'d`vec[k]`;
 //;         # endfor
       `e['name']`_exp[`j`] = `e['wo']`'d`vec[-1]`;
+//;         if e['sgn']:
+      `e['name']`_wexp[`j`] = `_sd(_sx(vec[-1], e['wo']), e['wo'] + WIDE_PAD)`;
+//;         # endif
 //;     # endfor
 //; # endfor
 //; for e in meta:
@@ -173,6 +185,21 @@ module `mname` ();
                      i, `e['name']`_res, `e['name']`_exp[i]);
          end
       end
+//; # endfor
+//; # A signed function assigned into something wider must sign-extend; an
+//; # unsigned declaration would zero-extend and turn negatives positive.
+//; for e in meta:
+//;     if e['sgn']:
+//;         args = ", ".join(f"{e['name']}_in{k}[i]" for k in range(e['arity']))
+      for (i = 0; i < `len(e['vecs'])`; i = i + 1) begin
+         `e['name']`_wide = `e['name']`(`args`);
+         if (`e['name']`_wide !== `e['name']`_wexp[i]) begin
+            errors = errors + 1;
+            $display("FAIL wide `e['label']` idx=%0d res=%0d exp=%0d",
+                     i, `e['name']`_wide, `e['name']`_wexp[i]);
+         end
+      end
+//;     # endif
 //; # endfor
       if (errors == 0) $display("qarith: all vectors PASS");
       else $fatal(1, "qarith: %0d mismatch(es)", errors);
