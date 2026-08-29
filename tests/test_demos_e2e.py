@@ -234,12 +234,13 @@ def test_regfile(tmp_path: Path, syntax: str) -> None:
     assert "DataOut2" in body
 
 
-def test_logmult(tmp_path: Path) -> None:
-    """logmult is wrapperless: include()-d leaves, single emitted top.v,
-    no config file.  Function names are derived from the operand widths
-    baked into the top-level template."""
+def test_include_examples(tmp_path: Path) -> None:
+    """include_examples is wrapperless: include()-d leaves, single emitted
+    top.v, no config file.  top.vpy includes codec.vpy, which includes
+    gray.vpy twice, so the emitted functions come from two nesting levels
+    and carry names derived at each of them."""
     synth = _run_demo(
-        tmp_path, DEMOS / "logmult", "top",
+        tmp_path, DEMOS / "include_examples", "top",
         "top.vpy",
         extra_argv=["--inc-path", "genesis_src"],
     )
@@ -247,24 +248,14 @@ def test_logmult(tmp_path: Path) -> None:
     assert files == ["top.v"], f"expected exactly top.v, got {files}"
     body = (synth / "top.v").read_text()
     assert "module top" in body
-    assert "logmult_8x8" in body
-    assert "slogmult_8x8" in body
-
-
-def test_qarith(tmp_path: Path) -> None:
-    """qarith is wrapperless: include()-d leaves, single emitted top.v,
-    no config file.  Function names encode Q-notation operand formats."""
-    synth = _run_demo(
-        tmp_path, DEMOS / "qarith", "top",
-        "top.vpy",
-        extra_argv=["--inc-path", "genesis_src"],
-    )
-    files = [p.name for p in synth.iterdir()]
-    assert files == ["top.v"], f"expected exactly top.v, got {files}"
-    body = (synth / "top.v").read_text()
-    assert "module top" in body
-    assert "q4d12_to_q2d6" in body
-    assert "mul_q2d2_q2d2_to_q4d4" in body
+    # Named by top.vpy, one per width in its set.
+    assert "function static [2:0] gray_codec_w3;" in body
+    assert "function static [4:0] gray_codec_w5;" in body
+    # Named by codec.vpy, which included gray.vpy for each half.
+    assert "function static [4:0] gray_codec_w5_enc;" in body
+    assert "function static [4:0] gray_codec_w5_dec;" in body
+    # gray.vpy included straight from top.vpy as well.
+    assert "function static [3:0] gray_enc_w4;" in body
 
 
 def test_generation_examples(tmp_path: Path) -> None:

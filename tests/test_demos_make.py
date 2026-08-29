@@ -22,8 +22,7 @@ DEMO_NAMES = [
     "iterative_wallace_tree",
     "many_iterative_wallace_trees",
     "regfile",
-    "logmult",
-    "qarith",
+    "include_examples",
 ]
 
 # Build artefacts that must not be copied into the staging directory.
@@ -237,15 +236,15 @@ def test_make_gen_reruns_on_config_change(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "demo_copy,leaf",
     [
-        ("qarith", "genesis_src/requant.vpy"),
-        ("logmult", "genesis_src/ilog2.vpy"),
+        ("include_examples", "genesis_src/gray.vpy"),
+        ("include_examples", "genesis_src/codec.vpy"),
     ],
     indirect=["demo_copy"],
 )
 def test_make_gen_rebuilds_on_included_leaf_edit(demo_copy: Path, leaf: str) -> None:
     """Editing an include()'d leaf must trigger a rebuild on the next make gen.
 
-    qarith/logmult set INPUTS := top.vpy; their leaves enter via include()
+    include_examples sets INPUTS := top.vpy; its leaves enter via include()
     under --inc-path genesis_src so SRC_FILES only lists top.vpy.  The
     generated depfile lists the leaves as prerequisites; once -include'd by
     genesispy.mk the rebuild fires automatically.

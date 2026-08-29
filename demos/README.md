@@ -109,54 +109,32 @@ source listings, commands, and the expected Verilog per example.
 Nested parametric one-hot mux. Generates six unique modules from hardcoded loops over signal and mux widths. No config.
 Entry: `genesis_src/top.vpy`.
 
-### `logmult`
+### `include_examples`
 
-Log-arithmetic approximate multipliers. Three include files under
-`genesis_src/` define Verilog `function`s: `ilog2.vpy` (integer log2),
-`logmult.vpy` (`a*b ~= antilog(log2 a + log2 b)`), and `slogmult.vpy`
-(semi-log, `a*b ~= a << log2 b`). The multipliers pull in `ilog2` via
-`include()`. There is no wrapper module: `top` calls `include()` on
-`slogmult.vpy` and `logmult.vpy`, passing a width-derived `func_name`
-(e.g. `logmult_8x8`, `slogmult_8x8`), so both functions are emitted
-directly into the `top` module. `top` self-checks under
-`` `ifdef SIMULATION `` on a fixed set of operand pairs built at elaboration
-time, checking the relative error against the exact product stays within a
-documented bound (these are coarse approximations -- worst case near a
-factor of two at powers of two). Two paths that `top` does not otherwise
-need are checked as well, because both ship: `ilog2` at
-`log_frac_bits = 2`, compared code by code against a golden table computed
-at elaboration time, and `logmult` at `take_antilog: False` composed with
-its own `_antilog` helper, which must reproduce the in-core antilog bit for
-bit. The includes are resolved via `--inc-path genesis_src` (set in the
-demo `Makefile`). Entry: `genesis_src/top.vpy`. `make sim` runs the
-self-check.
+The `include()` mechanism on its own, with gray-code conversion as filler arithmetic. Three files under
+`genesis_src/`. `gray.vpy` emits one Verilog `function` per include, encoding or decoding, generated one
+XOR per bit; it takes `func_name`, `width`, `direction` (`encode` or `decode`) and `lifetime`, and calls
+`error()` on a bad width or direction. `codec.vpy` includes `gray.vpy` twice under derived names and emits
+a round-trip function `decode(encode(x))`, which must return `x`; it calls `warning()` at `width` 1, where
+gray coding is the identity and the round trip proves nothing. `top.vpy` includes `codec.vpy` once per
+width and `gray.vpy` once directly, so the emitted functions come from two nesting levels.
 
-### `qarith`
+There is no wrapper module: every function lands in `top`. Each leaf reports its output width back to its
+caller by setting an attribute on `self` named after the function it generated, which is how `codec.vpy`
+learns the width of the halves it just included, and `top.vpy` the width of the round trip.
 
-Parametric fixed-point (Q-notation) arithmetic demo. `genesis_src/top.vpy` generates a requantizer
-and four arithmetic operations -- negate, add, subtract, multiply -- as descriptively-named Verilog
-`function`s emitted directly into the `top` module (no wrapper). Formats are `Qm.n` / `UQm.n`
-strings with `m` including the sign bit; operands may have heterogeneous formats and independent
-signedness. Function ports use Q-weighted bit indices: a `Q4.12` port is declared `[3:-12]`
-(`x[0]` the integer LSB, `x[-12]` the fraction LSB, `x[3]` the sign).
+The width set comes from `widths = sorted({3, parameter('WIDTH', 5)})`. A scalar parameter rather than a
+list, because the CLI coerces scalars only and a list-valued `-p` would arrive as a string. The fixed 3
+keeps two round-trip functions in every build, so one leaf is always included twice under different names;
+the set collapses to one when `WIDTH` is 3. `EXTRA_FLAGS` is a full override, not an append, so reaching
+the two diagnostic paths means repeating the include path:
+`make gen EXTRA_FLAGS='--inc-path genesis_src -p WIDTH=1'` hits the `warning()`, `-p WIDTH=0` the
+`error()`, which writes no file.
 
-Each arithmetic op leaf (`neg.vpy`, `add.vpy`, `sub.vpy`, `mul.vpy`) computes an exact
-full-precision intermediate result, then calls a generated `<name>_rq` requant helper -- itself a
-`requant.vpy` include -- to round and saturate to the caller's target `Qp.q`. The requant helper
-supports a symmetric-output option (`osym`) that tightens the negative bound to match the positive
-range. Negate and subtract support one's-complement approximate negation (`approx`). Each leaf is
-`include()`d once per format combination, with a descriptive function name derived from the op and
-formats; the requant helper for that op is emitted immediately before the op include. There is no
-wrapper module: all functions appear directly in `top`.
-
-`top` self-checks under `` `ifdef SIMULATION `` by calling each function on baked-in vectors and
-comparing against a golden computed at elaboration time with the Python `fixedpoint` library --
-exhaustive over every input code for the demo's small formats. Entry: `genesis_src/top.vpy`.
-Every signed result is also assigned into a wider signed variable and compared against the
-sign-extended golden value, which is what catches a function declared without `signed`.
-`make sim` runs the self-check and prints `qarith: all vectors PASS`. Leaves are resolved via
-`--inc-path genesis_src` (set in the demo `Makefile`). Requires `fixedpoint` importable by the
-interpreter running `genesispy` at `make gen` time.
+`top` self-checks under `` `ifdef SIMULATION ``: every code of every width through the round trip, and the
+directly included encoder against a table computed at elaboration time. Leaves resolve via
+`--inc-path genesis_src`, set in the demo `Makefile`. Entry: `genesis_src/top.vpy`. `make sim` runs the
+self-check and prints `include_examples: all vectors PASS`.
 
 ### `gvpy`
 
