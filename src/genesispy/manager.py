@@ -558,7 +558,10 @@ class Manager:
                 return 0
             self.gen_verilog()
         except GenesisPyError as exc:
-            error(str(exc), fatal=False)
+            # reporting.error() already wrote the message to stderr before
+            # raising; only report the ones raised directly at a call site.
+            if not getattr(exc, "reported", False):
+                error(str(exc), fatal=False)
             return 1
         except Exception as exc:  # noqa: BLE001 -- remap user-code traceback
             # Rewrite frames to .vpy positions; falls back when no LINE_MAP entry.

@@ -483,3 +483,16 @@ def test_main_comment_deprecated_alias_names_gvpy(tmp_path, capsys, monkeypatch)
     assert "--comment is deprecated" in err
     assert "gvpy" in err
     assert "genesispy" not in err
+
+
+# Doc-review E3 -- bin/gvpy runs `python -m genesispy.gvpy_cli`, so deriving
+# the program name from sys.argv[0] printed "gvpy_cli.py" in --help and in
+# every deprecation/error message.
+def test_help_uses_the_console_script_name(capsys, monkeypatch):
+    """--help must name the program `gvpy`, whatever sys.argv[0] holds."""
+    monkeypatch.setattr(sys, "argv", ["/some/path/gvpy_cli.py", "--help"])
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    out = capsys.readouterr().out
+    assert out.startswith("usage: gvpy ")
+    assert "gvpy_cli.py" not in out

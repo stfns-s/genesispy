@@ -257,7 +257,10 @@ def _flatten_csv(values: Iterable[str]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    PROG = os.path.basename(sys.argv[0]) or "gvpy"
+    # Fixed rather than derived from sys.argv[0]: the bin/gvpy launcher runs
+    # `python -m genesispy.gvpy_cli`, which would otherwise name the program
+    # "gvpy_cli.py" in --help and in every deprecation/error message.
+    PROG = "gvpy"
     parser = argparse.ArgumentParser(
         prog=PROG,
         description="gvpy-compatible preprocessor on top of genesispy.",

@@ -30,7 +30,7 @@ vlint-%:
 
 cleangen:
 	rm -rf genesis_raw genesis_synth genesis_verif genesis_synth_ex*
-	rm -f genesis_vlog_*.vf
+	rm -f genesis_vlog_*.vf genesis_vlog_*.vf.flags
 
 cleansim:
 	rm -rf obj_dir csrc simv.daidir work

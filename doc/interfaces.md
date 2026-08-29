@@ -16,6 +16,12 @@ class GenesisPyError(Exception):
     # Optional location string (e.g. "file.vpy:42") appended to the
     # formatted message as " (at <location>)".
     location: Optional[str]
+    # True when this instance was raised by reporting.error(), which has
+    # already written the message to stderr. False on an instance built
+    # directly by a `raise GenesisPyError(...)` call site. Manager.execute
+    # checks it so a reported error is not printed a second time; a
+    # handler that reports unconditionally would double up.
+    reported: bool = False
     def __init__(self, msg: str = "", location: Optional[str] = None) -> None: ...
 class ParseError(GenesisPyError):       code = "parse_error"
 class ConfigError(GenesisPyError):      code = "config_error"
@@ -27,6 +33,7 @@ class ElaborationError(GenesisPyError): code = "elaboration_error"
 # uncolored copy to the `--log` sink set via `set_log_file`.
 # `cls=` lets the call site preserve subclass discrimination at the
 # raise; default is GenesisPyError. fatal=False prints and returns.
+# When fatal, the raised instance carries `reported = True` (see above).
 def error(msg: str, *, fatal: bool = True, cls: type = GenesisPyError) -> None: ...
 def warning(msg: str) -> None: ...
 def info(msg: str) -> None: ...
@@ -511,6 +518,30 @@ def parse_vpy(
     """
 ```
 
+## genesispy.extensions
+
+Input -> output extension mapping shared by `cli`, `Manager`, `parse_vpy` and `gvpy_cli`.
+
+```python
+# The built-in pairs, used when the user passes no --extension/-sv.
+DEFAULT_EXTENSION_MAP: dict[str, str] = {".vpy": ".v", ".svpy": ".sv"}
+
+# Parse one `--extension EXT_IN=EXT_OUT` value. Both sides are lowercased
+# and gain a leading dot if missing. Raises argparse.ArgumentTypeError on
+# malformed input, so it works directly as an argparse `type=`.
+def parse_extension_spec(raw: str) -> tuple[str, str]: ...
+
+# Merge user pairs over DEFAULT_EXTENSION_MAP (user entries win) and return
+# the result. This is what Manager.extension_map holds. Raises ValueError
+# when two pairs give the same input extension different outputs -- the
+# check behind the -sv / --extension .vpy=... conflict error.
+def build_extension_map(pairs: Iterable[tuple[str, str]]) -> dict[str, str]: ...
+
+# Sorted list of accepted input extensions; the `allowed` argument threaded
+# into parse_vpy / write_module.
+def allowed_inputs(extension_map: dict[str, str]) -> list[str]: ...
+```
+
 ## genesispy.template.emitter
 
 ```python
@@ -523,7 +554,59 @@ def write_module(
     syntax: str = "genesis",
     comment: str = "//",
 ) -> str:
-    """Forward ``syntax`` and ``comment`` to ``parse_vpy``; otherwise unchanged."""
+    """Forward ``syntax`` and ``comment`` to ``parse_vpy``; otherwise unchanged.
+
+    Parses ``vpy_path``, wraps it via emit_module, writes
+    ``<output_dir>/<stem>.py``, registers the line map, returns that path.
+    """
+
+def emit_module(
+    vpy_path: str,
+    parsed_body: str,
+    *,
+    module_name: str | None = None,
+    output_suffix: str = ".v",
+) -> str:
+    """Return the Python source of a generated module file, without writing it.
+
+    ``parsed_body`` is the column-zero output of ``parse_vpy``; it is indented
+    eight spaces (class + def execute) before insertion, and its
+    ``# line N "file.vpy"`` directives are preserved verbatim. ``module_name``
+    defaults to the ``vpy_path`` stem. ``output_suffix`` is stamped on the
+    class as ``_OUTPUT_SUFFIX``, which ``UniqueModule._flush_outfile`` and
+    ``UniqueModule.synonym`` read at flush time.
+
+    Split out from write_module so callers can compile a module without
+    touching the filesystem; exercised directly by tests/test_emitter.py.
+    """
+```
+
+## genesispy.template.aliases
+
+Single source of truth for the Genesis2 bare-name alias table. Two consumers must agree: the
+emitter's generated prelude and `user_config._include`'s exec namespace. Both are produced here,
+so they cannot drift.
+
+```python
+# (bare_name, UniqueModule method name) pairs for the plain forwards.
+# Does NOT include the short names, `include`, or `pinclude` -- those are
+# bound separately because they are not simple method forwards.
+SIMPLE_ALIASES: tuple[tuple[str, str], ...]
+
+# Every name a .vpy body may rely on: SIMPLE_ALIASES keys plus
+# mname/iname/bname/sname, include, pinclude. This is the complete set,
+# and the one user-guide section 7.3 enumerates.
+EXPECTED_ALIAS_KEYS: frozenset[str]
+
+# Render the local-binding prelude injected at the top of every generated
+# execute() by template/emitter._HEADER. `indent` is the leading whitespace
+# for each emitted line (two levels by default).
+def alias_prelude_source(indent: str = "        ") -> str: ...
+
+# Build the equivalent name -> callable mapping for an exec namespace, bound
+# to `self_obj`. Used by user_config._include; gvpy_cli binds a deliberately
+# narrower namespace for pinclude (see genesispy.template.runtime below).
+def alias_dict(self_obj: Any) -> dict[str, Any]: ...
 ```
 
 ## genesispy.template.runtime
@@ -573,6 +656,121 @@ a user-level convention, not framework state (nothing in `src/` reads, writes, o
 
 `gvpy_cli._install_pinclude` does the same for `pinclude`, with a narrower namespace: `self`, `emit`,
 `parameter`, `__file__`, `__name__` and builtins only -- none of the other aliases above.
+
+The module's own API, used by the engine rather than by `.vpy` bodies:
+
+```python
+# str subclass whose __call__ returns self, so a .vpy may write either
+# `mname` or `mname()`. Backing type of the four short names; do not
+# replace with a bare str (user templates rely on both spellings).
+class StrCallable(str):
+    def __call__(self) -> "StrCallable": ...
+
+# Generated-file path -> {generated_lineno: (source_path, source_lineno)}.
+# Process-global; cleared by cache.clear_all() via clear_line_maps().
+LINE_MAP: dict[str, dict[int, tuple[str, int]]]
+
+# Scan generated Python for `# line N "path"` directives and return the
+# mapping. Callers pair it with register_line_map.
+def build_line_map(generated_source: str) -> dict[int, tuple[str, int]]: ...
+
+# Record a mapping under `generated_path`. Called by template.emitter
+# (for written modules), user_config._include (for included .vpy files),
+# and gvpy_cli (for its synthetic single-file module).
+def register_line_map(generated_path: str, mapping: dict[int, tuple[str, int]]) -> None: ...
+
+# Format `exc`'s traceback with generated-file frames rewritten back to
+# .vpy positions. Falls back to the unmapped text for frames with no
+# LINE_MAP entry. Used by Manager.execute and gvpy_cli.main as the
+# last-resort handler for errors escaping user template code.
+def remap_traceback(exc: BaseException) -> str: ...
+
+# Drop every registered map. Called from cache.clear_all(); test-only.
+def clear_line_maps() -> None: ...
+```
+
+## genesispy.user_config
+
+Runtime context for `.vpy` bodies and `.cfg` files. Holds the module-level "which module is
+elaborating right now" state that the bare-name helpers read.
+
+```python
+# Bind `manager` and `module` as the active context for the duration of the
+# block. Saves and restores the previous pair, so nested include() and
+# child execute() calls keep the outer context intact. Entered by
+# Manager.gen_verilog (around top.execute()), by
+# UniqueModule._execute_child (around each child), and by gvpy_cli.
+@contextmanager
+def context(manager: "Manager", module: "UniqueModule") -> Iterator[None]: ...
+
+# Backs the bare-name `include` in .vpy bodies. Resolution: an absolute
+# path, or a relative path that already exists from the cwd, is used as-is;
+# otherwise Manager.find_file searches inc_path + ['.'] (NOT src_path).
+# Appends the resolved path to cache.INCLUDED_FILES for the .depend list,
+# registers a line map, then execs the parsed body in a FRESH namespace:
+# {self, __file__, __name__, __builtins__} plus aliases.alias_dict(module).
+# The caller's execute() locals are not visible to the body and names the
+# body binds do not return to the caller -- `self` is the only channel.
+# Reads syntax / source_comment / extension_map off the active manager, so
+# an included file is parsed in the same flavour as its caller.
+def _include(path: str) -> None: ...
+```
+
+The `.cfg` sandbox helpers (`_configure`, `_get_configuration`, `_exists_configuration`,
+`_remove_configuration`, `_print_configuration`, `_get_top_name`, `_get_synthtop_path`, `error`)
+are injected into `.cfg` exec namespaces under their unprefixed names by `ConfigHandler.read_cfg`.
+User-facing list: user-guide section 11.6.
+
+## genesispy.output_writer
+
+The output tail. Every helper takes a `Manager`-shaped object, duck-typed rather than the real
+class; `tests/_stubs.StubManager` is the minimal stand-in. Attributes read across the module:
+`debug`, `depend_file`, `gen_raw`, `out_type`, `output_dir`, `parsed_source_files`,
+`product_file`, `raw_dir`, `synth_dir`, `top`, `touched_dirs`, `verif_dir`, plus `src_path` /
+`inc_path` / `cfg_path` read through `getattr` by `write_pathfile`.
+
+```python
+# Walk cache.OUTFILE_CONTENT_CACHE, place each file in synth_dir or
+# verif_dir per cache.OUTFILE_TAGS (untagged -> 'verif'), filtered by
+# manager.out_type. Idempotent: content equal to what is on disk is left
+# untouched. Returns {'synth': [...], 'verif': [...],
+# 'synth_and_verif': [...], 'ordered': [(dest_path, tag), ...]}; 'ordered'
+# follows cache.OUTFILE_ORDER (DFS first-seen) and is what every list
+# writer below iterates, so all products share one ordering.
+def flush_to_disk(manager) -> dict[str, list]: ...
+
+# Write <top>.vlist (every emitted file) and, when at least one verif file
+# exists, <top>.vlist.verif (verif + synth_and_verif). Always writes
+# <top>.depend, whose prerequisites are manager.parsed_source_files plus
+# cache.INCLUDED_FILES. With emit_vlist=False (the caller asked for
+# --product/--vf-out) only .depend is written, retargeted at the named
+# product file. Returns the written paths by role.
+def write_file_lists(manager, written: dict, emit_vlist: bool = True) -> dict[str, str]: ...
+
+# --product / --vf-out. For base "foo.vf" with single=False writes foo.vf
+# (master), foo.synth.vf, foo.verif.vf; the extension is split with
+# os.path.splitext, so an extensionless base gives foo/foo.synth/foo.verif.
+# single=True (--vf-out) writes only the master. Per Perl
+# Manager.pm:1393-1394 synth_and_verif files appear in BOTH side lists.
+def write_product_lists(manager, written: dict, base: str, single: bool = False) -> dict[str, str]: ...
+
+# Write <output_dir>/genesispy_clean.sh (mode 0o755, absolute path
+# returned): rm -rf over the raw/synth/verif dirs and the file lists
+# write_file_lists produced.
+def write_clean_script(manager) -> str: ...
+
+# --path: write manager's src_path/inc_path/cfg_path and touched_dirs as
+# absolute directory paths, deduped, in append order.
+def write_pathfile(manager, path: str) -> str: ...
+
+# --stdout: concatenate the Verilog cache to `stream` (default sys.stdout),
+# separated by a 'genesispy:' banner in manager.output_comment style,
+# instead of writing files.
+def dump_to_stdout(manager, stream: TextIO | None = None) -> None: ...
+
+# --clean: remove the run's outputs. Manager.clean additionally drops raw_dir.
+def clean_outputs(manager) -> None: ...
+```
 
 ## genesispy.cache
 

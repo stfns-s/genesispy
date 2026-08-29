@@ -6,10 +6,16 @@ This module is the Python port of the output-orchestration tail of
 * ``create_product_lists``  -> :func:`flush_to_disk` + :func:`write_file_lists`
 * ``create_clean_file``     -> :func:`write_clean_script`
 
-Helpers here purposely take a ``Manager``-shaped object (duck-typed: any
-object exposing ``output_dir``, ``raw_dir``, ``synth_dir``, ``verif_dir``,
-``top``, ``debug``).  This keeps the writer decoupled from the
-real Manager class.
+Helpers here purposely take a ``Manager``-shaped object (duck-typed).
+This keeps the writer decoupled from the real Manager class; see
+``tests/_stubs.StubManager`` for the minimal stand-in.  Across this
+module the attributes read are:
+
+``debug``, ``depend_file``, ``gen_raw``, ``out_type``, ``output_dir``,
+``parsed_source_files``, ``product_file``, ``raw_dir``, ``synth_dir``,
+``top``, ``touched_dirs``, ``verif_dir`` -- plus ``src_path``,
+``inc_path`` and ``cfg_path``, which :func:`write_pathfile` reads
+through ``getattr`` and treats as empty when absent.
 
 Conventions established here (see also docstrings):
 

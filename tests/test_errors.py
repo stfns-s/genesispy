@@ -85,3 +85,72 @@ def test_error_dispatches_subclass_for_code(capsys):
         error("oops", cls=ParseError)
     assert ei.value.code == "parse_error"
     assert ei.value.msg == "oops"
+
+
+# Doc-review E4 -- reporting.error() already writes to stderr before raising,
+# so a top-level handler must not print the same message a second time.
+def test_error_marks_raised_instance_reported():
+    """The instance error() raises carries reported=True."""
+    with pytest.raises(GenesisPyError) as ei:
+        error("boom")
+    assert ei.value.reported is True
+
+
+def test_directly_raised_error_is_not_marked_reported():
+    """An exception built at a `raise` site was never printed, so reported stays False."""
+    assert GenesisPyError("boom").reported is False
+    assert ParseError("boom").reported is False
+
+
+def test_manager_execute_reports_a_vpy_error_once(tmp_path, capsys):
+    """A .vpy body calling error() must produce exactly one `error:` line.
+
+    Regression: reporting.error() writes the message to stderr and then
+    raises; Manager.execute's handler called error(..., fatal=False) on the
+    way out, printing the same text a second time. Elaboration is the path
+    that reaches the handler with an already-reported exception -- most
+    engine-side failures (e.g. Manager.find_file) `raise` directly and are
+    still the handler's job to print.
+    """
+    import os
+
+    from genesispy import cache, cli
+    from genesispy.manager import Manager
+
+    src = tmp_path / "boom.vpy"
+    src.write_text("//; error('deliberate failure')\n", encoding="utf-8")
+
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        cache.clear_all()
+        args = cli.parse_args(["-i", str(src), "-t", "boom", "--log", "/dev/null"])
+        rc = Manager(args).execute()
+    finally:
+        os.chdir(cwd)
+        cache.clear_all()
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    assert captured.err.count("deliberate failure") == 1
+    assert captured.err.count("error:") == 1
+
+
+def test_manager_execute_still_reports_unreported_errors(tmp_path, capsys):
+    """An exception raised directly (reported=False) is still printed once."""
+    import os
+
+    from genesispy import cli
+    from genesispy.manager import Manager
+
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        args = cli.parse_args(["-i", "nosuch.vpy", "-t", "top", "--log", "/dev/null"])
+        rc = Manager(args).execute()
+    finally:
+        os.chdir(cwd)
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    assert captured.err.count("nosuch.vpy") == 1

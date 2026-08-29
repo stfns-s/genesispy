@@ -8,10 +8,12 @@ the workspace-level `test_parity/` suite.
 ## Quick start
 
 ```sh
-source env_setup.sh        # once per shell, from demos/ or any demo subdir
+source env_setup.sh        # once per shell, from demos/
 cd <demo>
 make gen                   # elaborate -> genesis_synth/
 ```
+
+From inside a demo subdirectory the path is `source ../env_setup.sh`.
 
 `bin/genesispy` and `bin/gvpy` run from the tree; `pip install -e .` is
 not required. `env_setup.sh` prepends `genesispy/bin` to `PATH`.
@@ -25,16 +27,18 @@ Included by every demo's `Makefile`. The per-demo `Makefile` is a 3-line shim th
 
 Targets:
 
-| Target     | Effect                                                          |
-|------------|-----------------------------------------------------------------|
-| `gen`      | Elaborate `$(TOP)` to `$(OUTPUTDIR)` (default `genesis_synth/`) |
-| `pylint`   | `py_compile` the generated Python modules                       |
-| `vlint`    | Lint the generated Verilog                                      |
-| `lint`     | `pylint` + `vlint`                                              |
-| `sim`      | Run a simulator on the generated Verilog                        |
-| `cleangen` | Remove elaboration outputs                                      |
-| `cleansim` | Remove simulator intermediates (all engines)                    |
-| `clean`    | `cleangen` + `cleansim`                                         |
+| Target     | Effect                                                                    |
+|------------|---------------------------------------------------------------------------|
+| `gen`      | Elaborate `$(TOP)` to `$(OUTPUTDIR)` (default `genesis_synth/`)           |
+| `gen-j2`   | Same, from the j2 twin sources; see "j2 twin sources" below               |
+| `pylint`   | `py_compile` the generated Python modules                                 |
+| `vlint`    | Lint the generated Verilog                                                |
+| `lint`     | `pylint` + `vlint`                                                        |
+| `sim`      | Run a simulator on the generated Verilog                                  |
+| `cleangen` | Remove elaboration outputs (both flavours)                                |
+| `cleansim` | Remove simulator intermediates (all engines)                              |
+| `clean`    | `cleangen` + `cleansim`                                                   |
+| `help`     | Print the target list and the current value of each override variable     |
 
 Common overrides:
 
@@ -53,6 +57,37 @@ See `genesispy/doc/user-guide.md` section 9 for the full `genesispy` flag list.
 
 Sourceable shell snippet (bash/zsh). Prepends `genesispy/bin` to `PATH`
 so `genesispy` and `gvpy` resolve from the checkout.
+
+### j2 twin sources
+
+The four Genesis2-derived demos each carry a second copy of their sources rewritten in the j2
+directive flavour (`{% %}` / `{{ }}` / `{# #}` instead of `//;` and backticks; see user-guide
+Appendix A). The two trees describe the same hardware, so they are a standing check that both
+frontend flavours produce the same Verilog -- `test_parity/test_perl_parity.py` runs each demo in
+both flavours against the same Perl reference.
+
+| Demo                           | Genesis sources  | j2 sources          |
+|--------------------------------|------------------|---------------------|
+| `regfile`                      | `genesis_src/`   | `genesis_src.j2/`   |
+| `iterative_wallace_tree`       | `genesis_src/`   | `genesis_src.j2/`   |
+| `many_iterative_wallace_trees` | `genesis_src/`   | `genesis_src.j2/`   |
+| `random_logic`                 | `genesis_src/`   | `genesis_src.j2/`   |
+| `gvpy`                         | `example.vpy`    | `example.j2.vpy`    |
+
+`generation_examples` and `include_examples` have no j2 twin.
+
+`make gen-j2` elaborates the twin tree with `--j2`. It writes to a parallel set of outputs, so the
+two flavours never overwrite each other and `make gen` is unaffected:
+
+| | `make gen` | `make gen-j2` |
+|---|---|---|
+| Sources     | `genesis_src/`     | `genesis_src.j2/`    |
+| Output dir  | `genesis_synth/`   | `genesis_synth.j2/`  |
+| Product list| `genesis_vlog.vf`  | `genesis_vlog.j2.vf` |
+
+Override the defaults with `SRCDIR_J2=`, `OUTPUTDIR_J2=`, `VLOG_VF_J2=`. `make cleangen` removes
+both flavours' outputs. In the `gvpy` demo the pair is `make gen` -> `example.out.v` and
+`make gen-j2` -> `example.j2.out.v`.
 
 ## Demos
 

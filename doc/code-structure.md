@@ -41,6 +41,9 @@ never imports frontend.
 - `template/runtime.py` -- re-exports `UniqueModule` and `UserMixin` so generated files import from a single
   path; defines `StrCallable` (so `` `mname` `` and `` `mname()` `` both work) and the line-map registry used
   by `remap_traceback`.
+- `template/aliases.py` -- the single source of truth for the Genesis2 bare-name alias table
+  (`SIMPLE_ALIASES`, `EXPECTED_ALIAS_KEYS`, `alias_dict`, `alias_prelude_source`), consumed by both the
+  emitter prelude and `user_config._include`.
 
 **Elaboration engine**
 - `unique_module.py` -- `UniqueModule` class: parameter resolution (`define_param`, `parameter`,
@@ -53,10 +56,18 @@ never imports frontend.
 - `hashing.py` -- canonical-JSON SHA-256 parameter signatures.
 - `config_handler.py` -- JSON/`.cfg` parameter store.
 - `json_io.py` -- concrete loader/writer behind `ConfigHandler`.
-- `tools/xml_json.py` -- standalone XML/JSON helper (not used by the elaboration core; invoked by
-  `bin/genesispy-xml2json` / `bin/genesispy-json2xml`).
+- `extensions.py` -- `DEFAULT_EXTENSION_MAP` and `build_extension_map` (the `--extension` / `-sv` merge).
+- `_scalars.py` -- scalar coercion shared by the config loaders.
 - `output_writer.py` -- flush cache to disk, write `.vlist` / `.depend` / `genesispy_clean.sh`.
 - `reporting.py` -- exception hierarchy and `error()` / `warning()` reporters.
+
+**Standalone tools (`tools/`)** -- none are used by the elaboration core; each backs a `bin/` entry point.
+- `tools/xml_json.py` + `tools/xml2json.py` + `tools/json2xml.py` -- XML/JSON config conversion, invoked by
+  `bin/genesispy-xml2json` / `bin/genesispy-json2xml`.
+- `tools/vp2vpy.py` + `tools/vp2vpy_map.py` + `tools/vp2vpy_helper.pl` -- the `.vp`/`.vph` -> `.vpy`
+  translator behind `bin/genesispy-vp2vpy` (the helper is a Perl/PPI subprocess).
+- `tools/jinja2j2.py` -- stock-Jinja2 -> j2 template porter behind `genesispy-jinja2j2`; needs the optional
+  `jinja2` dependency.
 
 The `template/` directory is a separate package because its job is the
 input-syntax frontend: a different input language (Jinja, native Python,
@@ -102,9 +113,11 @@ recursively expands `--input-list FILE` files containing `--input` / `--input-li
 `--inc-path` directives (bare paths default to `--input`).
 
 **Manager construction.** `Manager.__init__` resolves `raw_dir` (`./genesis_raw` by default; relocated under a
-`/tmp/genesispy_*` scratch with `--use-tmp`), applies user `--py-path` / `--py-import`, records
-`output_suffix` (default `.v`; `--system-verilog` is shorthand for `.sv`), and prepares the yet-unbuilt
-`cfg_handler`.
+`/tmp/genesispy_*` scratch with `--use-tmp`), applies user `--py-path` / `--py-import`, builds
+`extension_map` from `extensions.build_extension_map` (defaults `.vpy=.v`, `.svpy=.sv`; extended by
+`--extension`, and by `-sv`/`--system-verilog` as shorthand for `.vpy=.sv`), and prepares the yet-unbuilt
+`cfg_handler`. There is no single run-wide output suffix: `Manager._output_suffix_for(path)` looks the
+suffix up per input, and the emitter stamps the result on each generated class as `_OUTPUT_SUFFIX`.
 
 **Parse phase.** `Manager.parse_files` iterates the input list and calls `emitter.write_module(path, raw_dir)`
 for each; the emitter parses the `.vpy`, wraps it in a class deriving from `UniqueModule` + `UserMixin`,
@@ -125,8 +138,10 @@ which copies the buffer into `cache.OUTFILE_CONTENT_CACHE[<unique_module_name><o
 under every registered synonym name (from `clone_inst` / `synonym`).
 
 **Flush phase.** `Manager.flush_outputs` calls into `output_writer`: `flush_to_disk` walks
-`OUTFILE_CONTENT_CACHE`, splits each file into `genesis_synth/` or `genesis_verif/` based on a synth/verif
-heuristic (filterable with `--out-type synth|verif|both`), and writes only when content differs from disk. Then
+`OUTFILE_CONTENT_CACHE`, splits each file into `genesis_synth/` or `genesis_verif/` according to
+`cache.OUTFILE_TAGS` (populated by Manager before flush from a path-based DFS over the elaborated instance
+tree; untagged files default to `verif`, filterable with `--out-type synth|verif|both`), and writes only
+when content differs from disk. Then
 `write_file_lists` emits `.vlist` and `.depend`, `write_clean_script` emits `genesispy_clean.sh`, optional
 `write_product_lists` and `write_pathfile` handle `--product` and `--path`. With `--stdout` the cache is
 concatenated to stdout instead and the list/clean-script writers are skipped. Resolved configuration is
@@ -137,12 +152,20 @@ runs as a short-circuit before parsing -- `--clean` exits before any `.vpy` is t
 
 ## 4. Frontend in detail (`template/`)
 
-The frontend is the only place that knows the `.vpy` input syntax. Three files:
+The frontend is the only place that knows the `.vpy` input syntax. Four files:
 
 - **`parser.py`** translates one `.vpy` source to a column-zero Python string: `//;` lines become bare Python
   at indent `(leading_spaces // 4)`; plain Verilog lines become `emit(...)` calls whose indent follows the
   controlling `//;` block; backtick interpolations become attribute references on `self`. Block ends are
   explicit sentinels (`# endfor`, `# endif`, `# endwhile`); the parser has no other way to detect block end.
+
+  `parse_vpy(syntax=...)` selects one of two directive flavours over the same downstream machinery. The
+  default `"genesis"` is the syntax above. `"j2"` (`_parse_vpy_j2`, selected by `--j2` on both `genesispy`
+  and `gvpy`) swaps the delimiters for `{% stmt %}`, `{{ expr }}` and `{# comment #}`, and additionally
+  accepts the bare `{% endfor %}` block-close spelling; the embedded language is still full Python, and
+  indent inference, line mapping and `emit(...)` generation are shared. `parse_vpy(comment=...)`
+  independently sets the genesis-flavour directive sentinel (`--source-comment`), so a non-Verilog target
+  language can use `#;` in place of `//;`.
 - **`emitter.py`** wraps that body in a complete Python file: the `_HEADER` block declares the class, calls
   `super().execute()`, and binds bare-name aliases as locals so user code can write `parameter(...)` instead
   of `self.parameter(...)`. The `_FOOTER` block flushes the per-instance buffer into
@@ -152,6 +175,11 @@ The frontend is the only place that knows the `.vpy` input syntax. Three files:
   self, so `` `mname` `` and `` `mname()` `` both produce the same name), and owns the `LINE_MAP` registry
   plus `build_line_map` / `remap_traceback` which rewrite `File "<gen>.py", line N` frames back to the `.vpy`
   source for user-visible errors.
+- **`aliases.py`** holds the bare-name alias table in one place. `SIMPLE_ALIASES` maps each bare name to the
+  `UniqueModule` method it forwards to; `EXPECTED_ALIAS_KEYS` is the full set including the short names,
+  `include` and `pinclude`. `alias_prelude_source()` renders the emitter's local-binding prelude and
+  `alias_dict(mod)` builds the equivalent namespace for `user_config._include`, so the two paths cannot
+  drift apart.
 
 A generated `.py` file is therefore a thin shell: two `import` lines plus the rewritten body. All real work
 happens in `unique_module.py` / `user_lib.py` / `cache.py` / `config_handler.py`, reached transitively via
@@ -247,7 +275,9 @@ Legacy XML configs convert via `genesispy-xml2json`. Full `ConfigHandler` API: s
   `--use-tmp` relocates them under `/tmp/genesispy_*` (auto-cleaned at exit; `--keep-tmp` preserves the
   scratch). `--gen-raw` additionally writes the emitted Verilog into `raw_dir` for inspection.
 - Optional `--json-out FILE` -- resolved configuration tree.
-- Optional `--product FILE` (Genesis2 compat) -- writes `FILE.synth` and `FILE.verif` product lists.
+- Optional `--product FILE.ext` (Genesis2 compat) -- writes three product lists: `FILE.ext` (master),
+  `FILE.synth.ext`, `FILE.verif.ext`. Suppresses the default `.vlist` pair.
+- Optional `--vf-out FILE` -- writes just the master list to `FILE` (`.vf` auto-appended), no side-files.
 - Optional `--path FILE` -- directories touched during elaboration.
 
 ## 8. Control flags
@@ -270,7 +300,10 @@ Selected flags (`genesispy --help` is authoritative for the full list, including
 | `--input-list FILE`            | Recursively expand a listfile of `--input` / `--src-path` / `--inc-path`.   |
 | `--extension EXT_IN=EXT_OUT`  | Map an input extension to an output extension (repeatable; default `.vpy=.v`, `.svpy=.sv`). |
 | `--system-verilog` / `-sv`     | Shorthand for `--extension .vpy=.sv`. Conflicts with an explicit `--extension .vpy=...`. |
-| `--product FILE`              | Write `FILE.synth` / `FILE.verif` (Genesis2 semantics).                       |
+| `--product FILE.ext`          | Write `FILE.ext` / `FILE.synth.ext` / `FILE.verif.ext` (Genesis2 semantics).  |
+| `--j2` / `-j2`                | Parse templates in the j2 directive flavour instead of `//;` + backticks.     |
+| `--source-comment PREFIX`     | Line-comment prefix of the source language; sets the `<comment>;` sentinel.   |
+| `--output-comment P\|O,C`      | Comment style genesispy emits (module banner, `--stdout` separator).         |
 | `--vf-out FILE`               | Single-file product list (auto-appends `.vf`; no `.synth`/`.verif` side-files, unlike `--product`); conflicts with `--product`. |
 | `--json-out`                   | Dump resolved configuration tree.                                             |
 

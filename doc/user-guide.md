@@ -363,8 +363,10 @@ Jinja2 templates, see **Appendix A: j2 syntax**.
 ### 7.3 Provided functions and short names
 
 Bare names bound automatically inside every generated `execute()` body.
-The canonical list is `genesispy.template.aliases.SIMPLE_ALIASES`; this
-section enumerates every entry. Backticked forms (e.g. `` `mname` ``)
+The canonical list is `genesispy.template.aliases.EXPECTED_ALIAS_KEYS`;
+this section enumerates every entry. (`SIMPLE_ALIASES` next to it holds
+only the plain method forwards -- the short names, `include` and
+`pinclude` are bound separately.) Backticked forms (e.g. `` `mname` ``)
 work in plain-Verilog lines via the template parser.
 
 **Short-name strings** (each is a `StrCallable`, so both `mname` and
@@ -460,7 +462,7 @@ work in plain-Verilog lines via the template parser.
 
 **Other:**
 
-- **`include(path)`** -- parse another `.vpy` and run its body inside the current module's `execute()` namespace. Mirrors Genesis2 `//;include("file.vp")`. Resolves `path` against `--inc-path`.
+- **`include(path)`** -- parse another `.vpy` and run its body against the current module, with `self` bound to it. The body runs in a *fresh* namespace, not the caller's `execute()` locals; values travel in and out on `self` (see §11.2). Mirrors Genesis2 `//;include("file.vp")`. Resolves `path` against `--inc-path`.
   - _Example:_ `//; include('common_ports.vpy')`
 - **`pinclude(path)`** -- gvpy-only raw-Python include. Bound to `None` in standard `genesispy` runs; calling it under `genesispy` raises `TypeError`.
   - _Example (gvpy):_ `//; pinclude('helpers.py')`
@@ -797,18 +799,18 @@ attribute on `self`. The convention used by the demos is
 Caller:
 
 ```verilog
-//; self.include_params = {'func_name': 'rq_q4d12_q2d6', 'q_in': 'Q4.12', 'q_out': 'Q2.6'}
-//; include("requant.vpy")
+//; self.include_params = {'func_name': enc_func, 'width': width, 'direction': 'encode'}
+//; include("gray.vpy")
 ```
 
 Snippet, reading it once at the top and supplying its own defaults:
 
 ```verilog
-//; h          = self.include_params
-//; func_name  = h.get('func_name', 'f_requant')
-//; q_in       = h['q_in']
-//; q_out      = h['q_out']
-//; round_mode = h.get('round_mode', 'trunc')
+//; h         = self.include_params
+//; func_name = h['func_name']
+//; width     = h['width']
+//; direction = h.get('direction', 'encode')
+//; lifetime  = h.get('lifetime', 'static')
 ```
 
 `include_params` is a plain Python attribute -- genesispy neither
@@ -823,20 +825,21 @@ that name:
 
 ```verilog
 //; _d = getattr(self, func_name, {})
-//; _d['out_width'] = w_out
+//; _d['owidth'] = width
 //; setattr(self, func_name, _d)
 ```
 
 The caller reads it back under the same name:
 
 ```verilog
-//; slm_out = getattr(self, slm_fname)['out_width']
+//; owidth = getattr(self, enc_func)['owidth']
 ```
 
-Pick one key vocabulary per project and stay with it; the demos are
-not consistent with each other (`logmult` uses `out_width`, `qarith`
-uses `w_in` / `w_out`). Working examples live in
-`demos/logmult/genesis_src/` and `demos/qarith/genesis_src/`.
+Pick one key vocabulary per project and stay with it -- nothing
+enforces one, so a caller and a snippet that disagree on a key name
+fail at `KeyError` time rather than at include time. Working examples
+live in `demos/include_examples/genesis_src/`, where `codec.vpy` is
+both a caller (of `gray.vpy`) and a snippet (included by `top.vpy`).
 
 ### 11.3 gvpy-only: raw-Python include via `pinclude(...)`
 
@@ -1003,7 +1006,7 @@ A `genesispy` run produces:
 - `<top>.depend` -- Make-style dependency list. Always written. Target is the `.vlist` by default, or the named product file under `--product`/`--vf-out`.
 - `genesispy_clean.sh` -- sweeps the run's output products.
 - Optional `--json-out FILE` -- resolved configuration tree (three siblings, see section 9.4).
-- Optional `--product FILE` (Genesis2 compat) -- writes `FILE`, `FILE.synth`, `FILE.verif` product lists; suppresses the default `.vlist` pair.
+- Optional `--product FILE.ext` (Genesis2 compat) -- writes `FILE.ext`, `FILE.synth.ext`, `FILE.verif.ext` product lists (the extension is split off with `os.path.splitext`, so an extensionless `FILE` gives `FILE`, `FILE.synth`, `FILE.verif`); suppresses the default `.vlist` pair.
 - Optional `--vf-out FILE` -- writes a single `FILE` product list (no side-files); suppresses the default `.vlist` pair.
 - Optional `--path FILE` -- directories touched during elaboration.
 
@@ -1029,11 +1032,13 @@ emit.
 
 ### `include("file.vpy")` raises `FileNotFoundError`
 
-`include()` resolves against `--inc-path DIR` (repeatable), then the
-current directory. It does not search `--src-path`, and it does not
-search the directory holding the calling `.vpy`: a leaf sitting beside
-its caller is still unreachable unless that directory is on `--inc-path`
-or is the cwd. Add the include directory:
+`include()` takes an absolute path, or a relative path that already
+resolves from the current working directory, as-is; anything else is
+searched for on `--inc-path DIR` (repeatable) and then the current
+directory. It does not search `--src-path`, and it does not search the
+directory holding the calling `.vpy`: a leaf sitting beside its caller
+is still unreachable unless that directory is on `--inc-path` or is the
+cwd. Add the include directory:
 
 ```sh
 genesispy --inc-path ./shared --input top.vpy --top top
@@ -1174,13 +1179,14 @@ collisions:
 A trailing `}}` in plain text needs no escape -- only `{{` opens an
 expression.
 
-Four of the six Genesis2-derived demos carry a j2 twin source tree under
+All four Genesis2-derived demos carry a j2 twin source tree under
 `demos/<demo>/genesis_src.j2/` (`regfile`, `iterative_wallace_tree`,
-`many_iterative_wallace_trees`, `random_logic`; `logmult` and `qarith` do
-not). The gvpy demo carries
-`demos/gvpy/example.j2.vpy`), elaborated via `make gen-j2`. Outputs
-land in a parallel `genesis_synth.j2/` directory so the default
-`make gen` flow is untouched.
+`many_iterative_wallace_trees`, `random_logic`); the gvpy demo carries
+the single file `demos/gvpy/example.j2.vpy`. Both are elaborated via
+`make gen-j2`. Outputs land in a parallel `genesis_synth.j2/` directory
+so the default `make gen` flow is untouched. `generation_examples` and
+`include_examples` have no j2 twin. See `demos/README.md` ("j2 twin
+sources") for the full source/output mapping.
 
 ### Porting stock Jinja2 templates
 

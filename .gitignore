@@ -30,9 +30,18 @@ htmlcov/
 genesis_raw/
 genesis_synth/
 genesis_synth_ex*/
+genesis_synth.j2/
 genesis_verif/
-# Genesis2-style product list emitted at demo root by `make gen`.
+# Genesis2-style product lists emitted at the demo root by `make gen` /
+# `make gen-j2`, and the `.flags` stamps recording the command line used.
 genesis_vlog.vf
+genesis_vlog.j2.vf
+genesis_vlog_ex*.vf
+*.vf.flags
+# gvpy demo outputs (bin/gvpy writes to stdout; the Makefile redirects).
+demos/gvpy/example.out.v
+demos/gvpy/example.j2.out.v
+*.out.v.flags
 
 # Simulator artifacts
 # Cadence Xcelium

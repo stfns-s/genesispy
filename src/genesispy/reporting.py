@@ -99,9 +99,15 @@ class GenesisPyError(Exception):
     Optionally carries a ``location`` (e.g. file:line) appended to the
     message at format time. Subclasses set a stable ``code`` class
     attribute so tests can assert on identity rather than prose.
+
+    ``reported`` is set by :func:`error` on the instance it raises, so a
+    top-level handler can tell an exception whose message already reached
+    stderr from one raised directly by a ``raise GenesisPyError(...)``
+    call site, and print only the latter.
     """
 
     code: str = "genesispy_error"
+    reported: bool = False
 
     def __init__(self, msg: str = "", location: Optional[str] = None) -> None:
         self.msg = msg
@@ -150,12 +156,17 @@ def error(
     default) raises ``cls`` (default ``GenesisPyError``); otherwise prints
     and returns. Pass a subclass (``ParseError``, ``ConfigError`` …) to
     preserve ``e.code`` discrimination at the call site.
+
+    The raised instance carries ``reported = True`` so a top-level handler
+    does not print the same message a second time.
     """
     sys.stderr.write(f"{_RED}error:{_RESET} {msg}\n")
     sys.stderr.flush()
     _log(f"error: {msg}\n")
     if fatal:
-        raise cls(msg)
+        exc = cls(msg)
+        exc.reported = True
+        raise exc
 
 
 def warning(msg: str) -> None:

@@ -24,18 +24,25 @@ jobs:
     needs: pytest
     runs-on: ubuntu-latest
     env:
-      # Demos using the shared genesispy.mk (have pylint + vlint targets).
-      # regfile excluded: WIDTHEXPAND warning at reg_file.vpy:213 (inherited
-      # from upstream Genesis2 demo, not a porting bug).
+      # Demos using the shared genesispy.mk (have gen + pylint + vlint).
+      # regfile waives its one WIDTHEXPAND warning via VERILATOR_FLAGS in
+      # its own Makefile (the zero-extension is intended).
       MK_DEMOS: >-
         demos/iterative_wallace_tree
         demos/many_iterative_wallace_trees
         demos/random_logic
+        demos/regfile
+        demos/include_examples
+      # Own Makefile, so gen + vlint but no pylint target.
+      GEN_VLINT_DEMOS: demos/generation_examples
       GVPY_DEMO: demos/gvpy
       VLINT_DEMOS: >-
         demos/iterative_wallace_tree
         demos/many_iterative_wallace_trees
         demos/random_logic
+        demos/regfile
+        demos/include_examples
+        demos/generation_examples
         demos/gvpy
     steps:
       - uses: actions/checkout@v5
@@ -49,7 +56,7 @@ jobs:
       - name: make gen (all demos)
         run: |
           set -e
-          for d in $MK_DEMOS $GVPY_DEMO; do
+          for d in $MK_DEMOS $GEN_VLINT_DEMOS $GVPY_DEMO; do
             echo "=== gen: $d ==="
             make -C "$d" gen
           done

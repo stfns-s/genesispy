@@ -1,13 +1,13 @@
 # Source from a demo shell to put genesispy/gvpy on PATH.
-#   $ source ../setup_env.sh         # from genesispy/demos/<demo>/
-#   $ source ./setup_env.sh          # from genesispy/demos/
+#   $ source ./env_setup.sh          # from genesispy/demos/
+#   $ source ../env_setup.sh         # from genesispy/demos/<demo>/
 
 if [ -n "${BASH_SOURCE[0]}" ]; then
     _gpy_self="${BASH_SOURCE[0]}"
 elif [ -n "${ZSH_VERSION:-}" ]; then
     _gpy_self="${(%):-%x}"
 else
-    echo "setup_env.sh: must be sourced from bash or zsh" >&2
+    echo "env_setup.sh: must be sourced from bash or zsh" >&2
     return 1 2>/dev/null || exit 1
 fi
 
