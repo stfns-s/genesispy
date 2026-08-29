@@ -131,6 +131,14 @@ class Manager:
     args: "argparse.Namespace"
 
     def __init__(self, args: argparse.Namespace) -> None: ...
+    # Resolve a relative template path. With paths=None (the --input case,
+    # manager.parse_files) the search order is src_path + inc_path + ['.'].
+    # Callers that pass `paths` explicitly get exactly that list: notably
+    # user_config._include passes inc_path + ['.'], so include() does NOT
+    # search src_path. The split mirrors Perl, which resolves --input against
+    # SourcesPath (Manager.pm:550) and include() against IncludesPath
+    # (Manager.pm:716); searching inc_path for inputs too is a genesispy
+    # relaxation. Records the resolved directory in touched_dirs.
     def find_file(self, name: str, paths: list[str] | None = None) -> str: ...
     def execute(self) -> int: ...
     # Phase gating: --parse-only stops after parse_files(); --gen-only skips

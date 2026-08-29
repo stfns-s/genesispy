@@ -188,7 +188,9 @@ include ../genesispy.mk
 
 - `--src-path DIR` (repeatable) -- search directory for source-file resolution.
 - `--inc-path DIR` (repeatable) -- search directory for include-file resolution.
-- Both flags feed the same lookup (`src_path + inc_path + ['.']`) for **both** `--input FILE` and `include("file.vpy")` calls inside `.vpy` bodies; the source/include split is conventional, not enforced.
+- The two feed different lookups. `--input FILE` searches `src_path + inc_path + ['.']`; `include("file.vpy")` inside a `.vpy` body searches `inc_path + ['.']` only.
+- So `--src-path` does not resolve an include: a leaf reachable as an input is not automatically reachable as an include.
+- The include half mirrors Perl, which resolves `--input` against `SourcesPath` (`Manager.pm:550`) and `include()` against `IncludesPath` (`Manager.pm:716`). Searching `inc_path` for inputs too is a genesispy relaxation.
 - `--cfg-path DIR` (repeatable) -- search directory for `--cfg` / `--json-cfg` inputs and for `include(...)` calls inside `.cfg` files.
 - `--py-path DIR` (repeatable) -- prepended to `sys.path` before parsing (for `import` statements inside `//;` bodies).
 
@@ -658,7 +660,7 @@ output.
 - `-f`, `--input-list FILE` -- listfile of inputs (bare paths or GNU directives `--input/--input-list/--src-path/--inc-path`; inline `# ...` comments allowed; recursive). Repeatable.
 - `--src-path DIR` -- search directory for source-file resolution. Repeatable.
 - `--inc-path DIR` -- search directory for include-file resolution. Repeatable.
-- Both flags feed the same lookup (`src_path + inc_path + ['.']`) for **both** `--input FILE` and `include(...)` calls inside `.vpy` bodies; the source/include split is conventional, not enforced.
+- The two feed different lookups: `--input FILE` searches `src_path + inc_path + ['.']`; `include(...)` inside a `.vpy` body searches `inc_path + ['.']` only. `--src-path` does not resolve an include (section 5, "Search paths").
 - `--py-path DIR` -- prepend `DIR` to `sys.path` before parsing. Repeatable.
 - `--py-import NAME` -- import a Python module before parsing. Repeatable.
 - `--parse-only` -- run only the parse phase (`.vpy` -> `.py`); skip elaboration.
@@ -1027,10 +1029,11 @@ emit.
 
 ### `include("file.vpy")` raises `FileNotFoundError`
 
-`include()` resolves against `--inc-path DIR` (repeatable). Without an
-`--inc-path` pointing at the directory holding `file.vpy`, the parser
-only looks in the cwd and alongside the calling `.vpy`. Add the
-include directory:
+`include()` resolves against `--inc-path DIR` (repeatable), then the
+current directory. It does not search `--src-path`, and it does not
+search the directory holding the calling `.vpy`: a leaf sitting beside
+its caller is still unreachable unless that directory is on `--inc-path`
+or is the cwd. Add the include directory:
 
 ```sh
 genesispy --inc-path ./shared --input top.vpy --top top
