@@ -1,0 +1,3 @@
+[submodule "demos/dsp-gpy"]
+	path = demos/dsp-gpy
+	url = https://github.com/stfns-s/dsp-gpy.git

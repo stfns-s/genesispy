@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesispy"
-version = "0.4.1"
+version = "0.5.0"
 description = "Genesis Chip Generator, Python port of Genesis2"
 requires-python = ">=3.12"
 dependencies = [
@@ -31,3 +31,7 @@ where = ["src"]
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+[tool.pytest.ini_options]
+# demos/ carries the dsp-gpy submodule, which has a pytest suite of its own.
+norecursedirs = ["demos", "build", "dist", ".git"]

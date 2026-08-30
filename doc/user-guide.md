@@ -630,6 +630,29 @@ See `genesispy/demos/generation_examples/README.md` for the full
 walkthrough -- source listings, exact commands, and expected Verilog
 output for each.
 
+### 8.3 `dsp-gpy`
+
+The `dsp-gpy` demo is a separate repository, checked out as a git
+submodule under `demos/dsp-gpy`. It is the largest worked example in the
+tree: a fixed-point DSP function library pulled in with `include()`
+(`funcs/f_*.svpy`), two synthesizable tops (`modules/iir.svpy`,
+`modules/intg.svpy`), a Python helper library reached through
+`--py-path`, and one testbench per function and per module. Sources are
+`.svpy`, and it drives `--src-path`, `--inc-path`, `--py-path`,
+`--synth-top` and `--vf-out` together.
+
+```sh
+git submodule update --init demos/dsp-gpy
+cd genesispy/demos/dsp-gpy
+source ../env_setup.sh
+make gen
+```
+
+It carries its own `Makefile` and build layout rather than the shared
+`genesispy.mk`. See `genesispy/demos/dsp-gpy/README.md` for the full
+walkthrough, and `genesispy/demos/README.md` for how it differs from the
+other demos.
+
 ## 9. Invoking genesispy
 
 ```sh
@@ -1184,9 +1207,9 @@ All four Genesis2-derived demos carry a j2 twin source tree under
 `many_iterative_wallace_trees`, `random_logic`); the gvpy demo carries
 the single file `demos/gvpy/example.j2.vpy`. Both are elaborated via
 `make gen-j2`. Outputs land in a parallel `genesis_synth.j2/` directory
-so the default `make gen` flow is untouched. `generation_examples` and
-`include_examples` have no j2 twin. See `demos/README.md` ("j2 twin
-sources") for the full source/output mapping.
+so the default `make gen` flow is untouched. `generation_examples`,
+`include_examples` and `dsp-gpy` have no j2 twin. See `demos/README.md`
+("j2 twin sources") for the full source/output mapping.
 
 ### Porting stock Jinja2 templates
 
