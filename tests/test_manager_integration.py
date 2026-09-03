@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -22,12 +23,16 @@ def _reset_cache():
     cache.clear_all()
 
 
-def _run(tmp_path: Path, vpy_path: Path, top: str) -> Manager:
+def _run(
+    tmp_path: Path, vpy_path: Path, top: str, extra_args: tuple = ()
+) -> Manager:
     """Construct a Manager rooted at ``tmp_path`` and run execute()."""
     cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
-        args = parse_args(["--input", str(vpy_path), "--top", top])
+        args = parse_args(
+            ["--input", str(vpy_path), "--top", top, *extra_args]
+        )
         m = Manager(args)
         rc = m.execute()
         assert rc == 0, "Manager.execute() should succeed"
@@ -248,3 +253,47 @@ def test_bare_include_in_vpy_body(tmp_path: Path) -> None:
     text = cache.OUTFILE_CONTENT_CACHE[target]
     assert "// fragment-line" in text
     assert "// after-include" in text
+
+
+# ---------------------------------------------------------------------------
+# --param-footer
+# ---------------------------------------------------------------------------
+
+PF = FIXTURES / "param_footer"
+
+
+def _pf_leaf_text() -> str:
+    """Return the generated Verilog for the pf_leaf unique module."""
+    key = next(k for k in cache.OUTFILE_CONTENT_CACHE if k.startswith("pf_leaf"))
+    return cache.OUTFILE_CONTENT_CACHE[key]
+
+
+def test_param_footer_end_to_end(tmp_path: Path) -> None:
+    """The footer reports parameters the banner cannot see, with provenance.
+
+    WIDTH arrives as a parent unique_inst kwarg, DEPTH from --parameter, and
+    both are resolved by parameter() calls in the leaf's own body -- i.e.
+    after to_verilog() has already written the banner.
+    """
+    _run(
+        tmp_path, PF / "pf_top.vpy", "pf_top",
+        ("--input", str(PF / "pf_leaf.vpy"), "-p", "DEPTH=32", "--param-footer"),
+    )
+    text = _pf_leaf_text()
+
+    assert "Genesis-Py resolved parameter provenance" in text
+    # The block sits past the end of the module, not in the banner.
+    assert text.index("resolved parameter provenance") > text.rindex("endmodule")
+
+    footer = text[text.index("// Genesis-Py resolved parameter provenance"):]
+    assert re.search(r"^//\s+DEPTH\s+: 32\s+<- command line", footer, re.M)
+    assert re.search(r"^//\s+WIDTH\s+: 16\s+<- parent instantiation", footer, re.M)
+
+
+def test_param_footer_absent_by_default(tmp_path: Path) -> None:
+    """Without the flag the generated Verilog is unchanged."""
+    _run(
+        tmp_path, PF / "pf_top.vpy", "pf_top",
+        ("--input", str(PF / "pf_leaf.vpy"), "-p", "DEPTH=32"),
+    )
+    assert "resolved parameter provenance" not in _pf_leaf_text()

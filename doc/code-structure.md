@@ -133,9 +133,10 @@ resolves another generated class (`Manager.resolve_module_class` loads on demand
 `UniqueModule`, and runs its `execute()`.
 
 **Emission & caching.** Each `UniqueModule` instance has a private `_outfile_handle` populated by `emit(...)`
-calls. After the body finishes, the footer in `template/emitter.py` calls `UniqueModule._flush_outfile()`,
-which copies the buffer into `cache.OUTFILE_CONTENT_CACHE[<unique_module_name><output_suffix>]` and mirrors it
-under every registered synonym name (from `clone_inst` / `synonym`).
+calls. After the body finishes, the footer in `template/emitter.py` calls `UniqueModule.emit_param_footer()`
+(a no-op unless `--param-footer` is set) and then `UniqueModule._flush_outfile()`, which copies the buffer into
+`cache.OUTFILE_CONTENT_CACHE[<unique_module_name><output_suffix>]` and mirrors it under every registered
+synonym name (from `clone_inst` / `synonym`).
 
 **Flush phase.** `Manager.flush_outputs` calls into `output_writer`: `flush_to_disk` walks
 `OUTFILE_CONTENT_CACHE`, splits each file into `genesis_synth/` or `genesis_verif/` according to
@@ -168,8 +169,10 @@ The frontend is the only place that knows the `.vpy` input syntax. Four files:
   language can use `#;` in place of `//;`.
 - **`emitter.py`** wraps that body in a complete Python file: the `_HEADER` block declares the class, calls
   `super().execute()`, and binds bare-name aliases as locals so user code can write `parameter(...)` instead
-  of `self.parameter(...)`. The `_FOOTER` block flushes the per-instance buffer into
-  `cache.OUTFILE_CONTENT_CACHE` and mirrors synonyms.
+  of `self.parameter(...)`. The `_FOOTER` block appends the shared `CLASS_BODY_TAIL` (the
+  `emit_param_footer()` call) and then flushes the per-instance buffer into `cache.OUTFILE_CONTENT_CACHE` and
+  mirrors synonyms. `gvpy_cli._build_class_from_vpy` is a second class factory with no `_FOOTER` of its own;
+  it appends the same `CLASS_BODY_TAIL` so the two cannot drift.
 - **`runtime.py`** is the import target for generated files. It re-exports `UniqueModule` and `UserMixin` (so
   generated files have a single import path), defines `StrCallable` (a `str` subclass whose `__call__` returns
   self, so `` `mname` `` and `` `mname()` `` both produce the same name), and owns the `LINE_MAP` registry
@@ -304,6 +307,7 @@ Selected flags (`genesispy --help` is authoritative for the full list, including
 | `--j2` / `-j2`                | Parse templates in the j2 directive flavour instead of `//;` + backticks.     |
 | `--source-comment PREFIX`     | Line-comment prefix of the source language; sets the `<comment>;` sentinel.   |
 | `--output-comment P\|O,C`      | Comment style genesispy emits (module banner, `--stdout` separator).         |
+| `--param-footer`              | Append a resolved-parameter provenance block after each generated module.    |
 | `--vf-out FILE`               | Single-file product list (auto-appends `.vf`; no `.synth`/`.verif` side-files, unlike `--product`); conflicts with `--product`. |
 | `--json-out`                   | Dump resolved configuration tree.                                             |
 

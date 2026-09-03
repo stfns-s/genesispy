@@ -49,6 +49,36 @@ class Priority(IntEnum):
     IMMUTABLE = 50          # force_param: pinned, top-of-ladder
 
 
+# Human-readable source names for a resolved parameter's stored priority.
+# Keyed by int rather than by the enum because define_param stores a bare
+# ``flags.get("priority", 0)``: an untouched default is 0, not DECLARATION.
+# No label contains '=', which keeps rendered footer lines from matching the
+# ``// NAME = value`` banner shape that tests/_parity_normalize.py scans for.
+PRIORITY_LABELS: dict[int, str] = {
+    0:                                 "declaration default",
+    int(Priority.DECLARATION):         "declaration default",
+    int(Priority.EXTERNAL_CONFIG):     "config script (--cfg / configure)",
+    int(Priority.EXTERNAL_PARAM_FILE): "config file (--json-cfg)",
+    int(Priority.CMD_LINE):            "command line (--parameter)",
+    int(Priority.INHERITANCE):         "parent instantiation",
+    int(Priority.IMMUTABLE):           "forced (force_param)",
+}
+
+
+def priority_label(priority: Optional[int]) -> str:
+    """Return the configuration source that wrote a parameter's ``priority``."""
+    if priority is None:
+        return "unknown"
+    p = int(priority)
+    label = PRIORITY_LABELS.get(p)
+    if label is not None:
+        return label
+    # configure(..., priority=N) accepts any integer: name the nearest rung
+    # at or below N and keep the raw number visible.
+    rung = max((k for k in PRIORITY_LABELS if k <= p), default=0)
+    return f"{PRIORITY_LABELS[rung]} (priority {p})"
+
+
 def _coerce_with_type(value: Any, type_hint: Optional[str]) -> Any:
     """Coerce ``value`` according to ``flags['type']``."""
     if type_hint is None:

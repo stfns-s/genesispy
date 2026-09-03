@@ -32,6 +32,7 @@ from genesispy.cli import _add_deprecated_alias, _comment_arg, _output_comment_a
 from genesispy.config_handler import ConfigHandler
 from genesispy.reporting import ParameterError
 from genesispy.extensions import build_extension_map, parse_extension_spec
+from genesispy.template import emitter
 from genesispy.template.aliases import alias_prelude_source
 from genesispy.template.parser import parse_vpy
 from genesispy.unique_module import UniqueModule
@@ -76,6 +77,7 @@ class _GvpyManager:
         self.source_comment = getattr(args, "source_comment", "//")
         oc = getattr(args, "output_comment", None)
         self.output_comment = oc if oc is not None else self.source_comment
+        self.param_footer = bool(getattr(args, "param_footer", False))
         self.no_module_cache = False
         self.out_type = "both"
         self.gen_raw = False
@@ -184,6 +186,9 @@ def _build_class_from_vpy(
     src += indented
     if not src.endswith("\n"):
         src += "\n"
+    # Shared with template/emitter._FOOTER: the same execute() tail, minus the
+    # _flush_outfile() call (gvpy reads _outfile_handle directly).
+    src += emitter.CLASS_BODY_TAIL
     ns: dict[str, Any] = {"__name__": f"_gvpy_{name}"}
     # Line map keyed by `path` so remap_traceback rewrites synthetic frames.
     from genesispy.template import runtime as _rt
@@ -333,6 +338,16 @@ def main(argv: list[str] | None = None) -> int:
             "Comment style for emitted output comments (banner and the "
             "--stdout 'genesispy:' separator): line prefix or 'OPEN,CLOSE' "
             "block. Defaults to --source-comment."
+        ),
+    )
+    parser.add_argument(
+        "--param-footer",
+        dest="param_footer",
+        action="store_true",
+        default=False,
+        help=(
+            "Append a comment block after the generated module listing every "
+            "resolved parameter with its value and the source it came from."
         ),
     )
     parser.add_argument(

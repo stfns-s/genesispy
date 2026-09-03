@@ -20,7 +20,7 @@ from .parser import parse_vpy
 from . import runtime
 
 
-__all__ = ["emit_module", "write_module"]
+__all__ = ["CLASS_BODY_TAIL", "emit_module", "write_module"]
 
 
 _ALIAS_PRELUDE = alias_prelude_source(indent="        ")
@@ -45,8 +45,16 @@ def _header(vpy_path: str, cls_name: str, output_suffix: str) -> str:
     )
 
 
-_FOOTER = (
+# Statements appended to every generated ``execute()`` after the user body.
+# Shared with gvpy_cli._build_class_from_vpy so the two class factories cannot
+# drift -- same single-source-of-truth rationale as template/aliases.py.
+CLASS_BODY_TAIL = (
     "        # ===========================================\n"
+    "        # Optional --param-footer provenance block (no-op when off).\n"
+    "        self.emit_param_footer()\n"
+)
+
+_FOOTER = CLASS_BODY_TAIL + (
     "        # Re-flush after body emit() calls (overwrites base-class flush).\n"
     "        self._flush_outfile()\n"
 )

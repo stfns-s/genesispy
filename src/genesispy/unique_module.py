@@ -21,7 +21,7 @@ import re
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from . import cache, hashing
-from .config_handler import Priority
+from .config_handler import PRIORITY_LABELS, Priority, priority_label
 from .reporting import ElaborationError, ParameterError
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -32,6 +32,9 @@ if TYPE_CHECKING:  # pragma: no cover
 STATE_DEFINED = "DEFINED"
 STATE_FORCED = "FORCED"
 STATE_OVERRIDDEN = "OVERRIDDEN"
+
+# Value-column cap for the --param-footer table, in characters.
+_PARAM_FOOTER_VALUE_WIDTH = 32
 
 
 def _subtree_tag(subtree_sig) -> str:
@@ -71,6 +74,22 @@ def _comparable_lines(text: str, style) -> List[str]:
             if stripped and not stripped.startswith(style):
                 out.append(line)
     return out
+
+
+def _param_provenance(entry: Dict[str, Any]) -> str:
+    """Name the configuration source a resolved parameter's value came from.
+
+    ``state`` is authoritative for ``FORCED`` -- ``force_param`` is what pins
+    the value. Otherwise the stored ``priority`` names the winning source.
+    ``OVERRIDDEN`` with no recorded priority means a ConfigHandler that does
+    not report one, so say so rather than calling the value a default.
+    """
+    prio = int(entry.get("priority") or 0)
+    if entry.get("state") == STATE_FORCED:
+        return PRIORITY_LABELS[int(Priority.IMMUTABLE)]
+    if entry.get("state") == STATE_OVERRIDDEN and prio <= int(Priority.DECLARATION):
+        return "external configuration (source not recorded)"
+    return priority_label(prio)
 
 
 class UniqueModule:
@@ -1325,13 +1344,72 @@ class UniqueModule:
             self._outfile_handle = io.StringIO()
         self._outfile_handle.write(text + "\n")
 
+    def _emit_comment_block(self, lines: List[str]) -> None:
+        """Emit ``lines`` as one comment block in ``manager.output_comment`` style.
+
+        A ``str`` style prefixes every line; an ``(open, close)`` tuple emits
+        the delimiters on their own whole lines with the payload indented one
+        space. Both shapes are required by :func:`_comparable_lines`, which
+        strips comments for structural diffing and keys on whole-line
+        delimiters.
+        """
+        style = getattr(self._manager, "output_comment", "//")
+        if isinstance(style, tuple):
+            open_d, close_d = style
+            self.emit(open_d)
+            for ln in lines:
+                self.emit(f" {ln}")
+            self.emit(close_d)
+        else:
+            for ln in lines:
+                self.emit(f"{style} {ln}")
+
+    def emit_param_footer(self) -> None:
+        """Append a resolved-parameter provenance block after the module body.
+
+        No-op unless ``manager.param_footer`` is set (``--param-footer``) and
+        this module has at least one parameter. Called from the tail of every
+        generated ``execute()`` (``template/emitter.CLASS_BODY_TAIL``) after
+        the user body and before the final ``_flush_outfile()``, so the block
+        lands at the end of the file, past ``endmodule``. Unlike the
+        ``to_verilog`` banner -- written before the body runs -- it sees the
+        fully resolved parameter set.
+
+        The flag is read off the manager at runtime rather than baked into the
+        generated ``.py`` so that a ``--gen-only`` rerun against a stale
+        ``raw_dir`` honours the flag it was given, not the one that produced
+        the intermediate.
+
+        The rendered lines deliberately separate name from value with ``:``,
+        not ``=``: ``tests/_parity_normalize.py`` scans generated files for
+        ``// NAME = value`` banner rows, and its window is unbounded on files
+        with no ``module`` keyword.
+        """
+        if not getattr(self._manager, "param_footer", False):
+            return
+        if not self._params:
+            return
+        names = sorted(self._params)
+        vals = {n: repr(self._params[n]["value"]) for n in names}
+        name_w = max(len(n) for n in names)
+        # Cap the value column: one long repr (a list or dict parameter) would
+        # otherwise pad every other row out to its width. Values past the cap
+        # run long rather than being truncated -- a truncated value would lie.
+        val_w = min(max(len(v) for v in vals.values()), _PARAM_FOOTER_VALUE_WIDTH)
+        lines = ["Genesis-Py resolved parameter provenance"]
+        lines += [
+            f"  {n:<{name_w}} : {vals[n]:<{val_w}}  <- "
+            f"{_param_provenance(self._params[n])}"
+            for n in names
+        ]
+        self._emit_comment_block(lines)
+
     def to_verilog(self, infile: Optional[str] = None) -> None:
         """Emit a comment banner + parameter table (parity with :2927).
 
-        Style comes from ``manager.output_comment``: a ``str`` line prefix,
-        or an ``(open, close)`` tuple for a single wrapping block comment.
+        Style comes from ``manager.output_comment`` via
+        :meth:`_emit_comment_block`.
         """
-        style = getattr(self._manager, "output_comment", "//")
         lines = [
             f"Genesis-Py generated module: {self._unique_module_name}",
             f"Source class: {self._module_name}",
@@ -1342,15 +1420,7 @@ class UniqueModule:
             lines.append("Parameters:")
             for k in sorted(self._params):
                 lines.append(f"  {k} = {self._params[k]['value']!r}")
-        if isinstance(style, tuple):
-            open_d, close_d = style
-            self.emit(open_d)
-            for ln in lines:
-                self.emit(f" {ln}")
-            self.emit(close_d)
-        else:
-            for ln in lines:
-                self.emit(f"{style} {ln}")
+        self._emit_comment_block(lines)
 
     def _execute_child(self, child: "UniqueModule") -> None:
         """Run ``child.execute()`` with the user-config context bound to the

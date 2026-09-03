@@ -115,6 +115,7 @@ class Manager:
         self.syntax = "j2" if getattr(args, "j2", False) else "genesis"
         self.source_comment = getattr(args, "source_comment", "//")
         self.output_comment = _resolve_output_comment(args)
+        self.param_footer = bool(getattr(args, "param_footer", False))
 
         # Track every directory touched during elaboration for --path.
         self.touched_dirs: List[str] = []

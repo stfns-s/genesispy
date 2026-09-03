@@ -6,6 +6,7 @@ plus the small pure helpers (``_flatten_csv``, ``_stem``).
 
 from __future__ import annotations
 
+import re
 import sys
 
 import pytest
@@ -496,3 +497,33 @@ def test_help_uses_the_console_script_name(capsys, monkeypatch):
     out = capsys.readouterr().out
     assert out.startswith("usage: gvpy ")
     assert "gvpy_cli.py" not in out
+
+
+# ---------------------------------------------------------------------------
+# --param-footer (guards the second class factory against emitter drift)
+# ---------------------------------------------------------------------------
+
+def _write_param_module(tmp_path):
+    src = tmp_path / "pm.vpy"
+    src.write_text(
+        "//; w = parameter('W', 8)\n"
+        "module pm;\n"
+        "  wire [`w-1`:0] bus;\n"
+        "endmodule\n"
+    )
+    return src
+
+
+def test_param_footer_appears_in_gvpy_stdout(tmp_path, capsys):
+    """gvpy's own class factory must emit the footer too."""
+    rc = main(["--param-footer", "-p", "W=16", str(_write_param_module(tmp_path))])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "// Genesis-Py resolved parameter provenance" in out
+    assert re.search(r"^//\s+W\s+: 16\s+<- command line", out, re.M)
+
+
+def test_param_footer_absent_by_default(tmp_path, capsys):
+    rc = main(["-p", "W=16", str(_write_param_module(tmp_path))])
+    assert rc == 0
+    assert "resolved parameter provenance" not in capsys.readouterr().out

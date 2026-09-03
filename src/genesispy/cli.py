@@ -591,6 +591,18 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     g_tmpl.add_argument(
+        "--param-footer",
+        dest="param_footer",
+        action="store_true",
+        default=False,
+        help=(
+            "Append a comment block after each generated module listing every "
+            "resolved parameter with its value and the configuration source it "
+            "came from. Unlike the module banner, this is written after the "
+            "template body runs, so it sees the fully resolved parameter set."
+        ),
+    )
+    g_tmpl.add_argument(
         "-j2", "--j2",
         action="store_true",
         default=False,

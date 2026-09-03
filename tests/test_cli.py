@@ -695,3 +695,27 @@ def test_deprecated_aliases_hidden_from_help():
         assert hidden not in help_text, (
             f"deprecated alias {hidden!r} leaked into --help output"
         )
+
+
+# ---------------------------------------------------------------------------
+# --param-footer
+# ---------------------------------------------------------------------------
+
+def test_param_footer_defaults_false():
+    assert parse_args([]).param_footer is False
+
+
+def test_param_footer_flag_sets_true():
+    assert parse_args(["--param-footer"]).param_footer is True
+
+
+def test_param_footer_reaches_manager(tmp_path):
+    from genesispy.manager import Manager
+
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        assert Manager(parse_args(["--param-footer"])).param_footer is True
+        assert Manager(parse_args([])).param_footer is False
+    finally:
+        os.chdir(cwd)

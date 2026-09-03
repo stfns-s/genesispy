@@ -101,6 +101,7 @@ class StubManager:
         self.syntax: str = "genesis"
         self.source_comment: str = "//"
         self.output_comment: str = "//"
+        self.param_footer: bool = False
 
     def find_file(self, name: str, paths=None) -> str:  # pragma: no cover
         raise FileNotFoundError(name)

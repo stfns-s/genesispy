@@ -129,9 +129,15 @@ class Manager:
     # Style for comments emitted into the output stream. Set from
     # --output-comment; inherits source_comment when unset. A str is a line
     # prefix; a (open, close) tuple is a wrapping block (e.g. ("/*", "*/")).
-    # Read by UniqueModule.to_verilog (banner) and
+    # Read by UniqueModule.to_verilog (banner),
+    # UniqueModule.emit_param_footer (--param-footer block) and
     # output_writer.dump_to_stdout (--stdout separator).
     output_comment: "str | tuple[str, str]"
+    # Set from --param-footer. When true, every generated module appends a
+    # comment block listing each resolved parameter with its value and the
+    # configuration source that supplied it. Read at elaboration time by
+    # UniqueModule.emit_param_footer.
+    param_footer: bool
     # Original argparse.Namespace as parsed by cli.parse_args(). Engine
     # classes (ConfigHandler) read late-bound flags directly off this
     # (e.g. args.unq_style, args.parameter).
@@ -188,6 +194,16 @@ class Manager:
 ## genesispy.config_handler.ConfigHandler
 
 ```python
+# Human-readable source name per rung of the Priority ladder, keyed by the
+# stored integer rather than the enum: define_param writes a bare
+# flags.get("priority", 0), so an untouched default is 0, not DECLARATION.
+# priority_label() falls back to the nearest rung at or below an unlisted
+# value (configure() accepts any integer) and appends the raw number.
+# Consumed by UniqueModule.emit_param_footer for --param-footer.
+PRIORITY_LABELS: dict[int, str]
+def priority_label(priority: int | None) -> str: ...
+
+
 class ConfigHandler:
     def __init__(self, manager: "Manager") -> None: ...
     # read_json deep-merges into the in-memory database. Repeated reads
@@ -449,6 +465,21 @@ class UniqueModule:
     def emit(self, text: str) -> None: ...
     def instantiate(self, **ports: object) -> str: ...
     def to_verilog(self, infile: str | None = None) -> None: ...
+    # Emit `lines` as one comment block in manager.output_comment style. A str
+    # style prefixes every line; an (open, close) tuple puts the delimiters on
+    # their own whole lines -- required by _comparable_lines, which strips
+    # comments for structural diffing and keys on whole-line delimiters.
+    # Shared by to_verilog and emit_param_footer.
+    def _emit_comment_block(self, lines: list[str]) -> None: ...
+    # Append the --param-footer provenance block. No-op unless
+    # manager.param_footer is set and self._params is non-empty. Called from
+    # template/emitter.CLASS_BODY_TAIL after the user body and before the
+    # final _flush_outfile(), so it sees the fully resolved parameter set --
+    # unlike the to_verilog banner, written before the body runs. Rows read
+    # "NAME : value <- source"; the separator is ':' not '=' because
+    # tests/_parity_normalize.parse_header scans for "// NAME = value" rows
+    # with an unbounded window on files that have no `module` keyword.
+    def emit_param_footer(self) -> None: ...
     # Runs child.execute() with user_config.context bound to the child, so
     # include() and other bare-name helpers inside a sub-instance body resolve
     # self to the child (not the parent). Used by unique_inst /
@@ -456,7 +487,8 @@ class UniqueModule:
     # user_config.context() wrap in Manager.gen_verilog.
     def _execute_child(self, child: "UniqueModule") -> None: ...
     def execute(self) -> None: ...
-    # Called by template/emitter._FOOTER after the user body runs to
+    # Called by template/emitter._FOOTER after the user body runs (and after
+    # emit_param_footer, which _FOOTER invokes first) to
     # finalise the buffer into cache.OUTFILE_CONTENT_CACHE under
     # _unique_module_name and every registered synonym. Plain subclasses
     # rely on execute() to call this; generated subclasses re-flush in
@@ -545,6 +577,14 @@ def allowed_inputs(extension_map: dict[str, str]) -> list[str]: ...
 ## genesispy.template.emitter
 
 ```python
+# Statements appended to every generated execute() after the user body:
+# currently the emit_param_footer() call. _FOOTER is CLASS_BODY_TAIL plus the
+# final _flush_outfile(). Exported because gvpy_cli._build_class_from_vpy --
+# the second class factory, which has no _FOOTER of its own -- appends the
+# same tail, so the two cannot drift.
+CLASS_BODY_TAIL: str
+
+
 def write_module(
     vpy_path: str,
     output_dir: str,
