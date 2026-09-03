@@ -8,7 +8,23 @@ configs convert via the bundled `genesispy-xml2json` helper.
 
 ## Install
 
-### Without pip (recommended -- `bin/` launchers)
+### From PyPI
+
+```sh
+pip install genesispy
+```
+
+Installs the `genesispy`, `gvpy`, `genesispy-vp2vpy`, `genesispy-xml2json`,
+`genesispy-json2xml` and `genesispy-jinja2j2` commands. There are no
+mandatory dependencies; three optional extras:
+
+```sh
+pip install 'genesispy[xml]'        # lxml: pretty-printed genesispy-json2xml
+pip install 'genesispy[color]'      # colorama: coloured diagnostics
+pip install 'genesispy[import-j2]'  # jinja2: required by genesispy-jinja2j2
+```
+
+### From a checkout, without pip (recommended for developers -- `bin/` launchers)
 
 The repo ships shell launchers in `bin/` (`bin/genesispy`, `bin/gvpy`)
 that set `PYTHONPATH` to the sibling `src/` and exec
@@ -16,7 +32,7 @@ that set `PYTHONPATH` to the sibling `src/` and exec
 checkout:
 
 ```sh
-./bin/genesispy --input top.vpy --top top --json config.json
+./bin/genesispy --input top.vpy --top top --json-cfg config.json
 ```
 
 To "install" to a destination, copy `bin/` and `src/` together (the
@@ -29,7 +45,7 @@ cp -a bin src "$DEST/"
 export PATH="$DEST/bin:$PATH"
 ```
 
-### With pip
+### From a checkout, with pip
 
 ```sh
 pip install -e .
@@ -39,16 +55,16 @@ pip install --target /path/to/install-dir .
 
 ## Tests
 
-After `pip install -e .`:
-
-```sh
-pytest tests/
-```
-
-Without installing -- use the in-tree source via `PYTHONPATH`:
+Against the in-tree source, no install required:
 
 ```sh
 PYTHONPATH=src pytest tests/
+```
+
+Against an installed copy (`pip install -e .` or `pip install genesispy`):
+
+```sh
+pytest tests/
 ```
 
 ## Documentation
