@@ -53,11 +53,16 @@ PYTHONPATH=src pytest tests/
 
 ## Documentation
 
-- [doc/user-guide.md](./doc/user-guide.md) -- `.vpy` syntax, walkthrough,
-  CLI reference for `genesispy` and `gvpy`, migrating from Genesis2.
-- [doc/code-structure.md](./doc/code-structure.md) -- pipeline, dedup,
-  control flags.
-- [doc/interfaces.md](./doc/interfaces.md) -- module-boundary
-  interfaces.
-- [doc/genesis2-incompatibilities.md](./doc/genesis2-incompatibilities.md)
-  -- non-obvious behavior differences from Perl Genesis2.
+Each entry links to the rendered copy on GitHub; the `local` link resolves in a
+source checkout.
+
+- [doc/user-guide.md](https://github.com/stfns-s/genesispy/blob/main/doc/user-guide.md)
+  ([local](./doc/user-guide.md)) -- `.vpy` syntax, walkthrough, CLI reference
+  for `genesispy` and `gvpy`, migrating from Genesis2.
+- [doc/code-structure.md](https://github.com/stfns-s/genesispy/blob/main/doc/code-structure.md)
+  ([local](./doc/code-structure.md)) -- pipeline, dedup, control flags.
+- [doc/interfaces.md](https://github.com/stfns-s/genesispy/blob/main/doc/interfaces.md)
+  ([local](./doc/interfaces.md)) -- module-boundary interfaces.
+- [doc/genesis2-incompatibilities.md](https://github.com/stfns-s/genesispy/blob/main/doc/genesis2-incompatibilities.md)
+  ([local](./doc/genesis2-incompatibilities.md)) -- non-obvious behavior
+  differences from Perl Genesis2.

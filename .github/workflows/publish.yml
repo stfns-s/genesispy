@@ -1,0 +1,71 @@
+name: Publish
+
+# Publishes to PyPI via Trusted Publishing (OIDC): no API token is stored in
+# this repository. PyPI must have a publisher registered for
+# stfns-s/genesispy, workflow publish.yml, environment pypi.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Check version consistency
+        run: |
+          set -euo pipefail
+          proj=$(python -c \
+            'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')
+          init=$(python -c \
+            'import re,pathlib; print(re.search(r"__version__ = .([^\"]+).", pathlib.Path("src/genesispy/__init__.py").read_text()).group(1))')
+          printf 'pyproject=%s __init__=%s ref=%s\n' "$proj" "$init" "${GITHUB_REF_NAME}"
+          if [[ "$proj" != "$init" ]]; then
+              printf 'fatal: pyproject.toml (%s) and __init__.py (%s) disagree\n' "$proj" "$init" >&2
+              exit 1
+          fi
+          # A release build must match the tag it was cut from; a manual
+          # workflow_dispatch run has no meaningful ref to compare against.
+          if [[ "${GITHUB_EVENT_NAME}" == "release" && "v$proj" != "${GITHUB_REF_NAME}" ]]; then
+              printf 'fatal: version v%s does not match tag %s\n' "$proj" "${GITHUB_REF_NAME}" >&2
+              exit 1
+          fi
+
+      - name: Run tests before publishing
+        run: |
+          set -euo pipefail
+          pip install ".[dev]"
+          PYTHONPATH=src pytest tests/ -q
+
+      - name: Build sdist and wheel
+        run: |
+          set -euo pipefail
+          pip install build twine
+          python -m build
+          python -m twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Named environment so the Trusted Publisher can be scoped to it, and so
+    # a required reviewer can gate the upload if one is configured.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

@@ -1,36 +1,68 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+# >=77 for PEP 639 (license = "<SPDX>" / license-files).
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesispy"
-version = "0.5.2"
+version = "0.6.0"
 description = "Genesis Chip Generator, Python port of Genesis2"
+readme = "README.md"
 requires-python = ">=3.12"
-dependencies = [
-    "lxml>=4.9",
-    "colorama>=0.4",
+license = "Unlicense"
+license-files = ["LICENSE"]
+authors = [{ name = "stfns-s" }]
+keywords = ["RTL generator", "verilog", "ASIC", "FPGA"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: POSIX :: Linux",
 ]
+# No hard runtime requirements. Both accelerators below are guarded imports
+# with stdlib fallbacks (tools/xml_json.py:23, reporting.py:21), so the
+# package is fully functional without either.
+dependencies = []
 
 [project.optional-dependencies]
+# Pretty-printed genesispy-json2xml output; without it the stdlib
+# xml.etree.ElementTree writer is used.
+xml = ["lxml>=4.9"]
+# Coloured error/warning output; without it messages are uncoloured.
+color = ["colorama>=0.4"]
 dev = [
     "pytest>=7",
     "fixedpoint>=1.0",
+    "lxml>=4.9",
+    "colorama>=0.4",
 ]
 import-j2 = [
     "jinja2>=3.1",
 ]
 
+[project.urls]
+Homepage = "https://github.com/stfns-s/genesispy"
+Repository = "https://github.com/stfns-s/genesispy"
+
 [project.scripts]
 genesispy = "genesispy.cli:main"
 gvpy = "genesispy.gvpy_cli:main"
 genesispy-jinja2j2 = "genesispy.tools.jinja2j2:main"
+genesispy-xml2json = "genesispy.tools.xml_json:main_xml2json"
+genesispy-json2xml = "genesispy.tools.xml_json:main_json2xml"
+genesispy-vp2vpy = "genesispy.tools.vp2vpy:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+# vp2vpy locates its Perl helper as a sibling of vp2vpy.py
+# (tools/vp2vpy.py:35), so it must ship inside the package.
+[tool.setuptools.package-data]
+"genesispy.tools" = ["*.pl"]
 
 [tool.pytest.ini_options]
 # demos/ carries the dsp-gpy submodule, which has a pytest suite of its own.
