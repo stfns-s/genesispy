@@ -6,6 +6,12 @@ with a pure-Python implementation while keeping the template hierarchy
 (now `.vpy` / `.svpy`). Configuration is JSON; legacy Genesis2 `.xml`
 configs convert via the bundled `genesispy-xml2json` helper.
 
+## Editor support
+
+Filetype detection and syntax highlighting for `.vpy` / `.svpy` / `.gvpy` files is available from the
+[genesis-editors](https://github.com/stfns-s/genesis-editors.git) repository (Vim/Neovim, Emacs, VS
+Code). Install each per its own README.
+
 ## Install
 
 ### From PyPI
