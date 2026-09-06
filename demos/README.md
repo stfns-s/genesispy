@@ -74,7 +74,7 @@ both flavours against the same Perl reference.
 | `random_logic`                 | `genesis_src/`   | `genesis_src.j2/`   |
 | `gvpy`                         | `example.vpy`    | `example.j2.vpy`    |
 
-`generation_examples`, `include_examples` and `dsp` have no j2 twin.
+`generation_examples`, `include_examples`, `pyinclude_examples` and `dsp` have no j2 twin.
 
 `make gen-j2` elaborates the twin tree with `--j2`. It writes to a parallel set of outputs, so the
 two flavours never overwrite each other and `make gen` is unaffected:
@@ -170,6 +170,40 @@ the two diagnostic paths means repeating the include path:
 directly included encoder against a table computed at elaboration time. Leaves resolve via
 `--inc-path genesis_src`, set in the demo `Makefile`. Entry: `genesis_src/top.vpy`. `make sim` runs the
 self-check and prints `include_examples: all vectors PASS`.
+
+### `pyinclude_examples`
+
+The `pyinclude()` mechanism on its own, with a saturating fixed-point accumulator as filler
+arithmetic. Three `.vpy` files under `genesis_src/` and two plain Python helper libraries under
+`lib/`, reached with `--py-path lib`.
+
+`pyinclude()` execs a raw `.py` into the *calling code's own* namespace, so the names it defines
+stay reachable as bare names -- unlike `include()`, whose snippet gets a fresh namespace and hands
+values back on `self`. The demo exists to make that rule visible, and each module emits a comment
+naming what it can actually see:
+
+| File                    | pyincludes    | Emits |
+|-------------------------|---------------|-------|
+| `genesis_src/top.vpy`   | `emitters.py` | `decl_signed, check_eq` -- not `acc_width` |
+| `genesis_src/leaf.vpy`  | `fixed.py`    | `acc_width, sat_bounds` -- not `decl_signed` |
+| `genesis_src/frag.vpy`  | `fixed.py`    | included into `top` by `include()`; `(none)` leak back |
+
+So the three namespaces are disjoint: `top` and `leaf` are separate generated modules, and
+`frag.vpy` is an `include()`'d snippet whose own `pyinclude` dies with it. `top` reads the
+accumulator width back from the leaf with `get_param` rather than re-deriving it, because it
+cannot call `acc_width` itself.
+
+`lib/emitters.py` shows the other half of the rule: a pyinclude'd file has no `self`, so its
+emitters take the module as their first argument (`decl_signed(self, 'reg', w, 'exp_hi')`).
+Nothing is seeded into the namespace, because a generated module's globals are shared by every
+instance of that template.
+
+`top` self-checks under `` `ifdef SIMULATION ``: it drives twice as many terms as the accumulator
+is sized for, in both directions, and checks the result clamps at the bounds `lib/fixed.py`
+computed. `make sim` prints `pyinclude_examples: all vectors PASS`. The leaf rejects a `TERM_W`
+outside 2..24 and any parameter pair whose accumulator would exceed `ACC_W_MAX`, so
+`make gen EXTRA_FLAGS='--inc-path genesis_src --py-path lib -p TERM_W=40'` reaches the first
+`error()`. Entry: `genesis_src/top.vpy`.
 
 ### `gvpy`
 

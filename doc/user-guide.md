@@ -365,8 +365,8 @@ Jinja2 templates, see **Appendix A: j2 syntax**.
 Bare names bound automatically inside every generated `execute()` body.
 The canonical list is `genesispy.template.aliases.EXPECTED_ALIAS_KEYS`;
 this section enumerates every entry. (`SIMPLE_ALIASES` next to it holds
-only the plain method forwards -- the short names, `include` and
-`pinclude` are bound separately.) Backticked forms (e.g. `` `mname` ``)
+only the plain method forwards -- the short names, `include`,
+`pyinclude` and `pinclude` are bound separately.) Backticked forms (e.g. `` `mname` ``)
 work in plain-Verilog lines via the template parser.
 
 **Short-name strings** (each is a `StrCallable`, so both `mname` and
@@ -464,8 +464,9 @@ work in plain-Verilog lines via the template parser.
 
 - **`include(path)`** -- parse another `.vpy` and run its body against the current module, with `self` bound to it. The body runs in a *fresh* namespace, not the caller's `execute()` locals; values travel in and out on `self` (see §11.2). Mirrors Genesis2 `//;include("file.vp")`. Resolves `path` against `--inc-path`.
   - _Example:_ `//; include('common_ports.vpy')`
-- **`pinclude(path)`** -- gvpy-only raw-Python include. Bound to `None` in standard `genesispy` runs; calling it under `genesispy` raises `TypeError`.
-  - _Example (gvpy):_ `//; pinclude('helpers.py')`
+- **`pyinclude(path)`** -- exec a plain `.py` file into the *calling code's own* namespace, so the names it defines stay reachable as bare names for the rest of that module (see §11.3). Resolves `path` against `--py-path`, then `--inc-path`.
+  - _Example:_ `//; pyinclude('helpers.py')`
+- **`pinclude(path)`** -- deprecated spelling of `pyinclude`; emits a one-time warning to stderr.
 
 ## 8. Examples
 
@@ -684,8 +685,8 @@ output.
 - `-f`, `--input-list FILE` -- listfile of inputs (bare paths or GNU directives `--input/--input-list/--src-path/--inc-path`; inline `# ...` comments allowed; recursive). Repeatable.
 - `--src-path DIR` -- search directory for source-file resolution. Repeatable.
 - `--inc-path DIR` -- search directory for include-file resolution. Repeatable.
-- The two feed different lookups: `--input FILE` searches `src_path + inc_path + ['.']`; `include(...)` inside a `.vpy` body searches `inc_path + ['.']` only. `--src-path` does not resolve an include (section 5, "Search paths").
-- `--py-path DIR` -- prepend `DIR` to `sys.path` before parsing. Repeatable.
+- The two feed different lookups: `--input FILE` searches `src_path + inc_path + ['.']`; `include(...)` inside a `.vpy` body searches `inc_path + ['.']` only. `--src-path` does not resolve an include (section 5, "Search paths"). `pyinclude(...)` searches `py_path + inc_path + ['.']`.
+- `--py-path DIR` -- prepend `DIR` to `sys.path` before parsing, and the first directory `pyinclude(...)` searches. Repeatable.
 - `--py-import NAME` -- import a Python module before parsing. Repeatable.
 - `--parse-only` -- run only the parse phase (`.vpy` -> `.py`); skip elaboration.
 - `-j2`, `--j2` -- parse templates with the j2 (Jinja2-like) flavour (Appendix A). Stock Jinja2 sources do not parse here as-is; see `genesispy-jinja2j2`.
@@ -736,14 +737,14 @@ gvpy --gvpy-strict --mname top -p WIDTH=8 top.vpy > top.v
 ```
 
 Use it when you want gvpy semantics (record-only `generate`/
-`instantiate`, `pinclude()` raw-Python include) instead of genesispy's
-full elaboration pipeline. See `demos/gvpy/` for an example.
+`instantiate`) instead of genesispy's full elaboration pipeline. See
+`demos/gvpy/` for an example.
 
 Usage: `gvpy [options] FILE [FILE ...]` (output goes to stdout).
 
 - `--mname NAME` -- top module name (default: input filename stem).
-- `--py-path DIR[,DIR...]` -- comma-separated dirs to add to `sys.path`. Repeatable.
-- `--inc-path DIR[,DIR...]` -- comma-separated dirs for `include()`/`pinclude()` search. Repeatable.
+- `--py-path DIR[,DIR...]` -- comma-separated dirs to add to `sys.path`, searched first by `pyinclude()`. Repeatable.
+- `--inc-path DIR[,DIR...]` -- comma-separated dirs for `include()`/`pyinclude()` search. Repeatable.
 - `-p`, `--parameter NAME=VALUE` -- set a flat parameter consulted by `parameter()`. Repeatable. (`--defparam` is a deprecated hidden alias; emits a one-time warning.)
 - `--source-comment PREFIX` -- line-comment prefix of the source/target language (default: `//`). Sets the directive sentinel (`<comment>;` replaces `//;`) and is used as the default for `--output-comment`. (`--comment` is a deprecated alias; emits a one-time warning.)
 - `--output-comment PREFIX | OPEN,CLOSE` -- style for comments emitted into the output (banner and stdout separator). A bare prefix (e.g. `#`) emits line comments; a comma-separated pair (e.g. `/*,*/`) emits a wrapping block. Defaults to `--source-comment`.
@@ -865,27 +866,80 @@ fail at `KeyError` time rather than at include time. Working examples
 live in `demos/include_examples/genesis_src/`, where `codec.vpy` is
 both a caller (of `gray.vpy`) and a snippet (included by `top.vpy`).
 
-### 11.3 gvpy-only: raw-Python include via `pinclude(...)`
+### 11.3 Raw-Python include via `pyinclude(...)`
 
-Inside `gvpy`-driven flows, `pinclude("helpers.py")` execs a plain
-`.py` file -- useful for sharing helper functions when you don't want
-the included file to look like a template.
+`pyinclude("helpers.py")` execs a plain `.py` file -- for sharing
+helper functions when you don't want the included file to look like a
+template. It is available in both `genesispy` and `gvpy`.
 
-As with `include()`, the body runs in a fresh namespace rather than the
-caller's: the caller's variables are not visible to it, and names it
-binds do not come back. That namespace is smaller than `include()`'s --
-`self`, `emit`, `parameter`, `__file__`, `__name__`, and the usual
-builtins, nothing else. The remaining bare-name aliases are absent, so
-`unique_inst`, `error`, `mname` and the rest raise `NameError`; reach
-them through `self`. Values travel in and out on `self`, the same way
-as for `include()` above.
+Where `include()` runs its body in a fresh namespace, `pyinclude()`
+execs the file into the *calling code's own* namespace. The rule: a
+`pyinclude`'d name is visible exactly where the calling code's own
+top-level names are visible. In a module body that is the generated
+module's globals, so the names are callable as bare names anywhere in
+that module and in no other module. Inside an `include()`'d snippet it
+is that snippet's namespace, so they die with the snippet.
 
-Relative paths resolve against `--inc-path DIR` (repeatable; defaults
-to the current directory). A file found in none of them raises
-`FileNotFoundError`.
+```python
+# lib/helpers.py
+import math
 
-`pinclude` is bound to `None` in standard `genesispy` runs; calling it
-there raises `TypeError: 'NoneType' object is not callable`.
+TAPS_MAX = 64
+
+def taps(n):
+    return [1 << i for i in range(n)]
+
+def acc_width(weights, iw):
+    return iw + math.ceil(math.log2(sum(weights) + 1))
+```
+
+```verilog
+//; pyinclude("helpers.py")
+//; N  = parameter('N', 4)
+//; IW = parameter('IW', 8)
+//; w  = taps(N)
+//; aw = acc_width(w, IW)
+module `mname` (
+    input signed [`IW-1`:0] din,
+    output signed [`aw-1`:0] acc
+);
+```
+
+Nothing is seeded into the namespace -- there is no `self`, `emit` or
+`parameter` inside the `.py`. A generated module's globals are shared
+by every instance of that template, so a captured `self` would go stale
+as soon as elaboration nested. A helper that needs the module takes it
+as an argument:
+
+```python
+def declare(mod, name, w):
+    mod.emit(f"  wire signed [{w-1}:0] {name};\n")
+```
+
+```verilog
+//; declare(self, "scratch", aw)
+```
+
+For the same reason the file is re-exec'd once per instantiation of the
+template, which is harmless for a library of `def`s and constants. A
+file that must run once per *instance*, or that needs the full alias
+set, wants `include()` instead.
+
+Relative paths resolve against the current directory, then `--py-path`,
+then `--inc-path`, then `"."`. A file found in none of them raises
+`ParseError` naming every candidate directory. A target whose extension
+is a registered template extension (`.vpy`, `.svpy`) is rejected with a
+message pointing at `include()`. The `.py` is recorded as a
+prerequisite in the generated `.depend`.
+
+`pinclude(path)` is a deprecated spelling of `pyinclude` and behaves
+identically, emitting a one-time warning to stderr. Under `gvpy` both
+are additionally bound as instance attributes, so the historical
+`self.pinclude(...)` form keeps working.
+
+A working example is `demos/pyinclude_examples/`, where three modules
+pyinclude different libraries and each emits a comment naming what its
+namespace actually holds.
 
 ### 11.4 Rebinding bare-name aliases
 

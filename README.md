@@ -30,7 +30,15 @@ pip install 'genesispy[color]'      # colorama: coloured diagnostics
 pip install 'genesispy[import-j2]'  # jinja2: required by genesispy-jinja2j2
 ```
 
-### From a checkout, without pip (recommended for developers -- `bin/` launchers)
+### From a checkout, with pip
+
+```sh
+pip install -e .
+# or
+pip install --target /path/to/install-dir .
+```
+
+### For developers: from a checkout, without pip -- use `bin/` launchers
 
 The repo ships shell launchers in `bin/` (`bin/genesispy`, `bin/gvpy`)
 that set `PYTHONPATH` to the sibling `src/` and exec
@@ -51,13 +59,6 @@ cp -a bin src "$DEST/"
 export PATH="$DEST/bin:$PATH"
 ```
 
-### From a checkout, with pip
-
-```sh
-pip install -e .
-# or
-pip install --target /path/to/install-dir .
-```
 
 ## Tests
 

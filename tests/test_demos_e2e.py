@@ -44,19 +44,22 @@ def _run_demo(
     config_file: str | None = None,
     extra_argv: list[str] | None = None,
     syntax: str = "genesis",
+    extra_dirs: tuple[str, ...] = (),
 ) -> Path:
     """Copy demo files into tmp_path, run genesispy on them, return synth dir.
 
     ``syntax`` selects the template flavour: ``"genesis"`` uses
     ``genesis_src/`` (default ``//;`` / backtick directives); ``"j2"``
-    uses ``genesis_src.j2/`` and passes ``--j2``.
+    uses ``genesis_src.j2/`` and passes ``--j2``. ``extra_dirs`` names further
+    subdirectories to copy, for demos whose sources are not all under
+    ``genesis_src/`` (e.g. a ``lib/`` reached by ``--py-path``).
     """
     src_subdir = "genesis_src" if syntax == "genesis" else "genesis_src.j2"
     tmp_path.mkdir(parents=True, exist_ok=True)
     for src in demo_dir.iterdir():
         if src.is_file():
             shutil.copy(src, tmp_path / src.name)
-        elif src.is_dir() and src.name == src_subdir:
+        elif src.is_dir() and src.name in (src_subdir, *extra_dirs):
             shutil.copytree(src, tmp_path / src.name, dirs_exist_ok=True)
 
     cache.clear_all()
@@ -256,6 +259,34 @@ def test_include_examples(tmp_path: Path) -> None:
     assert "function static [4:0] gray_codec_w5_dec;" in body
     # gray.vpy included straight from top.vpy as well.
     assert "function static [3:0] gray_enc_w4;" in body
+
+
+def test_pyinclude_examples(tmp_path: Path) -> None:
+    """pyinclude_examples proves the namespace rule three ways: each module
+    sees only what it pyinclude'd itself, and a pyinclude inside an
+    include()'d snippet does not reach the caller."""
+    synth = _run_demo(
+        tmp_path, DEMOS / "pyinclude_examples", "top",
+        "top.vpy",
+        extra_argv=["--inc-path", "genesis_src", "--py-path", "lib"],
+        extra_dirs=("lib",),
+    )
+    files = sorted(p.name for p in synth.iterdir())
+    assert files == ["leaf_unq1.v", "top.v"], files
+
+    top = (synth / "top.v").read_text()
+    leaf = (synth / "leaf_unq1.v").read_text()
+    # top pyincluded emitters.py only; leaf pyincluded fixed.py only.
+    assert "pyinclude'd names visible here: decl_signed, check_eq" in top
+    assert "pyinclude'd names visible here: acc_width, sat_bounds" in leaf
+    # frag.vpy's own pyinclude stays inside the include()'d snippet.
+    assert "leaked into top from frag.vpy's pyinclude: (none)" in top
+    # decl_signed built these, taking the module as its first argument.
+    assert "reg signed [11:0] exp_hi;" in top
+    assert "wire signed [11:0] acc;" in top
+    # Widths came from fixed.py: acc_width(8, 16) == 12, so headroom is 4.
+    assert "leaf_unq1: 16 x 8-bit terms -> 12-bit acc" in leaf
+    assert "headroom = 4;" in top
 
 
 def test_generation_examples(tmp_path: Path) -> None:

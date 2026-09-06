@@ -165,8 +165,85 @@ def _include(path: str) -> None:
     }
     # Perl-compat bare-name aliases — single source of truth in template.aliases.
     from .template.aliases import alias_dict
-    g.update(alias_dict(mod))
+    g.update(alias_dict(mod, g))
     exec(code, g)
+
+
+# ---------------------------------------------------------------------------
+# Raw-Python include
+# ---------------------------------------------------------------------------
+# Compiled pyinclude bodies keyed by resolved path; cleared by cache.clear_all.
+_PYINCLUDE_CODE: dict = {}
+_PINCLUDE_WARNED = False
+
+
+def _reset_pyinclude_state() -> None:
+    """Clear the compile cache and the one-time pinclude warning."""
+    global _PINCLUDE_WARNED
+    _PYINCLUDE_CODE.clear()
+    _PINCLUDE_WARNED = False
+
+
+def _resolve_pyinclude(path: str) -> str:
+    """Resolve a pyinclude target over cwd, --py-path, --inc-path, then '.'.
+
+    Raises ParseError (via Manager.find_file) naming every candidate
+    directory when nothing matches.
+    """
+    if os.path.isabs(path) or os.path.exists(path):
+        return path
+    mgr = _current_manager()
+    search = list(getattr(mgr, "py_paths", [])) + list(mgr.inc_path) + ["."]
+    return mgr.find_file(path, search)
+
+
+def _make_pyinclude(ns: dict) -> Any:
+    """Return a ``pyinclude(path)`` that execs raw Python into ``ns``.
+
+    ``ns`` is the calling code's globals, so the file's top-level names stay
+    reachable exactly where the caller's own are. Nothing is seeded into it:
+    a generated module's globals are shared by every instance of that
+    template, so a captured ``self`` would go stale under nested elaboration.
+    """
+
+    def pyinclude(path: str) -> None:
+        from .reporting import ParseError
+
+        resolved = _resolve_pyinclude(path)
+        ext = os.path.splitext(resolved)[1].lower()
+        ext_map = getattr(_active_manager, "extension_map", None) or {}
+        if ext in ext_map:
+            raise ParseError(
+                f"pyinclude: {path!r} is a template ({ext}); "
+                "use include() for templates"
+            )
+        code = _PYINCLUDE_CODE.get(resolved)
+        if code is None:
+            with open(resolved, "r", encoding="utf-8") as fh:
+                code = compile(fh.read(), resolved, "exec")
+            _PYINCLUDE_CODE[resolved] = code
+        from . import cache
+
+        cache.INCLUDED_FILES.append(resolved)
+        exec(code, ns)
+
+    return pyinclude
+
+
+def _make_pinclude(ns: dict) -> Any:
+    """Deprecated spelling of pyinclude; warns once per process."""
+    inner = _make_pyinclude(ns)
+
+    def pinclude(path: str) -> None:
+        global _PINCLUDE_WARNED
+        from .reporting import warning
+
+        if not _PINCLUDE_WARNED:
+            _PINCLUDE_WARNED = True
+            warning("pinclude is deprecated; use pyinclude")
+        return inner(path)
+
+    return pinclude
 
 
 # ---------------------------------------------------------------------------

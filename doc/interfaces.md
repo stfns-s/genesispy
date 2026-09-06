@@ -629,24 +629,27 @@ so they cannot drift.
 
 ```python
 # (bare_name, UniqueModule method name) pairs for the plain forwards.
-# Does NOT include the short names, `include`, or `pinclude` -- those are
-# bound separately because they are not simple method forwards.
+# Does NOT include the short names, `include`, `pyinclude` or `pinclude` --
+# those are bound separately because they are not simple method forwards.
 SIMPLE_ALIASES: tuple[tuple[str, str], ...]
 
 # Every name a .vpy body may rely on: SIMPLE_ALIASES keys plus
-# mname/iname/bname/sname, include, pinclude. This is the complete set,
-# and the one user-guide section 7.3 enumerates.
+# mname/iname/bname/sname, include, pyinclude, pinclude. This is the complete
+# set, and the one user-guide section 7.3 enumerates.
 EXPECTED_ALIAS_KEYS: frozenset[str]
 
 # Render the local-binding prelude injected at the top of every generated
-# execute() by template/emitter._HEADER. `indent` is the leading whitespace
-# for each emitted line (two levels by default).
+# execute() by template/emitter._header. `indent` is the leading whitespace
+# for each emitted line (two levels by default). The pyinclude/pinclude lines
+# it renders read globals(), which inside execute() is the generated module's
+# own dict.
 def alias_prelude_source(indent: str = "        ") -> str: ...
 
 # Build the equivalent name -> callable mapping for an exec namespace, bound
-# to `self_obj`. Used by user_config._include; gvpy_cli binds a deliberately
-# narrower namespace for pinclude (see genesispy.template.runtime below).
-def alias_dict(self_obj: Any) -> dict[str, Any]: ...
+# to `self_obj`. Used by user_config._include. `ns` is the namespace
+# pyinclude/pinclude populate -- normally the same dict the caller merges the
+# result into; omitting it binds both to a stub raising RuntimeError.
+def alias_dict(self_obj: Any, ns: dict | None = None) -> dict[str, Any]: ...
 ```
 
 ## genesispy.template.runtime
@@ -682,7 +685,8 @@ generate_base           # alias for ununique_inst
 generate_w_name         # synonym_class + ununique_inst
 clone                   # alias for clone_inst
 include                 # user_config._include (Perl-style //;include(...))
-pinclude                # gvpy-only; None outside gvpy contexts
+pyinclude               # raw-Python include into this module's own namespace
+pinclude                # deprecated spelling of pyinclude; warns once
 ```
 
 These are plain Python locals: a user `.vpy` may rebind them (e.g. `parameter = ...`) and standard Python
@@ -694,8 +698,24 @@ are not visible to the included body, and names the body binds are not returned 
 the only channel between the two. Demos pass arguments as a `self.include_params` dict; that attribute is
 a user-level convention, not framework state (nothing in `src/` reads, writes, or clears it).
 
-`gvpy_cli._install_pinclude` does the same for `pinclude`, with a narrower namespace: `self`, `emit`,
-`parameter`, `__file__`, `__name__` and builtins only -- none of the other aliases above.
+`pyinclude(path)` is the raw-Python counterpart, and inverts that rule: instead of a fresh
+namespace it `exec`s the file into the calling code's own globals, so the file's top-level names
+stay reachable exactly where the caller's own top-level names are. In a module body that is the
+generated module's dict, so the names are bare-callable anywhere in that module and in no other
+module; inside an `include()`'d snippet it is that snippet's namespace, so they die with it.
+
+Nothing is seeded into the namespace -- a generated module's globals are shared by every instance
+of that template, so a captured `self` would go stale as soon as elaboration nested. A helper that
+needs the module takes it as an argument. For the same reason the file is re-`exec`'d once per
+instantiation; `cache.INCLUDED_FILES` dedups by abspath, so `.depend` still lists it once.
+
+Resolution order is absolute, cwd, `--py-path`, `--inc-path`, then `"."` (`Manager.py_paths` and
+`Manager.inc_path`; `_GvpyManager` mirrors both). A target whose extension is in
+`Manager.extension_map` is rejected with a message naming `include()`.
+
+`pinclude` is a deprecated spelling of `pyinclude` with identical behaviour, warning once per
+process. gvpy additionally binds both as instance attributes so the historical `self.pinclude(...)`
+form keeps working; they resolve to the same namespace the bare names do.
 
 The module's own API, used by the engine rather than by `.vpy` bodies:
 

@@ -23,6 +23,7 @@ DEMO_NAMES = [
     "many_iterative_wallace_trees",
     "regfile",
     "include_examples",
+    "pyinclude_examples",
 ]
 
 # Build artefacts that must not be copied into the staging directory.

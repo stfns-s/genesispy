@@ -242,12 +242,15 @@ def test_main_defparam_default_when_absent(tmp_path, capsys):
 def test_main_incdirs_resolves_pinclude(tmp_path, capsys):
     inc_dir = tmp_path / "inc"
     inc_dir.mkdir()
-    (inc_dir / "snippet.py").write_text("emit('// helper-was-included\\n')\n")
+    (inc_dir / "snippet.py").write_text(
+        "def helper(mod):\n    mod.emit('// helper-was-included\\n')\n"
+    )
 
     src = tmp_path / "top.vpy"
     src.write_text(
         "module top;\n"
         "//; self.pinclude('snippet.py')\n"
+        "//; helper(self)\n"
         "endmodule\n"
     )
     rc = main(["--incdirs", str(inc_dir), str(src)])
@@ -261,10 +264,15 @@ def test_main_incdirs_csv(tmp_path, capsys):
     b = tmp_path / "b"
     a.mkdir()
     b.mkdir()
-    (b / "snippet.py").write_text("emit('// from-b\\n')\n")
+    (b / "snippet.py").write_text(
+        "def helper(mod):\n    mod.emit('// from-b\\n')\n"
+    )
     src = tmp_path / "top.vpy"
     src.write_text(
-        "module top;\n//; self.pinclude('snippet.py')\nendmodule\n"
+        "module top;\n"
+        "//; self.pinclude('snippet.py')\n"
+        "//; helper(self)\n"
+        "endmodule\n"
     )
     rc = main(["--incdirs", f"{a},{b}", str(src)])
     assert rc == 0
@@ -384,23 +392,44 @@ def test_main_gvpy_strict_parameter_honours_scoped_override(tmp_path, capsys):
 
 
 def test_main_pinclude_runs_python(tmp_path, capsys):
-    """``self.pinclude(path)`` execs raw Python in a namespace seeded
-    with ``self``/``emit``/``parameter``.
+    """``pinclude(path)`` execs raw Python into the module's own namespace,
+    so its definitions stay reachable as bare names afterwards.
     """
     inc_dir = tmp_path / "inc"
     inc_dir.mkdir()
     py = inc_dir / "snippet.py"
-    py.write_text("emit('// hello-from-pinclude\\n')\n")
+    py.write_text("GREETING = '// hello-from-pinclude'\n")
 
     src = tmp_path / "top.vpy"
     src.write_text(
         "module top;\n"
-        "//; self.pinclude('snippet.py')\n"
+        "//; pinclude('snippet.py')\n"
+        "`GREETING`\n"
         "endmodule\n"
     )
     rc = main(["--incdirs", str(inc_dir), str(src)])
     assert rc == 0
     assert "hello-from-pinclude" in capsys.readouterr().out
+
+
+def test_main_pyinclude_bare_name(tmp_path, capsys):
+    """The canonical spelling works as a bare name and shares pinclude's
+    resolution.
+    """
+    inc_dir = tmp_path / "inc"
+    inc_dir.mkdir()
+    (inc_dir / "snippet.py").write_text("def width():\n    return 7\n")
+
+    src = tmp_path / "top.vpy"
+    src.write_text(
+        "module top;\n"
+        "//; pyinclude('snippet.py')\n"
+        "  wire [`width()-1`:0] w;\n"
+        "endmodule\n"
+    )
+    rc = main(["--incdirs", str(inc_dir), str(src)])
+    assert rc == 0
+    assert "wire [6:0] w;" in capsys.readouterr().out
 
 
 def test_main_pinclude_missing_file(tmp_path, capsys):

@@ -127,6 +127,8 @@ def clear_all() -> None:
     # Recycled tmpdir paths could otherwise inherit a stale .vpy mapping.
     from .template import runtime as _rt
     _rt.clear_line_maps()
+    from . import user_config as _uc
+    _uc._reset_pyinclude_state()
 
 
 def next_derivation(base_name: str) -> int:

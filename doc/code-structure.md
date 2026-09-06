@@ -180,9 +180,10 @@ The frontend is the only place that knows the `.vpy` input syntax. Four files:
   source for user-visible errors.
 - **`aliases.py`** holds the bare-name alias table in one place. `SIMPLE_ALIASES` maps each bare name to the
   `UniqueModule` method it forwards to; `EXPECTED_ALIAS_KEYS` is the full set including the short names,
-  `include` and `pinclude`. `alias_prelude_source()` renders the emitter's local-binding prelude and
-  `alias_dict(mod)` builds the equivalent namespace for `user_config._include`, so the two paths cannot
-  drift apart.
+  `include`, `pyinclude` and `pinclude`. `alias_prelude_source()` renders the emitter's local-binding
+  prelude and `alias_dict(mod, ns)` builds the equivalent namespace for `user_config._include`, so the two
+  paths cannot drift apart. The `pyinclude`/`pinclude` bindings carry the namespace the included Python
+  populates -- `globals()` in the rendered prelude, the `ns` argument in `alias_dict`.
 
 A generated `.py` file is therefore a thin shell: two `import` lines plus the rewritten body. All real work
 happens in `unique_module.py` / `user_lib.py` / `cache.py` / `config_handler.py`, reached transitively via

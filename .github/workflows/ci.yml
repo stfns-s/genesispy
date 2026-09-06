@@ -33,6 +33,7 @@ jobs:
         demos/random_logic
         demos/regfile
         demos/include_examples
+        demos/pyinclude_examples
       # Own Makefile, so gen + vlint but no pylint target.
       GEN_VLINT_DEMOS: demos/generation_examples
       GVPY_DEMO: demos/gvpy
@@ -46,6 +47,7 @@ jobs:
         demos/random_logic
         demos/regfile
         demos/include_examples
+        demos/pyinclude_examples
         demos/generation_examples
         demos/gvpy
         demos/dsp

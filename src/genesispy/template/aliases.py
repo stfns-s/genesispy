@@ -17,6 +17,10 @@ Historically each site kept its own copy and they drifted (``include`` and
 source of truth; the three sites consume :data:`SIMPLE_ALIASES` via
 :func:`alias_prelude_source` (source-string form) or :func:`alias_dict`
 (dict form).
+
+``pyinclude`` and its deprecated spelling ``pinclude`` are bound per-site
+against the namespace the included Python must populate -- ``globals()`` in
+the two source-string sites, the ``ns`` argument in :func:`alias_dict`.
 """
 
 from __future__ import annotations
@@ -56,11 +60,14 @@ SIMPLE_ALIASES: tuple[tuple[str, str], ...] = (
 
 # Full set of bare-name aliases bound at every prelude site. The
 # StrCallable shortname quartet (mname/iname/bname/sname) and the
-# include/pinclude pair sit alongside SIMPLE_ALIASES; this constant is
-# the single source of truth for tests that assert "every name is bound".
+# include/pyinclude/pinclude trio sit alongside SIMPLE_ALIASES; this constant
+# is the single source of truth for tests that assert "every name is bound".
 EXPECTED_ALIAS_KEYS: frozenset[str] = frozenset(
     {alias for alias, _ in SIMPLE_ALIASES}
-    | {"mname", "iname", "bname", "sname", "include", "pinclude"}
+    | {
+        "mname", "iname", "bname", "sname",
+        "include", "pyinclude", "pinclude",
+    }
 )
 
 
@@ -102,17 +109,28 @@ def alias_prelude_source(indent: str = "        ") -> str:
         f"getattr(type(self), '_synonym_for', None) or self._module_name)"
     )
     lines.append(f"{indent}include = _gpy_user_config._include")
-    lines.append(f'{indent}pinclude = getattr(self, "pinclude", None)')
+    # globals() inside execute() is the generated module's own dict, which is
+    # exactly the namespace a pyinclude'd file must populate.
+    lines.append(
+        f"{indent}pyinclude = _gpy_user_config._make_pyinclude(globals())"
+    )
+    lines.append(
+        f"{indent}pinclude = _gpy_user_config._make_pinclude(globals())"
+    )
     return "\n".join(lines) + "\n"
 
 
-def alias_dict(self_obj: Any) -> dict[str, Any]:
+def alias_dict(self_obj: Any, ns: dict | None = None) -> dict[str, Any]:
     """Return bare-name alias bindings as a dict.
 
     Suitable for merging into the globals dict passed to ``exec()`` for a
     parsed `.vpy` body, e.g. by :func:`genesispy.user_config._include`.
     Mirrors :func:`alias_prelude_source`'s coverage so an `include()`-d
     .vpy sees the same names a top-level one does.
+
+    ``ns`` is the namespace ``pyinclude``/``pinclude`` populate -- normally
+    the same dict the caller merges the result into. Omitting it binds both
+    to a stub that raises ``RuntimeError`` when called.
     """
     from genesispy import user_config as _uc
     from .runtime import StrCallable
@@ -162,5 +180,15 @@ def alias_dict(self_obj: Any) -> dict[str, Any]:
         out["sname"] = None
 
     out["include"] = _uc._include
-    out["pinclude"] = getattr(self_obj, "pinclude", None)
+    if ns is None:
+        def _needs_ns(_path: str) -> None:
+            raise RuntimeError(
+                "pyinclude: alias_dict was called without a namespace; "
+                "pass the dict the bindings are merged into"
+            )
+        out["pyinclude"] = _needs_ns
+        out["pinclude"] = _needs_ns
+    else:
+        out["pyinclude"] = _uc._make_pyinclude(ns)
+        out["pinclude"] = _uc._make_pinclude(ns)
     return out

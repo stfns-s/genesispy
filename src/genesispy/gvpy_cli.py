@@ -55,7 +55,12 @@ def pp(num, fmt: str = "%02d") -> str:
 class _GvpyManager:
     """Single-file driver Manager: no parse/emit pipeline, no output dirs."""
 
-    def __init__(self, args: argparse.Namespace, incdirs: list[str]) -> None:
+    def __init__(
+        self,
+        args: argparse.Namespace,
+        incdirs: list[str],
+        libdirs: list[str] | None = None,
+    ) -> None:
         # Patch attrs consumed by ConfigHandler/UniqueModule/output_writer
         # that gvpy's narrower argparse doesn't define.
         if not hasattr(args, "unq_style"):
@@ -65,6 +70,8 @@ class _GvpyManager:
         self.debug = 0
         self.src_path: list[str] = list(incdirs)
         self.inc_path: list[str] = list(incdirs)
+        # Mirrors Manager.py_paths: the --py-path dirs pyinclude searches first.
+        self.py_paths: list[str] = list(libdirs or [])
         self.cfg_path: list[str] = []
         self.output_dir = ""
         self.raw_dir = ""
@@ -399,7 +406,7 @@ def main(argv: list[str] | None = None) -> int:
     # for any malformed entry; catch and re-emit with the gvpy prefix.
     cache.clear_all()
     try:
-        mgr = _GvpyManager(args, incdirs)
+        mgr = _GvpyManager(args, incdirs, libdirs)
     except ParameterError as exc:
         reporting.error(f"{PROG}: {exc}", fatal=False)
         return 2
@@ -415,7 +422,7 @@ def main(argv: list[str] | None = None) -> int:
     rc = 0
     for fname in args.files:
         try:
-            _process(fname, mgr, args, incdirs)
+            _process(fname, mgr, args)
         except Exception as exc:  # surface the source location
             reporting.error(
                 f"{PROG}: error processing {fname}: {exc}", fatal=False
@@ -426,7 +433,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _process(
-    fname: str, mgr: _GvpyManager, args: argparse.Namespace, incdirs: list[str]
+    fname: str, mgr: _GvpyManager, args: argparse.Namespace
 ) -> None:
     path = mgr.find_file(fname) if not os.path.isabs(fname) else fname
     stem = _stem(path, extra=mgr.extension_map.keys())
@@ -447,46 +454,18 @@ def _process(
             setattr(inst, k, v)
         inst.ununique_inst = overrides["generate"]  # type: ignore[assignment]
 
-    _install_pinclude(inst, incdirs)
+    # gvpy templates have always reached these as self.pinclude(...); the bare
+    # names come from the alias prelude. Same namespace either way -- the class
+    # body's globals are what globals() returns inside execute().
+    ns = cls.execute.__globals__
+    inst.pyinclude = user_config._make_pyinclude(ns)  # type: ignore[attr-defined]
+    inst.pinclude = user_config._make_pinclude(ns)  # type: ignore[attr-defined]
 
     with user_config.context(mgr, inst):
         inst.execute()
 
     out = inst._outfile_handle.getvalue() if inst._outfile_handle else ""
     sys.stdout.write(out)
-
-
-def _install_pinclude(inst: UniqueModule, incdirs: list[str]) -> None:
-    """Bind a ``pinclude(path)`` callable on the instance so generated
-    code can call it as a bare name.
-
-    pinclude is exposed as a bare name via template.aliases.alias_prelude_source.
-    """
-
-    def pinclude(path: str) -> None:
-        target = path
-        if not os.path.isabs(target):
-            for d in incdirs:
-                cand = os.path.join(d, path)
-                if os.path.isfile(cand):
-                    target = cand
-                    break
-            else:
-                raise FileNotFoundError(
-                    f"pinclude: cannot find {path!r} in {incdirs}"
-                )
-        with open(target, "r", encoding="utf-8") as fh:
-            src = fh.read()
-        ns: dict[str, Any] = {
-            "self": inst,
-            "emit": inst.emit,
-            "parameter": inst.parameter,
-            "__file__": target,
-            "__name__": "__gvpy_pinclude__",
-        }
-        exec(compile(src, target, "exec"), ns)
-
-    inst.pinclude = pinclude  # type: ignore[attr-defined]
 
 
 def _stem(path: str, extra: Iterable[str] = ()) -> str:
