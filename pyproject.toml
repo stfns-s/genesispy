@@ -65,5 +65,6 @@ where = ["src"]
 "genesispy.tools" = ["*.pl"]
 
 [tool.pytest.ini_options]
-# demos/ carries the dsp-gpy submodule, which has a pytest suite of its own.
+# The dsp demo has a pytest suite of its own; tests/test_demo_dsp.py
+# runs it through that demo's Makefile, so demos/ stays out of collection.
 norecursedirs = ["demos", "build", "dist", ".git"]

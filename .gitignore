@@ -16,6 +16,10 @@ __pycache__/
 venv/
 env/
 
+# Editor artifacts
+*.swp
+*.swo
+
 # Tooling caches
 .pytest_cache/
 .mypy_cache/
@@ -64,3 +68,5 @@ vsim.wlf
 # Verilator
 obj_dir/
 genesispy.log
+# dsp scratch area (its build/ and genesis_raw/ are covered above).
+demos/dsp/tmp/

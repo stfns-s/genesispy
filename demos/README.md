@@ -2,8 +2,7 @@
 
 Examples that run the `genesispy` elaborator. Each demo is self-contained. The four ported from the
 matching tree under upstream `Genesis2/demo/` are checked for parity vs. the Perl reference by the
-workspace-level `test_parity/` suite. `dsp-gpy` is the exception to "self-contained": it is a git
-submodule holding a separate repository, described at the end of this file.
+workspace-level `test_parity/` suite.
 
 ## Quick start
 
@@ -22,7 +21,7 @@ not required. `env_setup.sh` prepends `genesispy/bin` to `PATH`.
 
 ### `genesispy.mk`
 
-Included by every demo's `Makefile` except `generation_examples`, `gvpy` and `dsp-gpy`, which carry standalone
+Included by every demo's `Makefile` except `generation_examples`, `gvpy` and `dsp`, which carry standalone
 Makefiles. The per-demo `Makefile` is a 3-line shim that sets `TOP`, `INPUTS`, optionally `JSON_CONFIG`, then
 `include ../genesispy.mk`.
 
@@ -75,7 +74,7 @@ both flavours against the same Perl reference.
 | `random_logic`                 | `genesis_src/`   | `genesis_src.j2/`   |
 | `gvpy`                         | `example.vpy`    | `example.j2.vpy`    |
 
-`generation_examples`, `include_examples` and `dsp-gpy` have no j2 twin.
+`generation_examples`, `include_examples` and `dsp` have no j2 twin.
 
 `make gen-j2` elaborates the twin tree with `--j2`. It writes to a parallel set of outputs, so the
 two flavours never overwrite each other and `make gen` is unaffected:
@@ -178,31 +177,26 @@ Standalone example for the `gvpy` flat-preprocessor entry point (not the full `g
 backtick expressions, control flow (`for` / `if`), and `pp()`. Run via `bin/gvpy`, not `bin/genesispy`. Entry:
 `example.vpy`; no `genesis_src/` subdirectory.
 
-### `dsp-gpy`
+### `dsp`
 
-Git submodule pointing at [dsp-gpy](https://github.com/stfns-s/dsp-gpy), the fixed-point DSP library that consumes
-genesispy. It is the widest exercise of the tool in this tree: 17 arithmetic functions pulled in with `include()`
-(`funcs/f_*.svpy`), two synthesizable tops (`modules/iir.svpy`, `modules/intg.svpy`), a Python helper library reached
-through `--py-path` (`lib/qfmt.py`, `lib/vexpr.py`), and one testbench per function and per module run over a sweep of
-configurations. Sources are `.svpy`, so it also covers SystemVerilog output.
+A fixed-point DSP library, and the widest exercise of the tool in this tree: 17 arithmetic functions pulled in with
+`include()` (`functions/f_*.vpy`), three synthesizable tops (`modules/iir.vpy`, `modules/intg.vpy`,
+`modules/spec_mux.vpy`), a Python helper library reached through `--py-path` (`lib/qfmt.py`, `lib/vexpr.py`), and
+one testbench per function and per module run over a sweep of configurations. The templates emit SystemVerilog, so
+both generator call sites pass `-sv` and the output is `.sv` -- the only demo that covers that path.
 
-A plain clone leaves the directory empty. Check it out before first use. The pin is `v0.1.0`:
+The `Makefile` is its own -- `genesispy.mk` is not included, there is no `genesis_src/` and no j2 twin. Its targets are
+`gen`, `pylint`, `vlint`, `lint`, `sim`, `pytest`, `test`, `test-extra`, `test-smoke`, `plot` and `clean`; everything
+generated lands in `build/<top>/default/`. `make test` needs `iverilog` and `make plot` needs matplotlib, neither of
+which the other demos use.
 
-```sh
-git submodule update --init demos/dsp-gpy
-```
+`genesispy/tests/test_demo_dsp.py` covers `gen`, `pylint`, `pytest`, `vlint` and `clean`, and CI runs the same
+three of those it runs for the other demos. `make test` stays out of both: it sweeps roughly 124 configurations
+through a simulator, so it is the demo's own gate, run by hand. `test_parity/` does not cover it -- there is no Perl
+reference.
 
-It builds itself. The `Makefile` is its own -- `genesispy.mk` is not included, there is no `genesis_src/`, no j2 twin,
-and no coverage from `genesispy/tests/` or `test_parity/`. Its targets are `gen`, `lint`, `test`, `test-extra`, `sim`,
-`plot` and `clean`; everything generated lands in `build/`. `make test` needs `iverilog` and `make plot` needs
-matplotlib, neither of which the other demos use.
-
-Put genesispy on `PATH` with `source ../env_setup.sh` from inside the demo. The repo's own `setup.sh` expects a
-genesispy checkout beside its own, which is not the case here; `GENESISPY_HOME=../.. source setup.sh` is the
-equivalent.
-
-Entry: `modules/iir.svpy` and `modules/intg.svpy`, one top each. See the submodule's own `README.md` for the build
-layout and the testbench flow.
+Entry: `modules/iir.vpy` and `modules/intg.vpy`, one top each. See the demo's own `README.md` for the build layout
+and the testbench flow.
 
 ## See also
 

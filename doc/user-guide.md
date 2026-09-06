@@ -6,7 +6,7 @@ elaboration resolves parameters and deduplicates modules, and how to
 drive the tool from the command line. Sections 1 through 4 introduce
 the tool, installation, a first run, and the file types involved.
 Sections 5 through 8 describe the source layout, elaboration model,
-template syntax, and a worked walkthrough. Sections 9 and 10 document
+template syntax, and a walkthrough. Sections 9 and 10 document
 the `genesispy` and `gvpy` command-line interfaces. Section 11 covers
 extending genesispy with Python libraries, section 12 lists migration
 notes for users coming from Genesis2, and sections 13 through 15 cover
@@ -496,7 +496,7 @@ make clean
 make help                               # demo-specific usage table
 ```
 
-#### Parameter setting precedence (worked example)
+#### Parameter setting precedence (example)
 
 Trace the value of parameter `COND` on the elaborated sub-instance
 `top.wallace_2` (the `wallace_2` instance created by
@@ -630,26 +630,25 @@ See `genesispy/demos/generation_examples/README.md` for the full
 walkthrough -- source listings, exact commands, and expected Verilog
 output for each.
 
-### 8.3 `dsp-gpy`
+### 8.3 `dsp`
 
-The `dsp-gpy` demo is a separate repository, checked out as a git
-submodule under `demos/dsp-gpy`. It is the largest worked example in the
-tree: a fixed-point DSP function library pulled in with `include()`
-(`funcs/f_*.svpy`), two synthesizable tops (`modules/iir.svpy`,
-`modules/intg.svpy`), a Python helper library reached through
-`--py-path`, and one testbench per function and per module. Sources are
-`.svpy`, and it drives `--src-path`, `--inc-path`, `--py-path`,
-`--synth-top` and `--vf-out` together.
+The `dsp` demo is the largest example in the tree: a
+fixed-point DSP function library pulled in with `include()`
+(`functions/f_*.vpy`), three synthesizable tops
+(`modules/iir.vpy`, `modules/intg.vpy`, `modules/spec_mux.vpy`), a
+Python helper library reached through
+`--py-path`, and one testbench per function and per module. The
+templates emit SystemVerilog, so it drives `-sv` alongside
+`--src-path`, `--inc-path`, `--py-path`, `--synth-top` and `--vf-out`.
 
 ```sh
-git submodule update --init demos/dsp-gpy
-cd genesispy/demos/dsp-gpy
+cd genesispy/demos/dsp
 source ../env_setup.sh
 make gen
 ```
 
 It carries its own `Makefile` and build layout rather than the shared
-`genesispy.mk`. See `genesispy/demos/dsp-gpy/README.md` for the full
+`genesispy.mk`. See `genesispy/demos/dsp/README.md` for the full
 walkthrough, and `genesispy/demos/README.md` for how it differs from the
 other demos.
 
@@ -738,7 +737,7 @@ gvpy --gvpy-strict --mname top -p WIDTH=8 top.vpy > top.v
 
 Use it when you want gvpy semantics (record-only `generate`/
 `instantiate`, `pinclude()` raw-Python include) instead of genesispy's
-full elaboration pipeline. See `demos/gvpy/` for a worked example.
+full elaboration pipeline. See `demos/gvpy/` for an example.
 
 Usage: `gvpy [options] FILE [FILE ...]` (output goes to stdout).
 
@@ -1211,7 +1210,7 @@ All four Genesis2-derived demos carry a j2 twin source tree under
 the single file `demos/gvpy/example.j2.vpy`. Both are elaborated via
 `make gen-j2`. Outputs land in a parallel `genesis_synth.j2/` directory
 so the default `make gen` flow is untouched. `generation_examples`,
-`include_examples` and `dsp-gpy` have no j2 twin. See `demos/README.md`
+`include_examples` and `dsp` have no j2 twin. See `demos/README.md`
 ("j2 twin sources") for the full source/output mapping.
 
 ### Porting stock Jinja2 templates
