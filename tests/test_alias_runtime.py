@@ -5,16 +5,18 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-import pytest
 
 from genesispy import cache
 from genesispy.template import emitter
 
+from genesispy.template.aliases import SIMPLE_ALIASES
+
 from ._stubs import StubManager
 
 
-def setup_function(_fn) -> None:
-    cache.clear_all()
+
+# Every attribute alias_dict reads through SIMPLE_ALIASES, as no-op stubs.
+_TABLE_ATTRS = {attr: None for _, attr in SIMPLE_ALIASES}
 
 
 def _emit_and_load(tmp_path: Path, name: str, vpy_text: str):
@@ -108,19 +110,10 @@ def test_alias_dict_binds_strcallable_shortnames() -> None:
     from genesispy.template.aliases import alias_dict
     from genesispy.template.runtime import StrCallable
 
-    inst = StubManager()  # any object with the four attrs would do
     # Mimic a UniqueModule with the four shortnames already populated.
     class _ModStub:
         # SIMPLE_ALIASES targets (must exist as attrs even if no-op).
-        parameter = define_param = doc_param = param_range = None
-        exists_param = get_top_param = list_params = None
-        synonym = instantiate = emit = None
-        error = warning = None
-        get_subinst = exists_subinst = get_subinst_array = None
-        get_instance_obj = search_subinst = None
-        unique_inst = unique_inst_param = clone_inst = ununique_inst = None
-        generate = generate_w_name = None
-        pinclude = None
+        locals().update(_TABLE_ATTRS)
         # The four StrCallable shortnames the emitter binds at execute() top.
         mname = StrCallable("Foo_unq0")
         iname = StrCallable("u_foo")

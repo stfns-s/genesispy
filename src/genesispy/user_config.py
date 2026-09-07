@@ -73,8 +73,9 @@ def _current_module() -> "UniqueModule":
 
 
 @contextmanager
-def context(manager: "Manager", module: "UniqueModule") -> Iterator[None]:
+def context(manager: "Manager", module: "UniqueModule | None") -> Iterator[None]:
     """Set the manager/module context for the duration of the ``with`` block.
+    ``module`` is None while a ``.cfg`` runs (no module under elaboration).
 
     Save/restore so nested ``include()``-style calls keep the outer context.
     """
@@ -96,21 +97,13 @@ def _configure(name: str, value: Any, **flags: Any) -> None:
 
 
 def _get_configuration(name: str) -> Any:
-    """Return the highest-priority value for ``name`` (or None).
-
-    Scoped to the active module's instance path so hierarchical CLI
-    overrides like ``--parameter top.foo.X=2`` apply.
-    """
-    mgr = _current_manager()
-    path = _current_module()._instance_path_segments()
-    return mgr.cfg_handler.get_configuration(name, instance_path=path)
+    """Return the value of ``path.name``; ``ConfigError`` when nothing set it."""
+    return _current_manager().cfg_handler.get_configuration(name)
 
 
 def _exists_configuration(name: str) -> bool:
-    """True iff some source has defined ``name``. Scoped to the active module."""
-    mgr = _current_manager()
-    path = _current_module()._instance_path_segments()
-    return mgr.cfg_handler.exists_configuration(name, instance_path=path)
+    """True iff some source has defined ``path.name``."""
+    return _current_manager().cfg_handler.exists_configuration(name)
 
 
 def _remove_configuration(name: str) -> None:
@@ -137,15 +130,16 @@ def _include(path: str) -> None:
     from .template.parser import parse_vpy
     from .template import runtime
 
-    if os.path.isabs(path) or os.path.exists(path):
+    mgr = _current_manager()
+    if os.path.exists(path):
         resolved = path
     else:
-        mgr = _current_manager()
+        # find_file raises ParseError for a missing absolute path too.
         resolved = mgr.find_file(path, list(mgr.inc_path) + ["."])
-    ext_map = getattr(_active_manager, "extension_map", None)
+    ext_map = getattr(mgr, "extension_map", None)
     allowed = frozenset(ext_map.keys()) if ext_map else None
-    syntax = getattr(_active_manager, "syntax", "genesis")
-    comment = getattr(_active_manager, "source_comment", "//")
+    syntax = getattr(mgr, "syntax", "genesis")
+    comment = getattr(mgr, "source_comment", "//")
     # Record for the .depend prerequisite list (nested includes recurse
     # through _include, so every level registers itself).
     from . import cache
@@ -185,15 +179,16 @@ def _reset_pyinclude_state() -> None:
 
 
 def _resolve_pyinclude(path: str) -> str:
-    """Resolve a pyinclude target over cwd, --py-path, --inc-path, then '.'.
+    """Resolve a pyinclude target: as-is when it exists from cwd, else the
+    first hit under --py-path then --inc-path.
 
     Raises ParseError (via Manager.find_file) naming every candidate
-    directory when nothing matches.
+    directory when nothing matches; a missing absolute path raises too.
     """
-    if os.path.isabs(path) or os.path.exists(path):
+    if os.path.exists(path):
         return path
     mgr = _current_manager()
-    search = list(getattr(mgr, "py_paths", [])) + list(mgr.inc_path) + ["."]
+    search = list(getattr(mgr, "py_paths", [])) + list(mgr.inc_path)
     return mgr.find_file(path, search)
 
 

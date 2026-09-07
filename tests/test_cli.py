@@ -6,15 +6,8 @@ import os
 
 import pytest
 
-from genesispy.cli import _reset_deprecation_warnings, parse_args
+from genesispy.cli import parse_args
 
-
-@pytest.fixture(autouse=True)
-def _reset_warnings():
-    """Each test starts with the deprecation-warning guard cleared."""
-    _reset_deprecation_warnings()
-    yield
-    _reset_deprecation_warnings()
 
 
 def test_defaults():
@@ -299,15 +292,19 @@ def test_inputlist_hash_in_filename(tmp_path):
 
 def test_inputlist_directives(tmp_path):
     lf = tmp_path / "x.list"
+    for d in ("src1", "inc1"):
+        (tmp_path / d).mkdir()
+    for f in ("a.vpy", "b.vpy"):
+        (tmp_path / f).write_text("")
     lf.write_text(
         "--src-path src1\n"
         "--inc-path inc1\n"
         "--input a.vpy b.vpy\n"
     )
     ns = parse_args(["--input-list", str(lf)])
-    assert ns.input == ["a.vpy", "b.vpy"]
-    assert ns.src_path == ["src1"]
-    assert ns.inc_path == ["inc1"]
+    assert ns.input == [str(tmp_path / "a.vpy"), str(tmp_path / "b.vpy")]
+    assert ns.src_path == [str(tmp_path / "src1")]
+    assert ns.inc_path == [str(tmp_path / "inc1")]
 
 
 def test_inputlist_recursive(tmp_path):
@@ -666,6 +663,9 @@ def test_listfile_deprecated_directives(tmp_path, capsys):
     """Deprecated directive spellings inside an --input-list file still work
     and emit a one-time stderr warning per spelling."""
     lf = tmp_path / "x.list"
+    for d in ("src1", "inc1"):
+        (tmp_path / d).mkdir()
+    (tmp_path / "a.vpy").write_text("")
     lf.write_text(
         "--srcpath src1\n"
         "--includepath inc1\n"
@@ -673,9 +673,9 @@ def test_listfile_deprecated_directives(tmp_path, capsys):
     )
     ns = parse_args(["--input-list", str(lf)])
     captured = capsys.readouterr()
-    assert ns.input == ["a.vpy"]
-    assert ns.src_path == ["src1"]
-    assert ns.inc_path == ["inc1"]
+    assert ns.input == [str(tmp_path / "a.vpy")]
+    assert ns.src_path == [str(tmp_path / "src1")]
+    assert ns.inc_path == [str(tmp_path / "inc1")]
     assert "--srcpath is deprecated" in captured.err
     assert "--includepath is deprecated" in captured.err
 
@@ -709,13 +709,9 @@ def test_param_footer_flag_sets_true():
     assert parse_args(["--param-footer"]).param_footer is True
 
 
-def test_param_footer_reaches_manager(tmp_path):
+def test_param_footer_reaches_manager(tmp_path, monkeypatch):
     from genesispy.manager import Manager
 
-    cwd = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        assert Manager(parse_args(["--param-footer"])).param_footer is True
-        assert Manager(parse_args([])).param_footer is False
-    finally:
-        os.chdir(cwd)
+    monkeypatch.chdir(tmp_path)
+    assert Manager(parse_args(["--param-footer"])).param_footer is True
+    assert Manager(parse_args([])).param_footer is False

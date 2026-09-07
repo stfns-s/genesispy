@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import pytest
 
-from genesispy import cache
 from genesispy.unique_module import UniqueModule
 
 from ._stubs import StubConfigHandler, StubManager
 
-
-def setup_function(_fn) -> None:
-    cache.clear_all()
 
 
 class Top(UniqueModule):

@@ -25,12 +25,6 @@ HELPERS = (
 )
 
 
-@pytest.fixture(autouse=True)
-def _reset_cache():
-    cache.clear_all()
-    yield
-    cache.clear_all()
-
 
 def _run(tmp_path: Path, argv: list[str]) -> Manager:
     """Run a Manager rooted at ``tmp_path``; assert a clean exit."""
@@ -260,3 +254,17 @@ def test_clear_all_resets_pyinclude_state(tmp_path: Path) -> None:
     cache.clear_all()
     assert not user_config._PYINCLUDE_CODE
     assert user_config._PINCLUDE_WARNED is False
+
+
+# ---------------------------------------------------------------------------
+# 7. .depend lists a module loaded on demand from --inc-path
+# ---------------------------------------------------------------------------
+def test_depend_lists_lazily_loaded_module(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "leaf.vpy").write_text("//; N = parameter('N', 1)\n")
+    (tmp_path / "src" / "dut.vpy").write_text("//; unique_inst('leaf', 'u0', N=2)\n")
+    _run(tmp_path, [
+        "--input", "src/dut.vpy", "--top", "dut", "--src-path", "src", "--inc-path", "src",
+    ])
+    depend = (tmp_path / "genesis_synth" / "dut.depend").read_text()
+    assert "leaf.vpy" in depend, depend

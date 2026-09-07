@@ -1,5 +1,8 @@
 //; from vexpr import lit
 //; IW  = parameter('IW', 8)   # input width
+//; if IW < 1:
+//;     error(f"{mname}: IW ({IW}) must be >= 1")
+//; # endif
 //; MIN = -(1 << (IW-1))
 //; CFG = f"{mname} IW={IW}"
 //; # The expected values, computed here at generation. f_sym tests the input against the

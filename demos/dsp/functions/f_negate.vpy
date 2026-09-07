@@ -6,6 +6,9 @@
 //; approx    = h.get('approx', 0)
 //; isym      = h.get('isym', 0)
 //; lifetime  = h.get('lifetime', 'static')
+//; if iwidth < 1:
+//;     error(f"{func_name}: iwidth ({iwidth}) must be >= 1")
+//; # endif
 //; plus      = "" if approx else " + 1'b1"
 //; min_neg   = -(1 << (iwidth-1))
     function `lifetime` signed [`iwidth-1`:0] `func_name`;

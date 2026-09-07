@@ -5,9 +5,6 @@ from __future__ import annotations
 from genesispy import cache
 
 
-def setup_function(_fn) -> None:
-    cache.clear_all()
-
 
 def test_next_derivation_increments() -> None:
     assert cache.next_derivation("Foo") == 1

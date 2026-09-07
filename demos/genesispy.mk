@@ -48,6 +48,7 @@ CONFIG_DEP  += $(CFG_CONFIG)
 endif
 
 OUTPUTDIR ?= genesis_synth
+RAWDIR    := genesis_raw
 SIM_TOP   ?= $(TOP)
 SIMULATOR ?= verilator
 VERILINT  ?= verilator
@@ -56,7 +57,6 @@ VERILATOR_FLAGS ?=
 SLANG_FLAGS     ?=
 
 GENESISPY ?= genesispy
-XML2JSON  ?= genesispy-xml2json
 PYTHON    ?= python3
 
 GEN_INPUT_FLAGS := $(addprefix --input ,$(INPUTS))
@@ -86,7 +86,10 @@ GEN_CMD_J2 := $(GENESISPY) --j2 $(GEN_INPUT_FLAGS) --top $(TOP) $(CONFIG_FLAG) \
 	    --vf-out $(VLOG_VF_J2) $(EXTRA_FLAGS)
 
 # Stamp files record the last command line used; rewritten only when content
-# changes, so mtime advances only on a real flag/config change.
+# changes. A changed command line also removes the product: make compares
+# mtimes strictly, and a fresh write can receive the same coarse timestamp
+# as a product touched a moment earlier (multigrain timestamps), which would
+# leave the old product "up to date".
 FLAGSTAMP    := $(VLOG_VF).flags
 FLAGSTAMP_J2 := $(VLOG_VF_J2).flags
 
@@ -95,17 +98,16 @@ FLAGSTAMP_J2 := $(VLOG_VF_J2).flags
 # Stamp rules precede gen textually; set default goal explicitly.
 .DEFAULT_GOAL := gen
 
-# XML -> JSON config conversion. One-way: XML is canonical for demos that
-# carry both forms; JSON is regenerated from it. Use `genesispy-json2xml`
-# manually if you need the reverse.
-%.json: %.xml
-	$(XML2JSON) $< $@
+# A failed recipe must not leave a partial, up-to-date product behind.
+.DELETE_ON_ERROR:
 
 $(FLAGSTAMP): FORCE
-	@printf '%s\n' "$(GEN_CMD)" | cmp -s - $@ 2>/dev/null || printf '%s\n' "$(GEN_CMD)" > $@
+	@printf '%s\n' "$(GEN_CMD)" | cmp -s - $@ 2>/dev/null \
+	    || { printf '%s\n' "$(GEN_CMD)" > $@; rm -f $(VLOG_VF); }
 
 $(FLAGSTAMP_J2): FORCE
-	@printf '%s\n' "$(GEN_CMD_J2)" | cmp -s - $@ 2>/dev/null || printf '%s\n' "$(GEN_CMD_J2)" > $@
+	@printf '%s\n' "$(GEN_CMD_J2)" | cmp -s - $@ 2>/dev/null \
+	    || { printf '%s\n' "$(GEN_CMD_J2)" > $@; rm -f $(VLOG_VF_J2); }
 
 # Pull in the generated depfiles so include()'d leaves also trigger rebuilds.
 # First build: files absent -> -include skips silently; $(SRC_FILES) drives it.
@@ -116,16 +118,20 @@ gen: $(VLOG_VF)
 
 # Genesis2-style product list at the demo root, written directly by
 # genesispy via --vf-out. Suppresses the default <top>.vlist pair.
+# genesispy leaves an output file alone when its content is unchanged, so the
+# rule touches its target: otherwise a newer stamp keeps re-running it forever.
 $(VLOG_VF): $(SRC_FILES) $(CONFIG_DEP) $(FLAGSTAMP)
 	$(GEN_CMD)
+	@touch $@
 
 gen-j2: $(VLOG_VF_J2)
 
 $(VLOG_VF_J2): $(SRC_FILES_J2) $(CONFIG_DEP) $(FLAGSTAMP_J2)
 	$(GEN_CMD_J2)
+	@touch $@
 
 cleangen:
-	rm -rf genesis_raw genesis_synth genesis_verif
+	rm -rf $(RAWDIR) $(OUTPUTDIR) genesis_verif
 	rm -rf $(OUTPUTDIR_J2)
 	rm -f $(DEPEND) $(CLEAN_SH) $(VLOG_VF) $(FLAGSTAMP)
 	rm -f $(DEPEND_J2) $(CLEAN_SH_J2) $(VLOG_VF_J2) $(FLAGSTAMP_J2)
@@ -145,7 +151,7 @@ clean: cleangen cleansim
 
 pylint: gen
 	@echo "Compiling generated Python modules..."
-	$(PYTHON) -m py_compile genesis_raw/*.py
+	$(PYTHON) -m py_compile $(RAWDIR)/*.py
 
 lint: pylint vlint
 
@@ -197,7 +203,7 @@ help:
 	@echo "  TOP         = $(TOP)"
 	@echo "  INPUTS      = $(INPUTS)"
 	@echo "  JSON_CONFIG = $(JSON_CONFIG)"
-	@echo "  OUTPUTDIR   = $(OUTPUTDIR)"
+	@echo "  OUTPUTDIR   = $(OUTPUTDIR) (only genesis_synth is git-ignored)"
 	@echo "  SIMULATOR   = $(SIMULATOR)"
 	@echo "  VERILINT    = $(VERILINT)"
 	@echo "  VERILATOR_FLAGS = $(VERILATOR_FLAGS)"

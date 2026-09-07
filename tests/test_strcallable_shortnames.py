@@ -4,15 +4,11 @@ on instances. Mirrors Perl `$obj->mname()` / `$obj->iname()` / etc.
 
 from __future__ import annotations
 
-from genesispy import cache
 from genesispy.template.runtime import StrCallable
 from genesispy.unique_module import UniqueModule
 
 from ._stubs import StubManager
 
-
-def setup_function(_fn) -> None:
-    cache.clear_all()
 
 
 class _Mod(UniqueModule):

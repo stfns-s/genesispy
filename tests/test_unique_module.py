@@ -7,19 +7,13 @@ import re
 import pytest
 
 from genesispy import cache
-from genesispy.reporting import ElaborationError
-from genesispy.config_handler import Priority
+from genesispy.reporting import ElaborationError, ParameterError
 from genesispy.unique_module import (
-    _PARAM_FOOTER_VALUE_WIDTH,
     UniqueModule,
-    _comparable_lines,
 )
 
 from ._stubs import StubConfigHandler, StubManager
 
-
-def setup_function(_fn) -> None:
-    cache.clear_all()
 
 
 # ---------------------------------------------------------------- fixtures
@@ -35,7 +29,7 @@ class Leaf(UniqueModule):
 def test_root_construction_and_module_name() -> None:
     mgr = StubManager()
     top = Top(mgr)
-    assert top.get_module_name() == "Top"
+    assert top.get_base_name() == "Top"
     assert top.get_parent() is None
     assert top.get_top() is top
 
@@ -101,9 +95,11 @@ def test_define_and_get_param() -> None:
 
 
 def test_define_param_redefinition_raises() -> None:
+    from genesispy.reporting import ParameterError
+
     top = Top(StubManager())
     top.define_param("WIDTH", default=8)
-    with pytest.raises(Exception):
+    with pytest.raises(ParameterError, match="already declared/seen"):
         top.define_param("WIDTH", default=16)
 
 
@@ -114,35 +110,26 @@ def test_override_param() -> None:
     assert top.get_param("WIDTH") == 32
 
 
-# Pin D22b-1: define_param re-entry semantics when state is OVERRIDDEN.
-def test_define_param_reentry_overridden_keeps_value_updates_metadata() -> None:
-    """Re-entering define_param on an OVERRIDDEN param keeps the override value,
-    replaces default, and updates doc/type when non-None."""
+def test_define_param_after_keyword_keeps_value_and_records_metadata() -> None:
+    """The keyword pass (override_param) precedes the body's declaration: the
+    declaration keeps the keyword value and records default/doc/type."""
     top = Top(StubManager())
-    top.define_param("WIDTH", default=8, doc="original doc", type="int")
     top.override_param("WIDTH", 32)
-    # Re-enter with new default, new doc, new type.
     top.define_param("WIDTH", default=16, doc="updated doc", type="uint")
     p = top._params["WIDTH"]
-    assert p["value"] == 32, "override value must be preserved"
-    assert p["default"] == 16, "default must be replaced by re-entry"
-    assert p["doc"] == "updated doc", "doc must be updated when non-None"
-    assert p["type"] == "uint", "type must be updated when non-None"
+    assert p["value"] == 32, "keyword value must be preserved"
+    assert p["default"] == 16
+    assert p["doc"] == "updated doc"
+    assert p["type"] == "uint"
 
 
-def test_define_param_reentry_overridden_none_doc_type_preserved() -> None:
-    """Re-entering define_param with doc=None and type=None leaves previous
-    doc/type unchanged (only default is always replaced)."""
+def test_define_param_twice_is_fatal_even_after_a_keyword() -> None:
+    """UniqueModule.pm:2443-2452: a second declaration at the same level."""
     top = Top(StubManager())
-    top.define_param("WIDTH", default=8, doc="keep me", type="int")
     top.override_param("WIDTH", 32)
-    # Re-enter omitting doc and type (both default to None).
-    top.define_param("WIDTH", default=64)
-    p = top._params["WIDTH"]
-    assert p["value"] == 32, "override value must be preserved"
-    assert p["default"] == 64, "default must be replaced"
-    assert p["doc"] == "keep me", "doc must be unchanged when re-entry passes None"
-    assert p["type"] == "int", "type must be unchanged when re-entry passes None"
+    top.define_param("WIDTH", default=8, doc="keep me", type="int")
+    with pytest.raises(ParameterError, match="already declared/seen"):
+        top.define_param("WIDTH", default=64)
 
 
 def test_parameter_declarative_registers_and_returns_default() -> None:
@@ -161,16 +148,25 @@ def test_parameter_consults_cfg_handler() -> None:
 from tests._stubs import make_cfg_manager as _real_cfg_manager  # noqa: E402
 
 
+def _declaring(name: str, default, cls_name: str = "Mod"):
+    """A module class whose body declares one parameter."""
+    def execute(self) -> None:
+        UniqueModule.execute(self)
+        self.parameter(name, default)
+    return type(cls_name, (UniqueModule,), {"execute": execute})
+
+
 def test_hierarchical_cmdln_override_scoped_to_named_instance() -> None:
     mgr = _real_cfg_manager(["Top.u_a.WIDTH=64", "Top.u_b.WIDTH=128"])
     top = Top(mgr)
-    a = top.unique_inst(Leaf, "u_a")
-    b = top.unique_inst(Leaf, "u_b")
-    c = top.unique_inst(Leaf, "u_c")
-    assert a.parameter("WIDTH", 8) == 64
-    assert b.parameter("WIDTH", 8) == 128
+    leaf = _declaring("WIDTH", 8)
+    a = top.unique_inst(leaf, "u_a")
+    b = top.unique_inst(leaf, "u_b")
+    c = top.unique_inst(leaf, "u_c")
+    assert a.get_param("WIDTH") == 64
+    assert b.get_param("WIDTH") == 128
     # No matching scoped override -> default fires.
-    assert c.parameter("WIDTH", 8) == 8
+    assert c.get_param("WIDTH") == 8
 
 
 def test_unique_inst_kwarg_wins_over_hierarchical_cmdln_override() -> None:
@@ -179,8 +175,8 @@ def test_unique_inst_kwarg_wins_over_hierarchical_cmdln_override() -> None:
     # child runs, so parameter() short-circuits cfg_handler entirely.
     mgr = _real_cfg_manager(["Top.u_leaf.WIDTH=99"])
     top = Top(mgr)
-    leaf = top.unique_inst(Leaf, "u_leaf", WIDTH=8)
-    assert leaf.parameter("WIDTH", 1) == 8
+    leaf = top.unique_inst(_declaring("WIDTH", 1), "u_leaf", WIDTH=8)
+    assert leaf.get_param("WIDTH") == 8
 
 
 # ---------------------------------------------------------------- hierarchy
@@ -189,7 +185,7 @@ def test_unique_inst_creates_child_with_parent() -> None:
     child = top.unique_inst(Leaf, "u_leaf", WIDTH=8)
     assert child.get_parent() is top
     assert child.get_instance_name() == "u_leaf"
-    assert child.get_module_name() == "Leaf"
+    assert child.get_base_name() == "Leaf"
 
 
 def test_unique_inst_dedup_reuses_unique_name() -> None:
@@ -263,6 +259,7 @@ def test_instantiation_does_not_cache_on_execute_failure(method: str) -> None:
             if type(self).fail_first and type(self).calls == 1:
                 raise RuntimeError("user code blew up")
             super().execute()
+            self.parameter("WIDTH", 0)
 
     top = Top(StubManager())
     instantiate = getattr(top, method)
@@ -388,7 +385,7 @@ def test_get_instance_path_three_levels() -> None:
     top._instance_name = "a"
     mid = top.unique_inst(B, "b")
     leaf = mid.unique_inst(C, "c")
-    assert leaf.get_instance_path() == "a/b/c"
+    assert leaf.get_instance_path() == "a.b.c"
 
 
 # ---------------------------------------- product-list / synth-top tagging
@@ -481,8 +478,7 @@ def test_get_prod_list_insts_synth_top_midpoint_splits_tree() -> None:
 def test_subtree_signature_discriminates_parents_with_different_descendants() -> None:
     # Same-class parents at different paths with *different* scoped overrides
     # must not collapse before descendants can observe their overrides.
-    class Inner(UniqueModule):
-        pass
+    Inner = _declaring("WIDTH", 1)
 
     class Outer(UniqueModule):
         pass
@@ -504,8 +500,8 @@ def test_subtree_signature_discriminates_parents_with_different_descendants() ->
     # u_b.
     in_a = a.unique_inst(Inner, "u_in")
     in_b = b.unique_inst(Inner, "u_in")
-    assert in_a.parameter("WIDTH", 1) == 8
-    assert in_b.parameter("WIDTH", 1) == 16
+    assert in_a.get_param("WIDTH") == 8
+    assert in_b.get_param("WIDTH") == 16
 
 
 def test_subtree_signature_collapses_parents_with_identical_descendants() -> None:
@@ -574,8 +570,7 @@ def test_ununique_inst_honours_scoped_cmdln_override() -> None:
     class Child(UniqueModule):
         def execute(self):
             super().execute()
-            self.define_param("X", default=1)
-            observed["X"] = self.parameter("X")
+            observed["X"] = self.parameter("X", 1)
 
     mgr = StubManager(cfg_handler=_ScopedCfg())
     top = Top(mgr)
@@ -589,11 +584,8 @@ def test_ununique_inst_honours_scoped_cmdln_override() -> None:
 # Review 2026-07-12 B1 -- unique_inst_param names must not collide when
 # descendants carry different scoped overrides.
 def test_unique_inst_param_disambiguates_parents_on_override_path() -> None:
-    class Inner(UniqueModule):
-        pass
-
-    class Outer(UniqueModule):
-        pass
+    Inner = _declaring("WIDTH", 1, "Inner")
+    Outer = _declaring("DEPTH", 1, "Outer")
 
     mgr = _real_cfg_manager([
         "Top.u_a.u_in.WIDTH=8",
@@ -612,8 +604,8 @@ def test_unique_inst_param_disambiguates_parents_on_override_path() -> None:
     # Each Outer's Inner sees its own scoped override.
     in_a = a.unique_inst(Inner, "u_in")
     in_b = b.unique_inst(Inner, "u_in")
-    assert in_a.parameter("WIDTH", 1) == 8
-    assert in_b.parameter("WIDTH", 1) == 16
+    assert in_a.get_param("WIDTH") == 8
+    assert in_b.get_param("WIDTH") == 16
 
 
 def test_unique_inst_param_same_subtree_sig_still_dedups() -> None:
@@ -694,7 +686,7 @@ def test_ununique_inst_differing_sig_identical_body_aliases() -> None:
     ]
 
 
-# ---------------------------------------------------------------- B6 -- unique_inst_param K_V suffix
+# ------------------------------------------------ unique_inst_param K_V suffix
 def test_unique_inst_param_kv_separator_prevents_name_collision() -> None:
     """N=44 and N4=4 must produce different unique module names and
     both must appear as separate entries in OUTFILE_CONTENT_CACHE.
@@ -729,7 +721,7 @@ def test_unique_inst_param_suffix_uses_underscore_separator() -> None:
     )
 
 
-# ---------------------------------------------------------------- F2 -- duplicate instance name guard
+# ------------------------------------------------ duplicate instance name guard
 @pytest.mark.parametrize("method,kwargs", [
     ("unique_inst",       {}),
     ("unique_inst_param", {}),
@@ -791,120 +783,3 @@ def test_retry_after_execute_failure_succeeds() -> None:
     Flaky.fail_first = False
     child = top.unique_inst(Flaky, "u_flaky")
     assert child.get_instance_name() == "u_flaky"
-
-
-# ------------------------------------------------ --param-footer provenance
-def _footer_of(mod: UniqueModule) -> str:
-    """Return only the text ``emit_param_footer`` appended to the buffer."""
-    before = mod._outfile_handle.getvalue() if mod._outfile_handle else ""
-    mod.emit_param_footer()
-    after = mod._outfile_handle.getvalue() if mod._outfile_handle else ""
-    return after[len(before):]
-
-
-def _five_provenance_module(mgr: StubManager) -> UniqueModule:
-    """A module carrying one parameter per rung of the Priority ladder."""
-    top = Top(mgr)
-    top.define_param("AWIDTH", default=5)                 # declaration default
-    top.override_param("NAME", "rf0")                     # parent instantiation
-    top.force_param("PIPELINE", True)                     # forced
-    for name, value, prio in (
-        ("DEPTH", 32, Priority.CMD_LINE),
-        ("DWIDTH", 32, Priority.EXTERNAL_PARAM_FILE),
-        ("CFGVAL", 1, Priority.EXTERNAL_CONFIG),
-    ):
-        top.define_param(name, default=value)
-        top._params[name]["state"] = "OVERRIDDEN"
-        top._params[name]["priority"] = int(prio)
-    return top
-
-
-def test_param_footer_off_by_default() -> None:
-    """Without --param-footer the method appends nothing."""
-    mgr = StubManager()
-    top = Top(mgr)
-    top.define_param("N", default=8)
-    assert _footer_of(top) == ""
-
-
-def test_param_footer_skipped_when_no_params() -> None:
-    """A module with no parameters gets no header line either."""
-    mgr = StubManager()
-    mgr.param_footer = True
-    top = Top(mgr)
-    assert _footer_of(top) == ""
-
-
-def test_param_footer_reports_every_provenance() -> None:
-    """Each Priority rung renders its own source label."""
-    mgr = StubManager()
-    mgr.param_footer = True
-    footer = _footer_of(_five_provenance_module(mgr))
-    assert "// Genesis-Py resolved parameter provenance" in footer
-    assert re.search(r"^//\s+AWIDTH\s+: 5\s+<- declaration default$", footer, re.M)
-    assert re.search(r"^//\s+CFGVAL\s+: 1\s+<- config script", footer, re.M)
-    assert re.search(r"^//\s+DEPTH\s+: 32\s+<- command line", footer, re.M)
-    assert re.search(r"^//\s+DWIDTH\s+: 32\s+<- config file", footer, re.M)
-    assert re.search(r"^//\s+NAME\s+: 'rf0'\s+<- parent instantiation$", footer, re.M)
-    assert re.search(r"^//\s+PIPELINE\s+: True\s+<- forced", footer, re.M)
-
-
-def test_param_footer_honours_output_comment_block_style() -> None:
-    """(open, close) wraps the footer with delimiters on their own lines."""
-    mgr = StubManager()
-    mgr.param_footer = True
-    mgr.output_comment = ("/*", "*/")
-    top = Top(mgr)
-    top.define_param("N", default=8)
-    lines = _footer_of(top).splitlines()
-    assert lines[0] == "/*"
-    assert lines[-1] == "*/"
-    assert " Genesis-Py resolved parameter provenance" in lines
-    assert "//" not in "\n".join(lines)
-
-
-def test_param_footer_avoids_parity_header_shape() -> None:
-    """The footer must not look like a banner parameter row.
-
-    tests/_parity_normalize.parse_header scans for '// NAME = value' rows and
-    its window is unbounded on files with no 'module' keyword, so a footer
-    using '=' would corrupt the parsed parameter signature.
-    """
-    mgr = StubManager()
-    mgr.param_footer = True
-    footer = _footer_of(_five_provenance_module(mgr))
-    assert "Parameters:" not in footer
-    assert re.search(r"^\s*//\s+\w+\s*=", footer, re.M) is None
-
-
-@pytest.mark.parametrize("style", ["//", ("/*", "*/")])
-def test_param_footer_is_invisible_to_comparable_lines(style) -> None:
-    """_compare_generated_files must not see the footer as content.
-
-    ununique_inst re-elaborates and diffs via _comparable_lines; a footer that
-    survived that stripping would make identical modules compare unequal.
-    """
-    mgr = StubManager()
-    mgr.output_comment = style
-    top = Top(mgr)
-    top.define_param("N", default=8)
-    top.emit("module Top ();")
-    top.emit("endmodule")
-    without = top._outfile_handle.getvalue()
-    mgr.param_footer = True
-    top.emit_param_footer()
-    with_footer = top._outfile_handle.getvalue()
-    assert with_footer != without
-    assert _comparable_lines(with_footer, style) == _comparable_lines(without, style)
-
-
-def test_param_footer_caps_the_value_column() -> None:
-    """One long repr must not pad every other row out to its width."""
-    mgr = StubManager()
-    mgr.param_footer = True
-    top = Top(mgr)
-    top.define_param("N", default=8)
-    top.define_param("BIG", default={f"key{i}": i for i in range(12)})
-    row_n = next(ln for ln in _footer_of(top).splitlines() if " N " in ln)
-    # The short value is padded to the cap, not to the long repr's width.
-    assert f"{'8':<{_PARAM_FOOTER_VALUE_WIDTH}}  <- " in row_n

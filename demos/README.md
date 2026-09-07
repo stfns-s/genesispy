@@ -79,11 +79,11 @@ both flavours against the same Perl reference.
 `make gen-j2` elaborates the twin tree with `--j2`. It writes to a parallel set of outputs, so the
 two flavours never overwrite each other and `make gen` is unaffected:
 
-| | `make gen` | `make gen-j2` |
-|---|---|---|
-| Sources     | `genesis_src/`     | `genesis_src.j2/`    |
-| Output dir  | `genesis_synth/`   | `genesis_synth.j2/`  |
-| Product list| `genesis_vlog.vf`  | `genesis_vlog.j2.vf` |
+|              | `make gen`        | `make gen-j2`        |
+|--------------|-------------------|----------------------|
+| Sources      | `genesis_src/`    | `genesis_src.j2/`    |
+| Output dir   | `genesis_synth/`  | `genesis_synth.j2/`  |
+| Product list | `genesis_vlog.vf` | `genesis_vlog.j2.vf` |
 
 Override the defaults with `SRCDIR_J2=`, `OUTPUTDIR_J2=`, `VLOG_VF_J2=`. `make cleangen` removes
 both flavours' outputs. In the `gvpy` demo the pair is `make gen` -> `example.out.v` and
@@ -93,8 +93,9 @@ both flavours' outputs. In the `gvpy` demo the pair is `make gen` -> `example.ou
 
 ### `regfile`
 
-Multi-module register file (`reg_file`, `flop`, `cfg_ifc`, `top_flop_only`) wired together at `top`. Single
-deterministic variant; no config file. Entry: `genesis_src/top.vpy`.
+Multi-module register file (`reg_file`, `flop`, `cfg_ifc`) wired together at `top`; `top_flop_only` is a
+second, standalone top that instantiates the flop alone. Single deterministic variant; no config file. Entry:
+`genesis_src/top.vpy`.
 
 ### `iterative_wallace_tree`
 
@@ -108,8 +109,8 @@ produces several unique modules plus clones -- and the layered config sources. E
 config files are at the demo root:
 
 - `config.json` -- primary; passed via `--json-cfg`.
-- `config.xml` -- legacy form, kept for parity. Convert once with `genesispy-xml2json in.xml out.json` (the shared
-  `genesispy.mk` has a `%.json: %.xml` rule that runs this automatically).
+- `config.xml` -- legacy form, kept for parity. Convert once with `genesispy-xml2json in.xml out.json`;
+  `config.json` is the tracked result of that conversion.
 - `config.py` -- low-priority `.cfg` fallback. Both `--json-cfg` and CLI `--parameter` take priority over it; it
   applies under JSON when both are passed.
 
@@ -225,11 +226,11 @@ generated lands in `build/<top>/default/`. `make test` needs `iverilog` and `mak
 which the other demos use.
 
 `genesispy/tests/test_demo_dsp.py` covers `gen`, `pylint`, `pytest`, `vlint` and `clean`, and CI runs the same
-three of those it runs for the other demos. `make test` stays out of both: it sweeps roughly 124 configurations
-through a simulator, so it is the demo's own gate, run by hand. `test_parity/` does not cover it -- there is no Perl
+three of those it runs for the other demos. `make test` stays out of both: it sweeps every configuration in
+`verif/sweeps.mk` (a few hundred) through a simulator, so it is the demo's own gate, run by hand. `test_parity/` does not cover it -- there is no Perl
 reference.
 
-Entry: `modules/iir.vpy` and `modules/intg.vpy`, one top each. See the demo's own `README.md` for the build layout
+Entry: `modules/iir.vpy`, `modules/intg.vpy` and `modules/spec_mux.vpy`, one top each. See the demo's own `README.md` for the build layout
 and the testbench flow.
 
 ## See also

@@ -20,12 +20,6 @@ from ._stubs import StubManager
 # --------------------------------------------------------------------------- #
 
 
-@pytest.fixture(autouse=True)
-def _reset_cache():
-    cache.clear_all()
-    yield
-    cache.clear_all()
-
 
 @pytest.fixture
 def manager(tmp_path):

@@ -119,7 +119,8 @@
             lsum   = { `a_pad`log2a } + { `b_pad`log2b };
 //;     if antilog:
             // one shifter, not up then down: (1 << lsum) >> shift is 2**(lsum - shift)
-            if (lsum >= `lit(shift, sum_width, signed=False)`) alog = `lit(1, owidth-1, signed=False)` << (lsum - `shift`);
+            if (lsum >= `lit(shift, sum_width, signed=False)`)
+                alog = `lit(1, owidth-1, signed=False)` << (lsum - `shift`);
             else                              alog = `lit(0, owidth-1, signed=False)`;
             res_sm = { sa ^ sb, alog };
 //;     else:
@@ -144,7 +145,8 @@
     function `lifetime` `decl(owidth, signed=not osm, pad=False)` `func_name`;
         input signed [`awidth-1`:0] a;
         input signed [`bwidth-1`:0] b;
-        `func_name` = `core_func`( { a == `lit(0, awidth, signed=False)`, `a_log`(a) }, { b == `lit(0, bwidth, signed=False)`, `b_log`(b) } );
+        `func_name` = `core_func`( { a == `lit(0, awidth, signed=False)`, `a_log`(a) },
+                                   { b == `lit(0, bwidth, signed=False)`, `b_log`(b) } );
     endfunction
 //; # endif
 //; # alfrac and blfrac are exported as settled on above, not as asked for, so a caller's

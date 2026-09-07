@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from genesispy import cache
-from genesispy.template.aliases import alias_dict
-from genesispy.template.runtime import StrCallable
+from genesispy.template.aliases import SIMPLE_ALIASES, alias_dict
 from genesispy.unique_module import UniqueModule
 
 from ._stubs import StubManager
 
 
-def setup_function(_fn) -> None:
-    cache.clear_all()
+
+# Every attribute alias_dict reads through SIMPLE_ALIASES, as no-op stubs.
+_TABLE_ATTRS = {attr: None for _, attr in SIMPLE_ALIASES}
 
 
 def _make_class(name: str, *, synonym_for: str | None = None) -> type:
@@ -88,15 +87,7 @@ def test_alias_dict_synonym_one_arg_calls_self_synonym() -> None:
 
     class _Mod:
         # SIMPLE_ALIASES attrs (must exist, even if no-ops).
-        parameter = define_param = doc_param = param_range = None
-        exists_param = get_top_param = list_params = None
-        instantiate = emit = None
-        error = warning = None
-        get_subinst = exists_subinst = get_subinst_array = None
-        get_instance_obj = search_subinst = None
-        unique_inst = unique_inst_param = clone_inst = ununique_inst = None
-        generate = generate_w_name = None
-        pinclude = None
+        locals().update(_TABLE_ATTRS)
         _unique_module_name = "Foo_unq0"
         _instance_name = "u_foo"
         _module_name = "Foo"
@@ -124,15 +115,7 @@ def test_alias_dict_synonym_two_arg_calls_manager_synonym_class() -> None:
             return f"<class {trgt} from {src}>"
 
     class _Mod:
-        parameter = define_param = doc_param = param_range = None
-        exists_param = get_top_param = list_params = None
-        instantiate = emit = None
-        error = warning = None
-        get_subinst = exists_subinst = get_subinst_array = None
-        get_instance_obj = search_subinst = None
-        unique_inst = unique_inst_param = clone_inst = ununique_inst = None
-        generate = generate_w_name = None
-        pinclude = None
+        locals().update(_TABLE_ATTRS)
         _unique_module_name = "Foo_unq0"
         _instance_name = "u_foo"
         _module_name = "Foo"
@@ -152,15 +135,7 @@ def test_alias_dict_synonym_two_arg_calls_manager_synonym_class() -> None:
 def test_alias_dict_synonym_zero_or_three_args_raises() -> None:
     """Dispatcher rejects 0 or >=3 args with a clear TypeError."""
     class _Mod:
-        parameter = define_param = doc_param = param_range = None
-        exists_param = get_top_param = list_params = None
-        instantiate = emit = None
-        error = warning = None
-        get_subinst = exists_subinst = get_subinst_array = None
-        get_instance_obj = search_subinst = None
-        unique_inst = unique_inst_param = clone_inst = ununique_inst = None
-        generate = generate_w_name = None
-        pinclude = None
+        locals().update(_TABLE_ATTRS)
         _unique_module_name = "Foo_unq0"
         _instance_name = "u_foo"
         _module_name = "Foo"

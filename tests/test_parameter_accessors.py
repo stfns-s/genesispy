@@ -7,15 +7,11 @@ from __future__ import annotations
 
 import pytest
 
-from genesispy import cache
 from genesispy.reporting import ParameterError
 from genesispy.unique_module import UniqueModule
 
 from ._stubs import StubManager
 
-
-def setup_function(_fn) -> None:
-    cache.clear_all()
 
 
 class _Top(UniqueModule):

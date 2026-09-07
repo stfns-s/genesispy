@@ -7,6 +7,8 @@ drift apart again.
 
 from __future__ import annotations
 
+import re
+
 import ast
 from types import SimpleNamespace
 
@@ -82,15 +84,12 @@ def test_alias_prelude_source_uses_caller_indent():
 
 def test_alias_prelude_source_binds_all_expected_names():
     src = alias_prelude_source(indent="")
-    for name in EXPECTED_KEYS:
-        # Accept any binding form: `name = ...`, `name=...`, `name\t...`,
-        # or `def name(...)` (used for the synonym arity dispatcher).
-        assert (
-            f"{name} " in src
-            or f"{name}=" in src
-            or f"{name}\t" in src
-            or f"def {name}(" in src
-        ), name
+    bound = set()
+    for line in src.splitlines():
+        m = re.match(r"\s*(?:def\s+(\w+)\s*\(|(\w+)\s*=)", line)
+        if m:
+            bound.add(m.group(1) or m.group(2))
+    assert set(EXPECTED_KEYS) <= bound, set(EXPECTED_KEYS) - bound
 
 
 def _norm_alias_lines(src: str) -> set[tuple[str, str]]:
@@ -102,14 +101,20 @@ def _norm_alias_lines(src: str) -> set[tuple[str, str]]:
     return out
 
 
-def test_emitter_header_uses_canonical_prelude():
-    """`_header()` must contain every binding from `alias_prelude_source`."""
+def test_emitter_header_binds_every_table_alias():
+    """`_header()` must bind every name in the alias table to its target."""
     from genesispy.template.emitter import _header
 
-    formatted = _header("x.vpy", "X", ".v")
-    expected = _norm_alias_lines(alias_prelude_source(indent=""))
-    actual = _norm_alias_lines(formatted)
-    assert expected.issubset(actual), expected - actual
+    src = _header("x.vpy", "X", ".v")
+    actual = _norm_alias_lines(src)
+    for name, attr in SIMPLE_ALIASES:
+        if name == "synonym":
+            # Arity dispatcher: a def, not an assignment.
+            assert "def synonym(*_args):" in src
+            continue
+        assert (name, f"self.{attr}") in actual, (name, attr)
+    bound = {lhs for lhs, _ in actual}
+    assert set(EXPECTED_KEYS) - {"synonym", "include", "pyinclude", "pinclude"} <= bound
 
 
 def test_include_namespace_includes_include_and_pyinclude(tmp_path, monkeypatch):
@@ -162,9 +167,8 @@ def test_gvpy_class_factory_source_uses_canonical_prelude(monkeypatch, tmp_path)
     vpy.write_text("")  # empty body — class factory only assembles source.
     gvpy_cli._build_class_from_vpy("stub", str(vpy))
 
-    src = captured["src"]
-    expected = alias_prelude_source(indent="")
-    for line in expected.splitlines():
-        lhs = line.partition("=")[0].strip()
-        if lhs:
-            assert lhs in src, f"gvpy class factory missing alias: {lhs!r}"
+    actual = _norm_alias_lines(captured["src"])
+    assert "def synonym(*_args):" in captured["src"]
+    for name, attr in SIMPLE_ALIASES:
+        if name != "synonym":
+            assert (name, f"self.{attr}") in actual, (name, attr)

@@ -7,6 +7,8 @@ override_param() unconditionally clobbered it back to STATE_OVERRIDDEN.
 
 from __future__ import annotations
 
+import pytest
+
 from ._stubs import StubManager
 from genesispy.unique_module import STATE_FORCED, UniqueModule
 
@@ -39,12 +41,15 @@ def test_override_then_force_works_normally():
     assert m._params["WIDTH"]["state"] == STATE_FORCED
 
 
-def test_force_param_blocks_re_force():
-    """A second force_param() must not re-pin."""
+def test_force_param_re_force_is_fatal():
+    """A second force_param() is a same-level re-declaration (UniqueModule.pm:2443)."""
+    from genesispy.reporting import ParameterError
+
     m = _Mod(StubManager())
     m.define_param("WIDTH", default=8)
     m.force_param("WIDTH", 32)
-    m.force_param("WIDTH", 64)
+    with pytest.raises(ParameterError, match="already declared/seen"):
+        m.force_param("WIDTH", 64)
     assert m.get_param("WIDTH") == 32
     assert m._params["WIDTH"]["state"] == STATE_FORCED
 

@@ -9,6 +9,9 @@ SRC_J2    := $(TOP).j2.vpy
 SIMULATOR ?= verilator
 VERILINT  ?= verilator
 
+VERILATOR_FLAGS ?=
+SLANG_FLAGS     ?=
+
 # Full command lines as variables so the recipe and stamp cannot drift.
 # Note: a double-quote inside WIDTH/DEPTH would break the printf quoting below.
 GEN_CMD    := $(GVPY) --gvpy-strict --mname $(TOP) \
@@ -28,24 +31,31 @@ FLAGSTAMP_J2 := $(OUT_J2).flags
 # Stamp rules precede gen textually; set default goal explicitly.
 .DEFAULT_GOAL := gen
 
+# A failed run must not leave a truncated, up-to-date output behind.
+.DELETE_ON_ERROR:
+
+# A changed command line also removes the product: a fresh stamp can receive
+# the same coarse mtime as a product touched a moment earlier.
 $(FLAGSTAMP): FORCE
-	@printf '%s\n' "$(GEN_CMD)" | cmp -s - $@ 2>/dev/null || printf '%s\n' "$(GEN_CMD)" > $@
+	@printf '%s\n' "$(GEN_CMD)" | cmp -s - $@ 2>/dev/null \
+	    || { printf '%s\n' "$(GEN_CMD)" > $@; rm -f $(OUT); }
 
 $(FLAGSTAMP_J2): FORCE
-	@printf '%s\n' "$(GEN_CMD_J2)" | cmp -s - $@ 2>/dev/null || printf '%s\n' "$(GEN_CMD_J2)" > $@
+	@printf '%s\n' "$(GEN_CMD_J2)" | cmp -s - $@ 2>/dev/null \
+	    || { printf '%s\n' "$(GEN_CMD_J2)" > $@; rm -f $(OUT_J2); }
 
 gen: $(OUT)
 
 $(OUT): $(TOP).vpy $(FLAGSTAMP)
-	$(GEN_CMD) > $@
+	$(GEN_CMD) > $@.tmp && mv $@.tmp $@
 
 gen-j2: $(OUT_J2)
 
 $(OUT_J2): $(SRC_J2) $(FLAGSTAMP_J2)
-	$(GEN_CMD_J2) > $@
+	$(GEN_CMD_J2) > $@.tmp && mv $@.tmp $@
 
 cleangen:
-	rm -f $(OUT) $(OUT_J2) $(FLAGSTAMP) $(FLAGSTAMP_J2)
+	rm -f $(OUT) $(OUT_J2) $(OUT).tmp $(OUT_J2).tmp $(FLAGSTAMP) $(FLAGSTAMP_J2)
 
 cleansim:
 	rm -rf obj_dir csrc simv.daidir work
@@ -64,9 +74,9 @@ lint: vlint
 
 vlint: gen
 ifeq ($(VERILINT),slang)
-	slang --lint-only -Weverything -Wpedantic --top $(SIM_TOP) $(OUT)
+	slang --lint-only -Weverything -Wpedantic $(SLANG_FLAGS) --top $(SIM_TOP) $(OUT)
 else ifeq ($(VERILINT),verilator)
-	verilator --lint-only --top-module $(SIM_TOP) $(OUT)
+	verilator --lint-only $(VERILATOR_FLAGS) --top-module $(SIM_TOP) $(OUT)
 else
 	$(error vlint: unknown VERILINT='$(VERILINT)' (slang|verilator))
 endif
@@ -79,7 +89,7 @@ else ifeq ($(SIMULATOR),vcs)
 else ifeq ($(SIMULATOR),vlog)
 	vlog -sv +define+SIMULATION $(OUT) && vsim -c -do "run -all; quit" $(SIM_TOP)
 else ifeq ($(SIMULATOR),verilator)
-	verilator --binary -Wno-fatal --timing -CFLAGS -std=c++20 \
+	verilator --binary -Wno-fatal --timing --assert -CFLAGS -std=c++20 \
 	    +define+SIMULATION --top-module $(SIM_TOP) $(OUT) \
 	    -Mdir obj_dir && obj_dir/V$(SIM_TOP)
 else ifeq ($(SIMULATOR),iverilog)
@@ -95,7 +105,7 @@ help:
 	@echo "  vlint   - lint $(OUT) (VERILINT=slang|verilator; default verilator)"
 	@echo "  lint    - alias for vlint"
 	@echo "  sim     - run simulation on $(OUT) (SIMULATOR=xrun|vcs|vlog|verilator|iverilog; default verilator)"
-	@echo "  cleangen - remove $(OUT)"
+	@echo "  cleangen - remove $(OUT), $(OUT_J2) and their .flags stamps"
 	@echo "  cleansim - remove simulator intermediates (all engines)"
 	@echo "  clean    - cleangen + cleansim"
 	@echo ""
@@ -107,3 +117,5 @@ help:
 	@echo "  DEPTH       = $(DEPTH)"
 	@echo "  SIMULATOR   = $(SIMULATOR)"
 	@echo "  VERILINT    = $(VERILINT)"
+	@echo "  VERILATOR_FLAGS = $(VERILATOR_FLAGS)"
+	@echo "  SLANG_FLAGS = $(SLANG_FLAGS)"

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -12,6 +11,8 @@ from genesispy.template.parser import parse_vpy
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "parser"
+# One directory per case; a case is any directory holding an expected.py.
+CASES = sorted(p.name for p in FIXTURES.iterdir() if (p / "expected.py").is_file())
 
 
 def _normalise(text: str) -> str:
@@ -27,21 +28,7 @@ def _load_expected(case: str, input_path: Path) -> str:
     return raw.replace("INPUT", str(input_path))
 
 
-@pytest.mark.parametrize(
-    "case",
-    [
-        "plain_text",
-        "python_line",
-        "backtick_simple",
-        "backtick_multiple",
-        "backtick_brace_expr",
-        "loop",
-        "nested_loop",
-        "escape_quotes",
-        "empty_lines",
-        "include_directive",
-    ],
-)
+@pytest.mark.parametrize("case", CASES)
 def test_fixture_matches_expected(case: str) -> None:
     input_path = FIXTURES / case / "input.vpy"
     actual = parse_vpy(str(input_path))
@@ -51,21 +38,7 @@ def test_fixture_matches_expected(case: str) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "case",
-    [
-        "plain_text",
-        "python_line",
-        "backtick_simple",
-        "backtick_multiple",
-        "backtick_brace_expr",
-        "loop",
-        "nested_loop",
-        "escape_quotes",
-        "empty_lines",
-        "include_directive",
-    ],
-)
+@pytest.mark.parametrize("case", CASES)
 def test_fixture_compiles(case: str) -> None:
     input_path = FIXTURES / case / "input.vpy"
     src = parse_vpy(str(input_path))
@@ -205,6 +178,11 @@ _NESTED_LOOP_EXPECTED = [
         ("nested_loop",     _NESTED_LOOP_EXPECTED),
         ("backtick_simple", ["wire [7:0] x;"]),
         ("escape_quotes",   ['$display("hello \\"world\\"");']),
+        # Perl's character loop collapses a backslash run to one; a line
+        # without a backtick never enters that loop (Manager.pm:865-869, 914-923).
+        ("backslash_runs",  ["wire a = 1; // p\\q", "wire b = 2; // r\\s",
+                             "wire c = 3; // t`u", "wire d = 4; // v\\",
+                             "wire e; // p\\\\q"]),
         ("empty_lines",     ["module a;", "", "  wire x;", "", "endmodule"]),
     ],
 )

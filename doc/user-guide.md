@@ -47,7 +47,8 @@ cd genesispy
 To make `genesispy` and `gvpy` available on `PATH`, either prepend
 `genesispy/bin/` directly or copy `bin/` and `src/` to a shared
 location (the launchers resolve `src/` as `../src` relative to their
-own directory):
+own directory, symlinks followed). The launchers run `python3`; set
+`PYTHON=/path/to/python` to choose another interpreter.
 
 ```sh
 DEST=/path/to/install-dir
@@ -64,10 +65,10 @@ pip install -e .
 pip install --target /path/to/install-dir .
 ```
 
-`pip install -e .` exposes `genesispy`, `gvpy`, and `genesispy-jinja2j2`
-as console scripts. `genesispy-xml2json` and `genesispy-json2xml` are
-in-tree `bin/` scripts, not pip console scripts; run them directly from
-`genesispy/bin/` or add `genesispy/bin/` to your `PATH`.
+`pip install -e .` exposes all six command lines as console scripts:
+`genesispy`, `gvpy`, `genesispy-vp2vpy`, `genesispy-xml2json`,
+`genesispy-json2xml` and `genesispy-jinja2j2`. Without an install, the
+same six live under `genesispy/bin/`.
 
 ### Optional dependency: stock Jinja2 import
 
@@ -110,7 +111,9 @@ genesispy --input top.vpy --top top
 ```
 
 The run produces `genesis_verif/top.v`, plus `top.vlist` and
-`top.depend`. Override the parameter from the command line:
+`top.depend` under `genesis_synth/` (the lists always go to the output
+directory, whichever cone the module lands in). Override the parameter
+from the command line:
 
 ```sh
 genesispy --input top.vpy --top top -p W=16
@@ -143,8 +146,8 @@ source .venv/bin/activate
 | `.svpy`                  | Same as `.vpy` but emits `.sv` by default (SystemVerilog).           |
 | Generated `<stem>.py`    | Intermediate Python written under `genesis_raw/` (or `/tmp/genesispy_*` with `--use-tmp`). Persists after the run; removed by `--clean`, `--stdout`, or the `--use-tmp` exit cleanup. |
 | Emitted `.v` / `.sv`     | Per-unique-module Verilog under `genesis_synth/` or `genesis_verif/`, named `<unique_module_name>.v`. |
-| `.json` (config)         | Per-instance parameter overrides, passed via `--json-cfg`. Hierarchical schema (`SubInstances`, `Parameters`, `ImmutableParameters`). Replaces Genesis2's XML config. |
-| `.py` / `.cfg` (config)  | Python config script, passed via `--cfg`. Uses `configure(name, value)`. Runs under `exec()` with a sandboxed namespace; full helper list in §11.6. |
+| `.json` (config)         | Per-instance parameter overrides, passed via `--json-cfg`. Hierarchical schema (`HierarchyTop` root with `InstanceName`, `Parameters`, `SubInstances`; see 6.3). Replaces Genesis2's XML config. |
+| `.py` / `.cfg` (config)  | Python config script, passed via `--cfg`. Uses `configure(name, value)`. Runs under `exec()` with the full standard library available (not sandboxed); helper list in section 11.6. |
 | `<top>.vlist`            | Full compile-order file list (every emitted file regardless of synth/verif tag). |
 | `<top>.vlist.verif`      | Verif + synth_and_verif file list (only when at least one verif-tagged file exists). |
 | `<top>.depend`           | Make-style dependency list; prerequisites are the parsed input templates plus `include()`'d files (override path with `--depend FILE`). |
@@ -158,7 +161,7 @@ to prevent silently mis-executing Perl-era `//;` bodies as Python.
 
 The canonical layout, used by every demo under `genesispy/demos/`:
 
-```
+```text
 my_design/
 ├── Makefile              # 3-line shim
 ├── config.json           # optional --json-cfg input
@@ -188,7 +191,7 @@ include ../genesispy.mk
 
 - `--src-path DIR` (repeatable) -- search directory for source-file resolution.
 - `--inc-path DIR` (repeatable) -- search directory for include-file resolution.
-- The two feed different lookups. `--input FILE` searches `src_path + inc_path + ['.']`; `include("file.vpy")` inside a `.vpy` body searches `inc_path + ['.']` only.
+- The two feed different lookups. `--input FILE` searches `src_path + inc_path + ['.']`; `include("file.vpy")` inside a `.vpy` body takes an absolute path, or a relative path that already exists from the current directory, as-is, and otherwise searches `inc_path + ['.']` only.
 - So `--src-path` does not resolve an include: a leaf reachable as an input is not automatically reachable as an include.
 - The include half mirrors Perl, which resolves `--input` against `SourcesPath` (`Manager.pm:550`) and `include()` against `IncludesPath` (`Manager.pm:716`). Searching `inc_path` for inputs too is a genesispy relaxation.
 - `--cfg-path DIR` (repeatable) -- search directory for `--cfg` / `--json-cfg` inputs and for `include(...)` calls inside `.cfg` files.
@@ -205,16 +208,18 @@ and pass `--input` / `--src-path` directly.
 ### 6.1 Elaboration order
 
 Elaboration is a depth-first walk rooted at the `--top` module. Each
-`unique_inst(...)` / `generate(...)` / `clone_inst(...)` / `instantiate(...)`
-call inside a module's body recursively elaborates the named sub-module
-before the parent's body continues. Parameters propagate top-down; the
+`unique_inst(...)` / `generate(...)` / `ununique_inst(...)` call inside a
+module's body recursively elaborates the named sub-module before the
+parent's body continues; `clone_inst(...)` only registers another
+instance of an already elaborated module, and `instantiate()` only
+returns the Verilog instance fragment. Parameters propagate top-down; the
 parent's overrides are visible to the child *before* the child's body
 runs.
 
 After every sub-instance is elaborated, dedup runs: two instances of
 the same module name that resolve to the same parameter dict collapse
 into one emitted unique module. The mechanics are in
-[code-structure.md](./code-structure.md) §5 (pre-key / post-key cache,
+[code-structure.md](./code-structure.md) section 5 (pre-key / post-key cache,
 scoped-subtree signature, journaled rollback).
 
 ### 6.2 Parameter binding priority
@@ -224,10 +229,21 @@ highest):
 
 1. **In-source default** -- the second argument to `parameter('NAME', default)` in the `.vpy` file. Used when nothing else fires.
 2. **`.cfg` Python configs** (`--cfg`) -- call `configure(name, value)`. Beats the in-source default.
-3. **JSON config** (`--json-cfg`) -- per-instance overrides scoped by instance path. Beats `.cfg`. Legacy XML configs convert via `genesispy-xml2json`.
+3. **JSON config** (`--json-cfg`) -- per-instance overrides read from the node whose instance path matches (see 6.3). Beats `.cfg`. Legacy XML configs convert via `genesispy-xml2json`.
 4. **CLI `--parameter NAME=VALUE`** (or `-p`, same in gvpy now) -- beats everything passed in files.
-5. **Parent's `unique_inst(...)` kwargs** (also `unique_inst_param`, `clone_inst`, `ununique_inst`) -- beats CLI. When the parent writes `unique_inst('wallace', 'wallace_2', N=2)`, the child sees `N=2` before its body runs, regardless of any config or CLI value.
+5. **Parent's `unique_inst(...)` kwargs** (also `unique_inst_param`, `ununique_inst`) -- beats CLI. When the parent writes `unique_inst('wallace', 'wallace_2', N=2)`, the child sees `N=2` before its body runs, regardless of any config or CLI value.
 6. **`parameter('X', val, force=True)`** -- writes at FORCED priority and locks against further override; subsequent parent kwargs, configs, and CLI re-applies are ignored. Mirrors Perl's `force` flag (UniqueModule.pm:1981).
+
+Parameters lock once the body has run, as in Genesis2
+(`UniqueModule.pm:833, 1246, 314-326`): `parameter`, `define_param`,
+`override_param` and `force_param` on an elaborated instance, on a clone,
+or on the parent while a child elaborates raise `ParameterError`. A body
+may declare a name once; a second `parameter('X', ...)` is fatal, while
+`parameter('X', v, force=True)` after a plain declaration is allowed and a
+second force is fatal. `get_param` on a name only a parent's keyword set
+is fatal, and every such name is reported as a warning when the body
+finishes (`Parameter 'X' was passed to ... but it was never actually
+declared/used`).
 
 The ordering above matches Perl Genesis2's
 (`UniqueModule.pm:64-73`: `DECLARATION=1 < EXTERNAL_CONFIG=2 <
@@ -243,21 +259,59 @@ Note on `ImmutableParameters`. This JSON/XML tag is *emitted* by
 *input* tag it is ignored by both engines: Genesis2
 (`ConfigHandler.pm:875-919`) reads only `{Parameters}` and never
 descends into `{ImmutableParameters}`; genesispy
-(`config_handler.py:_find_param`, via `_FIND_PARAM_SKIP_KEYS`) skips
-the same subtree on read. The tag is writeback-only metadata in both
+(`config_handler.py:_find_param`) reads only a node's `Parameters`. The tag is writeback-only metadata in both
 engines; values placed under it on input have no effect. To actually
 pin a value past a parent's `unique_inst` kwarg, use `force_param`
 (Genesis2) / `parameter(..., force=True)` (genesispy); both write at
 `IMMUTABLE`.
 
-### 6.3 Scoped CLI overrides
+### 6.3 Scoped overrides and the JSON schema
 
-`--parameter PATH.NAME=VALUE` matches the instance at the exact full
-path (rightmost dot splits path from name). The scoped value
-participates in the dedup key via `_scoped_subtree_signature`, so
-sibling instances with different scoped values don't collapse onto
-one cached unique module. Flat `NAME=VALUE` applies to any instance
-whose body reads `parameter('NAME', ...)`.
+`--parameter PATH.NAME=VALUE` and `configure("PATH.NAME", VALUE)` match
+the instance at the exact full path (rightmost dot splits path from
+name; the first segment is the top's instance name). The `.cfg` API
+takes this form only: `configure`, `get_configuration`,
+`exists_configuration` and `remove_configuration` reject a name without
+a dot, and `get_configuration` on a name nothing set is a `ConfigError`,
+as in Genesis2 (ConfigHandler.pm:1349-1356, 1512). A bare
+`-p NAME=VALUE` on the command line is a genesispy extension: it applies
+to any instance whose body reads `parameter('NAME', ...)`.
+
+A JSON config is a tree of instance nodes. The root `HierarchyTop` node
+names the top; each node carries its own `Parameters` and its children
+under `SubInstances`. A value applies to that node only, never to its
+descendants:
+
+```json
+{"HierarchyTop": {
+  "InstanceName": "top",
+  "Parameters": [{"Name": "WIDTHS", "__ArrayType__": [4, 8]}],
+  "SubInstances": [
+    {"InstanceName": "u0", "Parameters": [{"Name": "W", "__Val__": 3}]},
+    {"InstanceName": "u1", "Parameters": [{"Name": "W", "__Val__": 4}]}
+  ]
+}}
+```
+
+Each parameter object has a `Name` and exactly one value key: `__Val__`
+(or `Val`, the spelling `--json-out` writes), `__ArrayType__`,
+`__HashType__`, or `InstancePath` (Genesis2's pointer form, accepted but
+without effect). `Doc` and `Range` are ignored. `""` in place of a list
+means empty (what `genesispy-xml2json` emits for an empty element). A
+file of any other shape is rejected with a `ConfigError` naming the
+offending node, and a root `InstanceName` that is not the top's instance
+name is an error at the first lookup.
+
+Every path-addressed value, whichever source it comes from, enters the
+dedup key through `_scoped_subtree_signature`, so sibling instances with
+different values don't collapse onto one cached unique module.
+
+An override on the command line or in a `.cfg` that no instance reads
+(a misspelled name, a wrong path, or a name a parent's `unique_inst`
+keyword already fixes) is reported after elaboration as
+`warning: override NAME was never used`. The run still exits 0, where
+Genesis2's `Finalize` dies. JSON parameters are not checked in either
+engine.
 
 ### 6.4 Parameter types
 
@@ -317,8 +371,8 @@ module `mname()` #(
 //; subs = []
 //; for i in range(DEPTH):
 //;     subs.append(generate("submod", f"u_sub_{i}",
-//;                          WIDTH=WIDTH, STAGE=i,
-//;                          MODE=("fast" if i % 2 == 0 else "slow")))
+//;         WIDTH=WIDTH, STAGE=i,
+//;         MODE=("fast" if i % 2 == 0 else "slow")))
 //; # endfor
 
 //; for s in subs:
@@ -339,8 +393,8 @@ endmodule
 
 - **Python lines**: start with `//;`. Indent inside the `//;` body to mark Python block bodies.
 - **Block close**: needs a sentinel -- `//; # endfor`, `//; # endif`, `//; # endwhile`. The parser has no other way to detect block end.
-- **Indent rule**: Python indent = (leading spaces in stripped `//;` content) // 4. Plain-Verilog lines inherit the indent of the most recent `//;` line ending in `:` (block opener).
-- **Backticks**: `` `expr` `` interpolates a Python expression. Escape with `` \` `` for a literal backtick.
+- **Indent rule**: Python indent = (leading spaces in stripped `//;` content) // 4, so every `//;` line, continuation lines of a multi-line statement included, indents by a multiple of four spaces (never under an opening bracket). Plain-Verilog lines inherit the indent of the most recent `//;` line ending in `:` (block opener). A statement that spans several `//;` lines (unclosed bracket) counts as one line: its first line sets the indent and its last line decides whether it opens a block.
+- **Backticks**: `` `expr` `` interpolates a Python expression. Escape with `` \` `` for a literal backtick, in Verilog text and inside an expression alike. On a line that contains a backtick, a run of backslashes collapses to one backslash, as in Genesis2 (Manager.pm:865-869); a line without a backtick keeps every backslash.
 - **String formatting**: use Python f-strings inside backticks -- `` `f"{i:02d}"` `` for zero-padded indices, `` `f"{x:02x}"` `` for hex. (The `pp(value, fmt)` helper from upstream gvpy is gvpy-only: available in `bin/gvpy`-driven flows, not in genesispy elaboration.)
 
 ### 7.2 j2 syntax (opt-in: `--j2`)
@@ -351,6 +405,11 @@ backtick markers. The embedded language stays full Python; there is no
 filter-pipe / `is`-test / macro / `set` / `block` sub-language. Opt in
 per run with `--j2` (works on both `genesispy` and `gvpy`); engines do
 not mix within a file.
+
+A `{% %}` directive must be the only non-whitespace content on its
+line: text before it or after it on the same line is a `ParseError`
+("must start the line" / "must end the line"). `{{ }}` expressions sit
+anywhere in Verilog text.
 
 No extra install is required for `--j2` itself; the `import-j2` pip
 extra is only needed if you want to convert stock Jinja2 templates
@@ -373,61 +432,62 @@ work in plain-Verilog lines via the template parser.
 `mname()` work the same):
 
 - **`mname`** -- unique module name.
-  - _Example:_ ``module `mname` (...);``
+  - *Example:* ``module `mname` (...);``
 - **`iname`** -- instance name.
-  - _Example:_ ``// instance: `iname` ``
+  - *Example:* ``// instance: `iname` ``
 - **`bname`** -- base module name (the `.vpy` filename stem).
-  - _Example:_ `//; if bname == 'wallace': ...`
+  - *Example:* `//; if bname == 'wallace': ...`
 - **`sname`** -- source template name; equals `bname` for non-synonym classes, else the source it was registered against via `synonym(src, trgt)`.
-  - _Example:_ `//; print(f"derived from {sname}")`
+  - *Example:* `//; print(f"derived from {sname}")`
 
 **Parameter definition and access:**
 
-- **`parameter(name, default, **kwargs)`** -- define/read a module parameter. Returns the resolved value (precedence per §6.2). Kwargs: `force=True`, `doc=`, `min=`/`max=`/`step=`, `list=`, `opt=` (see §6.4).
-  - _Example:_ `//; N = parameter('N', 8, min=1, max=64, doc='bit width')`
+- **`parameter(name, default, **kwargs)`** -- define/read a module parameter. Returns the resolved value (precedence per section 6.2). Kwargs: `force=True`, `doc=`, `min=`/`max=`/`step=`, `list=`, `opt=` (see section 6.4).
+  - *Example:* `//; N = parameter('N', 8, min=1, max=64, doc='bit width')`
 - **`define_param(name, default, doc=, type=)`** -- register a parameter at `DECLARATION` state without reading it. Accepted kwargs: `doc=` (documentation string) and `type=` (type hint, mirrors Genesis2's `Type` flag). To attach a range, follow up with `param_range(...)`. To register a range in a single call, use `parameter(...)` instead.
-  - _Example:_ `//; define_param('MODE', 'fast', doc='clock mode')`
+  - *Example:* `//; define_param('MODE', 'fast', doc='clock mode')`
 - **`doc_param(name, msg)`** -- attach/replace a docstring on an existing parameter. Errors if the parameter isn't registered.
-  - _Example:_ `//; doc_param('N', 'partial-product bit width')`
+  - *Example:* `//; doc_param('N', 'partial-product bit width')`
 - **`param_range(name, *, min=, max=, step=, list_=)`** -- attach/replace the range guard on an existing parameter. Errors on re-definition.
-  - _Example:_ `//; param_range('N', min=1, max=64, step=1)`
+  - *Example:* `//; param_range('N', min=1, max=64, step=1)`
 - **`exists_param(name)`** -- `bool`: has this module's body registered `name` via `parameter`/`define_param`?
-  - _Example:_ `//; if exists_param('DEBUG'): emit('// debug build')`
+  - *Example:* `//; if exists_param('DEBUG'): emit('// debug build')`
 - **`get_top_param(name)`** -- read a parameter from the top-level module (for cross-hierarchy lookups). Errors if absent.
-  - _Example:_ `//; clk_mhz = get_top_param('CLK_MHZ')`
+  - *Example:* `//; clk_mhz = get_top_param('CLK_MHZ')`
 - **`list_params()`** -- sorted list of every parameter name registered on this module. Distinct from `get_mod_param_list()` (which returns a `{name: value}` dict).
-  - _Example:_ `//; for p in list_params(): print(p)  # diagnostic print to stdout, not the outfile`
+  - *Example:* `//; for p in list_params(): print(p)  # diagnostic print to stdout, not the outfile`
 
 **Sub-instance creation:**
 
 - **`unique_inst(base, inst, **params)`** / **`generate(base, inst, **params)`** -- request a uniquified sub-instance. `generate` dispatches to `unique_inst` when `unq_style=='numeric'` (default), else to `unique_inst_param`. Returns the child `UniqueModule`.
-  - _Example:_ `//; w = unique_inst('wallace', 'w0', N=8)`
+  - *Example:* `//; w = unique_inst('wallace', 'w0', N=8)`
 - **`unique_inst_param(base, inst, **params)`** / **`generate_unq_param(...)`** -- like `unique_inst` but the unique name encodes the resolved parameters (Perl-style param-suffix uniquification) instead of a numeric counter.
-  - _Example:_ `//; w = unique_inst_param('wallace', 'w0', N=8)  # -> wallace_N8`
+  - *Example:* `//; w = unique_inst_param('wallace', 'w0', N=8)  # -> wallace_N_8`
 - **`generate_unq_numeric(...)`** -- explicit numeric-suffix form of `unique_inst`.
-  - _Example:_ `//; w = generate_unq_numeric('wallace', 'w0', N=8)  # -> wallace_unq1`
+  - *Example:* `//; w = generate_unq_numeric('wallace', 'w0', N=8)  # -> wallace_unq1`
 - **`ununique_inst(base, inst, **params)`** -- instantiate without uniquification: the bare base name is preserved. First call wins the emitted name; same-params re-calls alias to it; different resolved params raise `ElaborationError`. **`generate_base(...)`** is a bare-name alias for the same method.
-  - _Example:_ `//; pll = ununique_inst('pll', 'u_pll')  # emits pll.v`
+  - *Example:* `//; pll = ununique_inst('pll', 'u_pll')  # emits pll.v`
 - **`generate_w_name(base, gen, inst, **params)`** -- register `gen` as a class-level synonym of `base`, then `ununique_inst` the synonym; the emitted module takes `gen`'s name.
-  - _Example:_ `//; rx = generate_w_name('uart', 'uart_rx', 'u_rx')  # emits uart_rx.v`
+  - *Example:* `//; rx = generate_w_name('uart', 'uart_rx', 'u_rx')  # emits uart_rx.v`
 - **`clone_inst(src_inst, new_iname)`** / **`clone(...)`** -- another instance of an already-elaborated `UniqueModule`. No re-elaboration; reuses the source's `.v` file. `clone` is a bare-name alias.
-  - _Example:_ `//; w1 = clone_inst(w0, 'w1')`
+  - *Example:* `//; w1 = clone_inst(w0, 'w1')`
 - **`synonym(...)`** -- two forms, selected by argument count. With one argument, `synonym(name)` mirrors the current module's outfile under `name` (genesispy instance-level extension). With two arguments, `synonym(src, trgt)` registers `trgt` as a class-level template synonym of `src` (Genesis2 semantics).
-  - _Example (one argument):_ `//; synonym('adder_alias')`
-  - _Example (two arguments):_ `//; synonym('adder', 'adder_v2')`
+  - *Example (one argument):* `//; synonym('adder_alias')`
+  - *Example (two arguments):* `//; synonym('adder', 'adder_v2')`
 
 **Sub-instance navigation and query:**
 
 - **`get_subinst(name)`** -- return the child `UniqueModule` for instance `name`; errors if absent.
-  - _Example:_ `//; w = get_subinst('w0')`
+  - *Example:* `//; w = get_subinst('w0')`
 - **`exists_subinst(name)`** -- `bool` membership check.
-  - _Example:_ `//; if exists_subinst('debug_unit'): ...`
+  - *Example:* `//; if exists_subinst('debug_unit'): ...`
 - **`get_subinst_array(pattern="")`** -- list of child `UniqueModule`s whose instance name matches `pattern` (regex; empty = all).
-  - _Example:_ `//; for w in get_subinst_array(r'^w\d+$'): emit(w.instantiate())`
+  - *Example:* `//; for w in get_subinst_array(r'^w\d+$'): emit(w.instantiate())`
 - **`get_instance_obj(path_or_obj)`** -- resolve a hierarchical path (dotted string walked from the top instance) to the corresponding `UniqueModule`. A `UniqueModule` argument passes through unchanged.
-  - _Example:_ `//; child = get_instance_obj('top.cluster0.w0')`
+  - *Example:* `//; child = get_instance_obj('top.cluster0.w0')`
 - **`search_subinst(*, start_from=, depth=, reverse=, path_regex=, iname_regex=, mname_regex=, bname_regex=, sname_regex=, has_param_regex=, apply_map=)`** -- recursive search over the instance tree. Returns a list of matching `UniqueModule` instances (not a count); each element is the live child object, so `.mname` / `.get_param(name)` / etc. work on it. All regex filters AND-compose; `apply_map` is a final predicate. Snake_case kwargs (Genesis2's CamelCase form is not accepted). Starts from `start_from` (default: top); `depth` bounds the search; `reverse=True` returns post-order.
-  - _Example:_
+  - *Example:*
+
     ```python
     //; matches = search_subinst(
     //;     start_from='top.cluster0',          # root of search; default is the top module (optional)
@@ -435,7 +495,7 @@ work in plain-Verilog lines via the template parser.
     //;     reverse=False,                      # pre-order (parents before children) (optional)
     //;     bname_regex=r'^wallace$',           # match base module name (optional)
     //;     iname_regex=r'_lo$',                # match instance name (optional)
-    //;     path_regex=r'cluster0\.',           # match full instance path (optional)
+    //;     path_regex=r'cluster0/',            # match full instance path; segments are /-joined (optional)
     //;     mname_regex=r'_unq\d+',             # match unique module name (optional)
     //;     sname_regex=r'wallace',             # match source template name (optional)
     //;     has_param_regex=['^N$', '^WIDTH$'], # require both params present (optional)
@@ -449,23 +509,23 @@ work in plain-Verilog lines via the template parser.
 **Output and template helpers:**
 
 - **`instantiate(**ports)`** / **`<child>.instantiate(**ports)`** -- return a Verilog instance fragment. With ports: `MName iname (.p(v), ...)`. Without: `MName iname` so the caller supplies the port list in surrounding text.
-  - _Example:_ `` `w.instantiate(a=A, b=B, y=Y)` ``
+  - *Example:* `` `w.instantiate(a=A, b=B, y=Y)` ``
 - **`emit(text)`** -- write `text` to the current module's Verilog outfile. Appends a newline automatically (no need for a trailing `\n`). Use this instead of Python `print(...)`, which goes to stdout, not the outfile.
-  - _Example:_ `//; emit(f'  wire [{N-1}:0] sum;')`
+  - *Example:* `//; emit(f'  wire [{N-1}:0] sum;')`
 
 **Diagnostics:**
 
 - **`error(msg)`** -- raise `GenesisPyError`. Prefixes `<module_name>@<instance_path>`.
-  - _Example:_ `//; if N < 1: error(f'N={N} must be positive')`
+  - *Example:* `//; if N < 1: error(f'N={N} must be positive')`
 - **`warning(msg)`** -- write to stderr and return. Same prefix.
-  - _Example:_ `//; if N > 32: warning('large N may slow synthesis')`
+  - *Example:* `//; if N > 32: warning('large N may slow synthesis')`
 
 **Other:**
 
-- **`include(path)`** -- parse another `.vpy` and run its body against the current module, with `self` bound to it. The body runs in a *fresh* namespace, not the caller's `execute()` locals; values travel in and out on `self` (see §11.2). Mirrors Genesis2 `//;include("file.vp")`. Resolves `path` against `--inc-path`.
-  - _Example:_ `//; include('common_ports.vpy')`
-- **`pyinclude(path)`** -- exec a plain `.py` file into the *calling code's own* namespace, so the names it defines stay reachable as bare names for the rest of that module (see §11.3). Resolves `path` against `--py-path`, then `--inc-path`.
-  - _Example:_ `//; pyinclude('helpers.py')`
+- **`include(path)`** -- parse another `.vpy` and run its body against the current module, with `self` bound to it. The body runs in a *fresh* namespace, not the caller's `execute()` locals; values travel in and out on `self` (see section 11.2). Mirrors Genesis2 `//;include("file.vp")`. Resolves `path` against `--inc-path`.
+  - *Example:* `//; include('common_ports.vpy')`
+- **`pyinclude(path)`** -- exec a plain `.py` file into the *calling code's own* namespace, so the names it defines stay reachable as bare names for the rest of that module (see section 11.3). Resolves `path` against `--py-path`, then `--inc-path`.
+  - *Example:* `//; pyinclude('helpers.py')`
 - **`pinclude(path)`** -- deprecated spelling of `pyinclude`; emits a one-time warning to stderr.
 
 ## 8. Examples
@@ -666,8 +726,9 @@ genesispy -i top.vpy -i child.vpy -t top -j config.json
 > helper `genesispy-json2xml` is provided for symmetry. See section 12
 > (Migrating from Genesis2) for the conversion notes.
 
-`genesispy --help` is authoritative; the groupings below mirror that
-output.
+`genesispy --help` is authoritative for the current flags; the groupings
+below mirror that output. Deprecated spellings are accepted but hidden
+from `--help`; section 9.5 lists them.
 
 ### 9.1 General
 
@@ -675,14 +736,14 @@ output.
 - `-v`, `--version` -- print version and exit.
 - `-d`, `--debug LEVEL` -- debug verbosity level (default: `0`).
 - `--log FILE` -- tee error/warning messages to `FILE` (defaults to `genesispy.log`, lazy-opened on first error/warning so clean runs leave no log artifact). Suppress by pointing at `/dev/null`.
-- `--clean` -- delete generated files and exit.
+- `--clean` -- delete generated files and exit: the raw, synth and verif directories, the default lists, and every product the same flags would have written (`--depend`, `--path`, `--product` / `--vf-out` with their side-files, the `--json-out` triple, `--log`). Pass the same output flags as the generating run. `genesispy_clean.sh` removes the same set.
 - `-t`, `--top NAME` -- name of the top module.
 - `--synth-top PATH` -- synthesis-top instance: a top-level instance name (e.g. `core`) or dotted instance path (e.g. `top.core`) bounding the synth cone. Instances at or under this path emit to `genesis_synth/`, all others to `genesis_verif/`. When omitted (Genesis2 default), every emitted file goes to `genesis_verif/`.
 
 ### 9.2 Parse phase (`.vpy` -> `.py`)
 
 - `-i`, `--input FILE` -- source `.vpy` file to process. Repeatable.
-- `-f`, `--input-list FILE` -- listfile of inputs (bare paths or GNU directives `--input/--input-list/--src-path/--inc-path`; inline `# ...` comments allowed; recursive). Repeatable.
+- `-f`, `--input-list FILE` -- listfile of inputs (bare paths or GNU directives `--input/--input-list/--src-path/--inc-path`; inline `# ...` comments allowed; recursive). Repeatable. A path argument has `$VAR` / `${VAR}` expanded and, when the file or directory exists beside the listfile, is made absolute against the listfile's directory; otherwise it is kept as written and resolves against the search paths and the current directory. An unbalanced quote is a usage error.
 - `--src-path DIR` -- search directory for source-file resolution. Repeatable.
 - `--inc-path DIR` -- search directory for include-file resolution. Repeatable.
 - The two feed different lookups: `--input FILE` searches `src_path + inc_path + ['.']`; `include(...)` inside a `.vpy` body searches `inc_path + ['.']` only. `--src-path` does not resolve an include (section 5, "Search paths"). `pyinclude(...)` searches `py_path + inc_path + ['.']`.
@@ -718,10 +779,39 @@ output.
 - `--param-footer` -- append a comment block after each generated module listing every resolved parameter with its value and the configuration source it came from. Off by default; without it the output is unchanged. Unlike the module banner, which is written before the template body runs, this block is written after, so it also shows parameters the body resolves with `parameter()`. Sources are named from the priority ladder, highest wins: `forced (force_param)` > `parent instantiation` (a parent's `unique_inst` keyword argument) > `command line (--parameter)` > `config file (--json-cfg)` > `config script (--cfg / configure)` > `declaration default`. Note that a parent's `unique_inst` keyword argument outranks `--parameter`. Uses the `--output-comment` style. Modules with no parameters get no block. Under module deduplication one emitted file can back several instances, and the block reports the elaboration that produced the file.
 - `--stdout` -- write generated Verilog to stdout instead of `genesis_synth`/`genesis_verif`. Skips `.vlist`/`.depend`/clean script and removes the raw dir on exit. Overrides `--gen-raw`: no raw `.v` siblings are written and the raw dir is removed regardless.
 - `--product FILE` -- write Genesis2-style product file lists. `--product FILE.ext` produces three files: `FILE.ext` (all modules), `FILE.synth.ext` (synth-cone), `FILE.verif.ext` (verif-cone). Suppresses the default `<top>.vlist`/`<top>.vlist.verif`.
-- `--json-out FILE` -- write a `HierarchyTop` snapshot of the elaborated module tree (port of Perl `-hierarchy`). Emits three files in `dirname(FILE)`: `FILE` (full), `<stem>-small<ext>` (no `ImmutableParameters`), `<stem>-tiny<ext>` (only params with priority `>= EXTERNAL_PARAM_FILE`).
+- `--json-out FILE` -- write a `HierarchyTop` snapshot of the elaborated module tree (port of Perl `-hierarchy`). Emits three files in `dirname(FILE)`: `FILE` (full: every parameter, declared defaults included, with force-pinned ones under `ImmutableParameters`), `<stem>-small<ext>` (no `ImmutableParameters`), `<stem>-tiny<ext>` (only params with priority `>= EXTERNAL_PARAM_FILE`). Values are written under `Val`; `--json-cfg` reads that spelling too, so a snapshot can be fed back in. A deduplicated instance is recorded as `CloneOf` with no parameters of its own, so a fed-back snapshot sets values only on the instances that were elaborated.
 - `--vf-out FILE` -- write a single Verilog file-list product to `FILE` (auto-appends `.vf` if missing). Unlike `--product`, no `.synth`/`.verif` side-files are emitted. Suppresses the default `<top>.vlist`/`<top>.vlist.verif`. Mutually exclusive with `--product`.
 - `--depend FILE` -- override the dependency-list output path (default: `<top>.depend`).
 - `--path FILE` -- write the list of directories touched during elaboration to `FILE`.
+
+### 9.5 Deprecated aliases
+
+Accepted for compatibility with earlier genesispy releases, hidden from
+`--help`, and each warns once per run naming its replacement. They may
+be removed at a minor release.
+
+| Deprecated                    | Use instead               | Where          |
+|-------------------------------|---------------------------|----------------|
+| `-l`, `--inputlist`           | `-f`, `--input-list`      | genesispy      |
+| `--synthtop`                  | `--synth-top`             | genesispy      |
+| `--json`                      | `-j`, `--json-cfg`        | genesispy      |
+| `--cfgpath`                   | `--cfg-path`              | genesispy      |
+| `--srcpath`                   | `--src-path`              | genesispy, listfile |
+| `--includepath`               | `--inc-path`              | genesispy, listfile |
+| `--pythonpath`                | `--py-path`               | genesispy      |
+| `--pymodule`                  | `--py-import`             | genesispy      |
+| `--flavor`                    | `--out-type`              | genesispy      |
+| `--pathfile`                  | `--path`                  | genesispy      |
+| `--jsonout`                   | `--json-out`              | genesispy      |
+| `--outputdir`                 | `--out-dir`               | genesispy      |
+| `--generate-only`             | `--gen-only`              | genesispy      |
+| `--systemverilog`             | `-sv`, `--system-verilog` | genesispy      |
+| `--unqstyle`                  | `--unq-style`             | genesispy      |
+| `--comment`                   | `--source-comment`        | genesispy, gvpy |
+| `--inputlist` (in a listfile) | `--input-list`            | listfile       |
+| `--libdirs`                   | `--py-path`               | gvpy           |
+| `--incdirs`                   | `--inc-path`              | gvpy           |
+| `--defparam`                  | `-p`, `--parameter`       | gvpy           |
 
 ## 10. gvpy flat-preprocessor mode
 
@@ -913,7 +1003,7 @@ as an argument:
 
 ```python
 def declare(mod, name, w):
-    mod.emit(f"  wire signed [{w-1}:0] {name};\n")
+    mod.emit(f"  wire signed [{w-1}:0] {name};")   # emit() adds the newline
 ```
 
 ```verilog
@@ -925,8 +1015,9 @@ template, which is harmless for a library of `def`s and constants. A
 file that must run once per *instance*, or that needs the full alias
 set, wants `include()` instead.
 
-Relative paths resolve against the current directory, then `--py-path`,
-then `--inc-path`, then `"."`. A file found in none of them raises
+A path that exists from the current directory is used as-is; otherwise
+`--py-path` directories are searched, then `--inc-path`. A file found in
+none of them raises
 `ParseError` naming every candidate directory. A target whose extension
 is a registered template extension (`.vpy`, `.svpy`) is rejected with a
 message pointing at `include()`. The `.py` is recorded as a
@@ -951,12 +1042,24 @@ to wrap behavior. The original methods are still reachable via
 
 ### 11.5 Defining a `UniqueModule` mixin
 
-For shared methods that should be visible on every elaborated module,
-write a Python mixin module and have it imported via `--py-import` or
-the `genesispy.user_lib.UserMixin` hook (see `src/genesispy/user_lib.py`). The
-mixin's methods become available as `self.<method>` on every
-`UniqueModule`. This replaces Perl Genesis2's `@ISA` global-injection
-pattern.
+Every generated module class inherits `genesispy.user_lib.UserMixin`,
+an empty class kept as the attachment point for project-wide helpers.
+A module loaded with `--py-import` can add methods to it, and they are
+then callable as `self.<method>` in every `.vpy` body of the run:
+
+```python
+# mymix.py, loaded with --py-import mymix
+from genesispy.user_lib import UserMixin
+
+def hello(self):
+    return f"// {self.mname} says hello"
+
+UserMixin.hello = hello
+```
+
+Subclassing `UserMixin` does nothing on its own: generated classes name
+the base class directly, nothing looks for subclasses. This replaces
+Perl Genesis2's `@ISA` global-injection pattern.
 
 ### 11.6 `.cfg` sandbox helpers
 
@@ -966,12 +1069,12 @@ are also available (mirrors Genesis2 `do FILE` semantics).
 
 | Name | Purpose |
 |------|---------|
-| `configure(name, value, **flags)` | Write a value at `EXTERNAL_CONFIG` priority. |
-| `get_configuration(name)` | Read the currently-resolved value. |
-| `exists_configuration(name)` | `bool` membership check. |
+| `configure(name, value, **flags)` | Write a value for `path.name` at `EXTERNAL_CONFIG` priority. |
+| `get_configuration(name)` | Read the currently-resolved value of `path.name`; `ConfigError` when nothing set it. |
+| `exists_configuration(name)` | `bool` membership check for `path.name`. |
 | `remove_configuration(name)` | Delete a previously-`configure`d entry. |
-| `include(path)` | Recursively load another `.cfg` file. |
-| `print_configuration()` | Dump the full param database (stderr; debug aid). |
+| `include(path)` | Load another config: a `.json` path goes through `read_json`, anything else through `read_cfg`. |
+| `print_configuration()` | Return the full param database as a string (debug aid; print it yourself). |
 | `get_top_name()` | Name of the `--top` module. |
 | `get_synthtop_path()` | Absolute path to the synth output directory (`--synth-dir`). |
 | `error(msg)` | Raise `GenesisPyError` (fatal). |
@@ -994,13 +1097,13 @@ flag style) are listed below. For behaviour-affecting incompatibilities
 - **`--suffix` removed** -- replaced by `--extension`. `-sv`/`--system-verilog` is preserved as a shorthand for `--extension .vpy=.sv`.
 - **`--comment` -> `--source-comment`** -- `--comment PREFIX` is a deprecated alias for `--source-comment PREFIX`; it is retained and emits a one-time stderr warning. New flag `--output-comment PREFIX | OPEN,CLOSE` controls the style for comments emitted into the output (banner and `--stdout` separator); defaults to `--source-comment`. Genesis2 has no equivalent to `--output-comment`.
 - **`--param-footer`** -- genesispy-only; appends a resolved-parameter provenance block after each generated module. Off by default, so migrated designs emit unchanged output. Genesis2 has no equivalent.
-- **Config input** -- XML support removed from the core CLI; convert legacy XML once with `genesispy-xml2json in.xml out.json` and pass `--json-cfg out.json`. The reverse helper `genesispy-json2xml` is provided for symmetry.
-- **`ImmutableParameters` (input config)** -- ignored by both engines. Genesis2 `ConfigHandler.pm:875-919` reads only `{Parameters}` from input XML; `{ImmutableParameters}` is touched only by the writeback path (`ConfigHandler.pm:677, 724`). genesispy matches via `_FIND_PARAM_SKIP_KEYS` in `config_handler.py:_find_param`. The tag is writeback-only metadata in both engines. To actually pin past a parent's `unique_inst` kwarg, use `force_param` (Genesis2) / `parameter(..., force=True)` (genesispy); both write at `IMMUTABLE`.
+- **Config input** -- XML support removed from the core CLI; convert legacy XML once with `genesispy-xml2json in.xml out.json` and pass `--json-cfg out.json`. The reverse helper `genesispy-json2xml` is provided for symmetry. The converter types an XML value only when that is lossless (`<Val>8</Val>` becomes `8`, `1.5` becomes `1.5`, `true`/`false` become booleans); `010`, `1e3`, `+5` and any other text stay strings, as XML::Simple handed them to Perl. The JSON loader never coerces: a string leaf reaches the template as typed. A JSON `null` round-trips through `genesispy-json2xml` as an empty element, which reads back as `""`.
+- **`ImmutableParameters` (input config)** -- ignored by both engines. Genesis2 `ConfigHandler.pm:875-919` reads only `{Parameters}` from input XML; `{ImmutableParameters}` is touched only by the writeback path (`ConfigHandler.pm:677, 724`). genesispy reads only a node's `Parameters` in `config_handler.py:_find_param`. The tag is writeback-only metadata in both engines. To actually pin past a parent's `unique_inst` kwarg, use `force_param` (Genesis2) / `parameter(..., force=True)` (genesispy); both write at `IMMUTABLE`.
 - **`//;` body language** -- Perl -> Python.
 - **Verilog compiler directives need `` \` `` escaping** -- Genesis2 passes bare `` `timescale ``, `` `default_nettype ``, `` `include ``, `` `uvm_* `` through to the output (Manager.pm:810-820); in genesispy every backtick opens an expression, so a bare directive raises `ParseError`. Write `` \`timescale 1ps/1ps `` to emit a literal backtick. `genesispy-vp2vpy` inserts the escape automatically.
 - **`--cfg` config files** -- Perl `eval` -> Python `exec()` (trusted-input, full `__builtins__` exposed -- mirrors Perl `do FILE`). Files are plain Python; `.py` is preferred over `.cfg`.
 - **CLI flag style** -- GNU `--input`/`-i`, `--top`/`-t`, ... (Genesis2 used Perl-style `-input`, `-top`).
-- **`--input-list` listfile syntax** -- GNU directives only (`--input/--input-list/--src-path/--inc-path`); Genesis2 used `-input/-inputlist/-srcpath/-incpath`. Bare paths default to `--input`.
+- **`--input-list` listfile syntax** -- GNU directives only (`--input/--input-list/--src-path/--inc-path`); Genesis2 used `-input/-inputlist/-srcpath/-incpath`. Bare paths default to `--input`. As in Genesis2 (Manager.pm:614-650), a directive argument has `$VAR` / `${VAR}` expanded, is taken relative to the listfile's directory, and is dropped with a warning when it names an undefined variable or a path that does not exist; a bare path is kept as written and resolves later against the search paths.
 - **`parameter(...)` kwargs** -- mirrors Perl's named-arg form (UniqueModule.pm:1981). Supports `force=True` (write at FORCED priority and lock against override), `doc=` (documentation), `min=`/`max=`/`step=` (range guard), `list=` (allowed-values constraint, XOR with min/max/step), and `opt='yes'|'no'|'try'` (store-only metadata). Range is checked at `parameter()` register-time and on every subsequent `override_param` / `force_param`. Parameter values may be any Python value, but module dedup hashing, JSON-config roundtrip, and the `list=`/`min=`/`max=` constraints assume JSON-shaped values (scalars, lists, dicts of same); custom Python objects bypass dedup and don't roundtrip to JSON.
 - **`doc_param(name, msg)` / `param_range(name, *, min, max, step, list_)`** -- late-bind documentation and range on an existing parameter (mirror Perl's older API at UniqueModule.pm:558 / :582). Errors if the parameter doesn't exist; `param_range` errors on re-definition.
 - **`print(...)` inside `//;` escapes** -- Perl `print "..."` inside `//;` blocks routes to the **generated Verilog file** by default; `print STDOUT/STDERR` explicitly route to the screen. Python `print(...)` writes to `sys.stdout`, not to the module's outfile. Use `emit(...)` to write to the module's Verilog output, or pass `file=sys.stderr` for the diagnostic channel. A mechanical port of debug `print` lines silently loses them from the `.v` output.
@@ -1010,13 +1113,17 @@ flag style) are listed below. For behaviour-affecting incompatibilities
 - **`--vf-out FILE`** -- writes a single Verilog file-list product to `FILE` (auto-appends `.vf` if missing). Unlike `--product`, no `.synth`/`.verif` side-files are emitted. Suppresses the default `<top>.vlist`/`<top>.vlist.verif`. Mutually exclusive with `--product`. Diverges from Genesis2, which has no single-file product-list flag.
 - **`self.to_string(*args)`** -- debug serialiser using `pprint.pformat` per argument (newline-separated). Mirrors Perl `$self->to_string(...)` (UniqueModule.pm:2911); not a byte-for-byte port of `CfgHandler::PrintToString`. Self-method only -- no bare-name alias in `.vpy` bodies.
 - **Parameter accessors** -- `exists_param(name)`, `get_top_param(name)`, and `list_params()` (sorted list of names; distinct from the existing `get_mod_param_list()` which returns a `{name: value}` dict). Mirror Perl UniqueModule.pm:496/:550/:515.
-- **Sub-instance navigation** -- `get_subinst(name)`, `exists_subinst(name)`, `get_subinst_array(pattern="")`, `get_instance_obj(path_or_obj)`, and `search_subinst(...)` are now available on every `UniqueModule` (mirrors Perl UniqueModule.pm:760/780/797/932/1087). `search_subinst` kwargs are **snake_case**: `start_from=`, `depth=`, `reverse=`, `path_regex=`, `iname_regex=`, `mname_regex=`, `bname_regex=`, `sname_regex=`, `has_param_regex=`, `apply_map=`. Translate from Perl Genesis2's CamelCase (`PathRegex`, `INameRegex`, ...) when porting.
+- **Sub-instance navigation** -- `get_subinst(name)`, `exists_subinst(name)`, `get_subinst_array(pattern="")`, `get_instance_obj(path_or_obj)`, and `search_subinst(...)` are now available on every `UniqueModule` (mirrors Perl UniqueModule.pm:760/780/797/932/1087). `get_instance_path()` returns the dotted path starting with the top's instance name, and `get_instance_obj` takes that form, as in Genesis2. `search_subinst` kwargs are **snake_case**: `start_from=`, `depth=`, `reverse=`, `path_regex=`, `iname_regex=`, `mname_regex=`, `bname_regex=`, `sname_regex=`, `has_param_regex=`, `apply_map=`. Translate from Perl Genesis2's CamelCase (`PathRegex`, `INameRegex`, ...) when porting.
 - **`iname` / `mname` / `bname` / `sname` callable** -- on a `UniqueModule` instance, the four short-name properties return a `StrCallable` (a `str` subclass), so both `obj.mname` and `obj.mname()` work the same way (and equal each other as strings). Mirrors Perl `$obj->mname()` / `$obj->bname()`.
 - **`error(...)` / `warning(...)`** -- bare-name `error("msg")` and `warning("msg")` are now bound inside `.vpy` bodies (routing through `self.error` / `self.warning`), mirroring Perl `$myself->error(...)` (UniqueModule.pm:2803). Both forms prefix the message with `<module_name>@<instance_path>` and delegate to `genesispy.reporting`. `self.error(msg)` raises `GenesisPyError` (fatal); `self.warning(msg)` returns normally after writing to stderr.
 - **`ununique_inst` / `generate_base`** -- preserves the bare base name on first call (matches Perl `UnUniquifiedModules`, UniqueModule.pm:1610). A second call for the same base name with the same resolved params and the same scoped-override subtree aliases the first instance under the new instance name. Different resolved params raise `ElaborationError` with both param dicts (the emitted module name is global, so two distinct elaborations can't both keep the bare name). Differing scoped-override subtrees re-elaborate and compare the generated bodies, mirroring Perl's file comparison (UniqueModule.pm:1674): identical bodies alias, divergence raises.
 - **`synonym(...)` arity** -- the bare-name `synonym(...)` in `.vpy` bodies is an arity dispatcher: `synonym(name)` mirrors the current module's outfile under `name` (genesispy instance-level semantics); `synonym(src, trgt)` registers `trgt` as a class-level template synonym of `src` via `Manager.synonym_class` (Perl semantics). Perl supports only the 2-arg form; the 1-arg form is a genesispy extension.
 - **`sname`** -- mirrors Perl `get_source_name` (UniqueModule.pm:377): returns the source template name (`_synonym_for` set by `Manager.synonym_class` on a synonym-derived class, else the base module name == `bname`).
-- **`--json-out`** (Perl `-hierarchy`) -- same three-file output and same `HierarchyTop` schema, but emitted as JSON (use `genesispy-json2xml` for XML). Sibling filenames diverge from Perl: Perl emits `<f>`/`small_<f>`/`tiny_<f>`; genesispy splits `<f>` into `<stem><ext>` and emits `<stem><ext>`/`<stem>-small<ext>`/`<stem>-tiny<ext>`. The `tiny` variant filters by `priority >= EXTERNAL_PARAM_FILE`; genesispy's flat-key config lookup cannot replicate Perl's `inherit_param`-aware priority assignment, so the `tiny` set may be a strict superset of Perl's (params Perl tags as inherited may appear as user-overrides in genesispy).
+- **`--json-out`** (Perl `-hierarchy`) -- same three-file output and same `HierarchyTop` schema, but emitted as JSON (use `genesispy-json2xml` for XML). Sibling filenames diverge from Perl: Perl emits `<f>`/`small_<f>`/`tiny_<f>`; genesispy splits `<f>` into `<stem><ext>` and emits `<stem><ext>`/`<stem>-small<ext>`/`<stem>-tiny<ext>`. `ImmutableParameters` holds force-pinned parameters (Perl fills it by inheritance recursion instead). The `tiny` variant filters by `priority >= EXTERNAL_PARAM_FILE`; genesispy cannot replicate Perl's `inherit_param`-aware priority assignment, so the `tiny` set may be a strict superset of Perl's (params Perl tags as inherited may appear as user-overrides in genesispy).
+- **Names** -- `get_module_name()` returns the unique (emitted) module name and `get_base_name()` the template name, as in Genesis2. Parameter names must match `\w+` in both engines; a synonym target that names an existing template is refused in both.
+- **Command-line overrides** -- a bare `-p W=9` is accepted and applies to every instance that reads `W`, where Genesis2 requires `path.name`; an override that no instance reads is a warning after elaboration, where Genesis2's `Finalize` dies. The `.cfg` API requires `path.name` and `get_configuration` on an unset name is fatal, as in Genesis2.
+
+- **No inputs** -- `genesispy -t top` with no `--input` / `--input-list` / `--gen-only` / `--clean` exits 1 with `no input files`, as Genesis2 does (Manager.pm:400).
 
 ### 12.1 `genesispy-vp2vpy` -- mechanical `.vp` -> `.vpy` translator
 
@@ -1032,16 +1139,21 @@ it parses and elaborates as a starting point for further hand-cleanup.
 
 Run on a file or a directory:
 
-```
-$ module load ramyx/perl/5.42.0/0.1.0      # provides perl + PPI
-$ genesispy-vp2vpy path/to/genesis-source -o path/to/genesis_src
+```sh
+module load ramyx/perl/5.42.0/0.1.0      # provides perl + PPI
+genesispy-vp2vpy path/to/genesis-source -o path/to/genesis_src
 ```
 
 Output extension defaults: `.vp -> .vpy`, `.vph -> .vpy`.
 `--strict` upgrades any unmappable construct to an error;
 default behaviour passes the original line through wrapped in
-`// TODO vp2vpy: <reason>`. `--check` exits nonzero if any TODO would
-have been emitted (CI use).
+`// TODO vp2vpy: <reason>`, one comment line per Perl source line.
+`--check` exits nonzero if any TODO would have been emitted (CI use).
+Every Perl construct the walker does not recognise reaches that TODO
+path: a bare operator or builtin with no Python spelling (`++` inside an
+expression, `shift`, `sort { ... }`, `map`, `grep`, `"@{[ ... ]}"`, a
+package-qualified call other than `POSIX::*` and `List::Util::max/min/sum`)
+is never copied into the output verbatim.
 
 Implementation: Perl is parsed via the CPAN `PPI` module (run as a
 subprocess); Python rewriting is table-driven from
@@ -1049,11 +1161,17 @@ subprocess); Python rewriting is table-driven from
 hash declarations, `for`/`foreach`/`while`/`until`/`if`/`unless`/`elsif`/
 `else` (with `# endX` sentinel injection), postfix conditionals,
 ternary, regex bind (`=~` / `!~`), `sprintf`, `defined`/`scalar`/
-`length`/`keys`/`values`/`push`/`pop`/`shift`/`unshift`, the Genesis2
+`length`/`keys`/`values`/`push`/`pop`/`shift`/`unshift`/`join`/`sort`/
+`reverse`/`substr`, `print STDERR`, string concatenation (`.`, with
+`str()` around non-literal operands), `<=>`/`cmp`, `||=`/`&&=`/`//=`,
+`%hash` and `@array` call arguments (`**hash` / `*array`), the Genesis2
 user API (`Parameter`, `Generate`, `Instantiate`, `UniqueInst`, `Clone`,
 `Synonym`, `Include`, `Pinclude`, ...), backtick expressions inside
 Verilog body, multi-line directive continuations, and Verilog
-compiler-directive escaping (`` `timescale ``, etc.).
+compiler-directive escaping (`` `timescale ``, etc.). `sprintf`, `join`
+and `<=>` go through small `_vp2vpy_*` helpers emitted at the top of the
+file: `_vp2vpy_sprintf` prints integral floats as ints under `%d`/`%x`
+and a conversion with no argument as `0`, as Perl does.
 
 Known limitations:
 
@@ -1082,7 +1200,7 @@ A `genesispy` run produces:
 - `genesis_verif/<module>.v` -- elaborated Verilog for instances outside the synth cone (everything when `--synth-top` is omitted, mirroring Genesis2's `SynthTop=undef` default).
 - `<outputdir>/<top>.vlist` -- full compile-order file list (every emitted `.v`, regardless of synth/verif tag). Suppressed when `--product` or `--vf-out` is set.
 - `<outputdir>/<top>.vlist.verif` -- emitted only when at least one verif-tagged file exists; lists verif + synth_and_verif paths. Suppressed when `--product` or `--vf-out` is set.
-- `<top>.depend` -- Make-style dependency list. Always written. Target is the `.vlist` by default, or the named product file under `--product`/`--vf-out`.
+- `<top>.depend` -- Make-style dependency list, written whenever files are flushed to disk (not under `--stdout` or `--parse-only`). Target is the `.vlist` by default, or the named product file under `--product`/`--vf-out`.
 - `genesispy_clean.sh` -- sweeps the run's output products.
 - Optional `--json-out FILE` -- resolved configuration tree (three siblings, see section 9.4).
 - Optional `--product FILE.ext` (Genesis2 compat) -- writes `FILE.ext`, `FILE.synth.ext`, `FILE.verif.ext` product lists (the extension is split off with `os.path.splitext`, so an extensionless `FILE` gives `FILE`, `FILE.synth`, `FILE.verif`); suppresses the default `.vlist` pair.
@@ -1093,12 +1211,16 @@ A `genesispy` run produces:
 
 ### "ParseError: without matching opener"
 
-The parser saw a `//; # endfor` / `# endif` / `# endwhile` (or the
-j2 equivalent) with no opener on the block stack. Causes:
+Raised in j2 mode only: the j2 scanner keeps a block stack, and a
+`{% endfor %}` / `{% endif %}` / `{% endwhile %}` (or the sentinel
+spelling `{% # endfor %}`) arrived with no opener on it. The genesis
+flavour has no block stack: a `//; # endfor` is a plain comment there,
+and a missing or extra sentinel shows up as misplaced Verilog, not as
+this error. Causes:
 
-- The block opener (`//; for ...:`, `//; if ...:`, `//; while ...:`) is missing the trailing `:` -- without it the parser doesn't recognise the line as opening a block, so the matching close looks unmatched.
+- The block opener (`{% for ...: %}`, `{% if ...: %}`, `{% while ...: %}`) is missing the trailing `:` -- without it the parser doesn't recognise the line as opening a block, so the matching close looks unmatched.
 - An earlier close was already eaten by a parent block.
-- In j2 mode, a `{% %}` directive whose body strips to exactly `endfor` / `endif` / `endwhile` is always treated as a block close, even if you intended it as a Python expression.
+- A `{% %}` directive whose body strips to exactly `endfor` / `endif` / `endwhile` is always treated as a block close, even if you intended it as a Python expression.
 
 ### Tracebacks point at `<gen>.py` line numbers
 
@@ -1109,7 +1231,7 @@ remap is absent, you are looking at the generated intermediate; the
 check that the failing line matches what you expected the template to
 emit.
 
-### `include("file.vpy")` raises `FileNotFoundError`
+### `include("file.vpy")` reports `find_file: file ... not found`
 
 `include()` takes an absolute path, or a relative path that already
 resolves from the current working directory, as-is; anything else is
@@ -1117,20 +1239,24 @@ searched for on `--inc-path DIR` (repeatable) and then the current
 directory. It does not search `--src-path`, and it does not search the
 directory holding the calling `.vpy`: a leaf sitting beside its caller
 is still unreachable unless that directory is on `--inc-path` or is the
-cwd. Add the include directory:
+cwd. A string-named `unique_inst("leaf")` is the other way round: a template
+not named on the command line is searched under the cwd and `--src-path`,
+never `--inc-path` (Genesis2 `load_base_module`). Add the include directory:
 
 ```sh
 genesispy --inc-path ./shared --input top.vpy --top top
 ```
 
-### JSON `Parameters` value comes through wrapped
+### JSON config rejected, or a value not applied
 
-`config_handler` unwraps `__ArrayType__` / `__HashType__` / `__Val__`
-wrappers when it loads JSON, but only at the boundaries it knows
-about. Custom nested structures may appear as raw dict / list with the
-sentinel keys still visible. Inspect with `--json-out hier.json` to see
-the resolved tree, and add an explicit unwrap helper call in `.vpy` body
-if you need a particular shape.
+The loader accepts only the `HierarchyTop` shape shown in 6.3 and
+reports the first offending node. A value that loads but never reaches
+its instance is on the wrong node: values apply to the node whose
+`InstanceName` path matches the instance, never to descendants. Inspect
+with `--json-out hier.json` to see the instance tree genesispy built.
+Nested `__ArrayType__` / `__HashType__` wrappers inside a value are
+unwrapped only at the top level; deeper sentinel keys pass through with
+the key visible.
 
 ### `genesispy.log` appearing in clean repos
 
@@ -1147,9 +1273,9 @@ by passing `--log /dev/null`.
 
 Three core subsystems do the work, backed by two shared modules:
 
-- **`genesispy.template`** -- the `.vpy` parser, generated-module emitter, and runtime. See [interfaces.md](./interfaces.md) sections `genesispy.template.parser` / `emitter` / `runtime` and [code-structure.md](./code-structure.md) §4.
+- **`genesispy.template`** -- the `.vpy` parser, generated-module emitter, and runtime. See [interfaces.md](./interfaces.md) sections `genesispy.template.parser` / `emitter` / `runtime` and [code-structure.md](./code-structure.md) section 4.
 - **`genesispy.unique_module.UniqueModule`** -- the elaborated-instance class. Owns parameter state, sub-instance registration, output buffering, and the bare-name API (`parameter`, `unique_inst`, `instantiate`, `emit`, ...). See `interfaces.md` `genesispy.unique_module.UniqueModule`.
-- **`genesispy.manager.Manager`** -- pipeline orchestrator: parse, elaborate (DFS from `--top`), flush outputs. See `interfaces.md` `genesispy.manager.Manager` and [code-structure.md](./code-structure.md) §3 (Pipeline).
+- **`genesispy.manager.Manager`** -- pipeline orchestrator: parse, elaborate (DFS from `--top`), flush outputs. See `interfaces.md` `genesispy.manager.Manager` and [code-structure.md](./code-structure.md) section 3 (Pipeline).
 
 Shared dedup and output state lives in **`genesispy.cache`**
 (`MODULE_CACHE`, `OUTFILE_CONTENT_CACHE`, `UNUNIQUE_REGISTRY`,
@@ -1220,14 +1346,14 @@ engine is per run -- engines do not mix within a file.
 
 Example (genesis vs j2):
 
-```
+```verilog
 //; W = 4
 //; for i in range(W):
 wire r`i`;
 //; # endfor
 ```
 
-```
+```verilog
 {% W = 4 %}
 {% for i in range(W): %}
 wire r{{ i }};
@@ -1246,7 +1372,7 @@ collisions:
 1. **Replication concat `{{N{value}}`** opens with `{{`, which the parser would consume as an expression. Escape with a leading backslash: `\{{N{value}}` emits a literal `{{`. Implemented at `template/parser.py` (`\{{` consumes 3 chars, emits `{{`). The same escape covers any other adjacent-brace form (e.g. concat-of-concat `\{{a, b}}` -> `{{a, b}}`).
 2. **Single literal `{` immediately before an inline expression** -- e.g. translating genesis `` {`i`{1'b0}} `` to j2 yields the ambiguous `{{{ i }}{1'b0}}`. There is no escape for a bare single `{`. Two workarounds:
 
-   ```
+   ```text
    {{ "{" }}{{ i }}{1'b0}}      # byte-identical output: {3{1'b0}}
    { {{ i }} {1'b0}}            # extra spaces in output: { 3 {1'b0}}
    ```
@@ -1264,7 +1390,7 @@ All four Genesis2-derived demos carry a j2 twin source tree under
 the single file `demos/gvpy/example.j2.vpy`. Both are elaborated via
 `make gen-j2`. Outputs land in a parallel `genesis_synth.j2/` directory
 so the default `make gen` flow is untouched. `generation_examples`,
-`include_examples` and `dsp` have no j2 twin. See `demos/README.md`
+`include_examples`, `pyinclude_examples` and `dsp` have no j2 twin. See `demos/README.md`
 ("j2 twin sources") for the full source/output mapping.
 
 ### Porting stock Jinja2 templates
@@ -1289,6 +1415,8 @@ Conversions: block openers gain a trailing `:`, filters become Python
 etc.), `is`-tests become Python predicates (`x is defined` ->
 `(x) is not None`), `{% set N = E %}` becomes `{% N = E %}`, and
 `{% include "f" %}` becomes `{% include("f") %}`. Macros, blocks,
-`extends`, `import`, `raw`, and custom filters are unmappable. The
-tool requires the optional `jinja2` dependency
+`extends`, `import`, `raw`, the `loop.*` helpers, and custom filters are
+unmappable; in best-effort mode a `raw` body is copied verbatim and a
+`{% if %}` with no condition or an expression Jinja2 itself cannot parse
+becomes a TODO. The tool requires the optional `jinja2` dependency
 (`pip install 'genesispy[import-j2]'`).

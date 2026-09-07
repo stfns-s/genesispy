@@ -26,9 +26,9 @@
  * ****************************************************************************/
 
 // ACTUAL GENESIS2 PARAMETERIZATIONS
-{% cfg_bus_width = define_param('CFG_BUS_WIDTH', 32) or self.get_param('CFG_BUS_WIDTH') %}
-{% cfg_addr_width = define_param('CFG_ADDR_WIDTH', 32) or self.get_param('CFG_ADDR_WIDTH') %}
-{% cfg_op_width = define_param('CFG_OPCODE_WIDTH', 2) or self.get_param('CFG_OPCODE_WIDTH') %}
+{% cfg_bus_width = parameter('CFG_BUS_WIDTH', 32) %}
+{% cfg_addr_width = parameter('CFG_ADDR_WIDTH', 32) %}
+{% cfg_op_width = parameter('CFG_OPCODE_WIDTH', 2) %}
 
 interface {{ mname() }}();
 

@@ -6,7 +6,6 @@ import os
 import re
 from pathlib import Path
 
-import pytest
 
 from genesispy import cache
 from genesispy.cli import parse_args
@@ -15,12 +14,6 @@ from genesispy.manager import Manager
 
 FIXTURES = Path(__file__).parent / "fixtures" / "integration"
 
-
-@pytest.fixture(autouse=True)
-def _reset_cache():
-    cache.clear_all()
-    yield
-    cache.clear_all()
 
 
 def _run(
@@ -100,7 +93,9 @@ def test_no_synthtop_tags_files_verif(tmp_path: Path) -> None:
     synth = tmp_path / "genesis_synth"
     verif_v_files = list(verif.glob("*.v")) if verif.is_dir() else []
     synth_v_files = list(synth.glob("*.v")) if synth.is_dir() else []
-    assert verif_v_files, f"expected .v files in {verif}, got verif={verif_v_files} synth={synth_v_files}"
+    assert verif_v_files, (
+        f"expected .v files in {verif}, got verif={verif_v_files} synth={synth_v_files}"
+    )
     assert not synth_v_files, f"unexpected .v in synth_dir: {synth_v_files}"
     # Every cache filename should be tagged 'verif'.
     assert all(t == "verif" for t in cache.OUTFILE_TAGS.values())

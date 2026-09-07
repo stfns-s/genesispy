@@ -5,8 +5,9 @@ cannot collide with wrapper marker names:
 
   * Arrays as native lists:   ``"__ArrayType__": [2, 5, 16]``
   * Hashes as native dicts:   ``"__HashType__": {"k": "v"}``
-  * Scalar param values:      ``"__Val__": 8``
-  * Scalars keep their JSON type (int / float / bool / null / str).
+  * Scalar param values:      ``"__Val__": 8`` (``"Val"`` is accepted too)
+  * Scalars keep their JSON type (int / float / bool / null / str); a
+    string that spells a number is not coerced.
 
 XML support has been factored out to :mod:`genesispy.tools.xml_json`;
 convert legacy XML configs once via ``genesispy-xml2json`` before feeding

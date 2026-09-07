@@ -15,11 +15,16 @@ submodule isn't checked out.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from tests._parity_run import ppi_available
+from genesispy import cache
+from genesispy.cli import parse_args
+from genesispy.manager import Manager
 from genesispy.template.parser import parse_vpy
 from genesispy.tools.vp2vpy import FileTranslator, Helper
 
@@ -32,19 +37,10 @@ GLCTEST_ROOT = (
 )
 
 
-def _ppi_available() -> bool:
-    try:
-        return subprocess.run(
-            ["perl", "-MPPI", "-e", "1"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
-        ).returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-
 
 pytestmark = [
     pytest.mark.skipif(
-        not _ppi_available(),
+        not ppi_available(),
         reason="perl + PPI not on PATH (try `module load ramyx/perl/5.42.0/0.1.0`)",
     ),
     pytest.mark.skipif(
@@ -97,3 +93,54 @@ def test_translate_and_parse(src: Path, helper, tmp_path):
     py = parse_vpy(str(out_path))
     # Compile to surface any syntax errors in the rendered Python.
     compile(py, str(out_path), "exec")
+
+
+# ---------------------------------------------------------------------------
+# Every translated Genesis2 demo must also elaborate.
+# ---------------------------------------------------------------------------
+
+_BIN = Path(__file__).resolve().parents[1] / "bin"
+
+_ELABORATE = [
+    ("regfile", []),
+    ("regfile", ["-p", "FLOP_TYPE=flop"]),
+    ("iterative_wallace_tree", []),
+    ("many_iterative_wallace_trees", []),
+    ("random_logic", []),
+]
+
+
+@pytest.mark.parametrize(
+    "demo,extra", _ELABORATE, ids=lambda x: x if isinstance(x, str) else " ".join(x)
+)
+def test_translated_demo_elaborates(demo: str, extra: list, helper, tmp_path):
+    src_dir = GENESIS2_DEMO_ROOT / demo / "genesis-source"
+    out_src = tmp_path / "src"
+    out_src.mkdir()
+    names = []
+    for src in sorted(src_dir.glob("*.vp")):
+        ft = FileTranslator(helper)
+        result = ft.translate(src.read_text(encoding="utf-8"))
+        assert not result.todos, f"{src}: {result.todos}"
+        (out_src / src.with_suffix(".vpy").name).write_text(result.text, encoding="utf-8")
+        names.append(src.with_suffix(".vpy").name)
+    cfg = tmp_path / "config.json"
+    r = subprocess.run(
+        [str(_BIN / "genesispy-xml2json"), str(GENESIS2_DEMO_ROOT / demo / "config.xml"), str(cfg)],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    argv = ["--top", "top", "--src-path", "src", "--json-cfg", "config.json", "--out-dir", "out",
+            *extra]
+    for n in names:
+        argv += ["--input", n]
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        cache.clear_all()
+        rc = Manager(parse_args(argv)).execute()
+    finally:
+        os.chdir(cwd)
+        cache.clear_all()
+    assert rc == 0
+    assert (tmp_path / "out" / "top.v").exists()

@@ -46,7 +46,12 @@ module `mname`();
 
 
    // Instantiate the first register file
-   //; reg_list = [{'name': 'DataOut', 'width': 32, 'IEO': 'i', 'comment': 'Proc debug data'}, {'name': 'Status',  'width': 8, 'IEO': 'i', 'comment': 'Debug status'}, {'name': 'DataIn',  'width': 32, 'IEO': 'ie', 'comment': 'Returned data'}, {'name': 'SoftReset', 'width': 1, 'IEO': 'o', 'comment': 'Proc Reset signal'}]
+   //; reg_list = [
+   //;     {'name': 'DataOut', 'width': 32, 'IEO': 'i', 'comment': 'Proc debug data'},
+   //;     {'name': 'Status',  'width': 8, 'IEO': 'i', 'comment': 'Debug status'},
+   //;     {'name': 'DataIn',  'width': 32, 'IEO': 'ie', 'comment': 'Returned data'},
+   //;     {'name': 'SoftReset', 'width': 1, 'IEO': 'o', 'comment': 'Proc Reset signal'},
+   //; ]
    //; reg_file = unique_inst('reg_file', 'rf1', IFC_REF=tst_rf1_cfg_ifc_obj, REG_LIST=reg_list)
    `reg_file.instantiate()`
      (

@@ -1,8 +1,9 @@
-# .cfg Python config — lowest external priority; JSON, CLI, and parent kwargs all win against it.
+# .cfg Python config -- lowest external priority; JSON, CLI, and parent kwargs all win against it.
 # Run with:  make gen CFG_CONFIG=config.py
-# Or layered under JSON:  make gen JSON_CONFIG=config.json CFG_CONFIG=config.py
-#                          -> JSON wins where it sets a value, .cfg fills the rest.
+# Every entry names its instance: path.name, the path starting at the top instance (Genesis2 form).
 
-configure("WALLACES_WIDTHS", [3, 7, 11])
-configure("COND", True)
-configure("ParamHash", {"tag": "cfg-driven", "depth": 7})
+WIDTHS = [3, 7, 11]
+configure("top.WALLACES_WIDTHS", WIDTHS)
+for n in WIDTHS:
+    configure(f"top.wallace_{n}.COND", True)
+    configure(f"top.wallace_{n}.ParamHash", {"tag": "cfg-driven", "depth": 7})

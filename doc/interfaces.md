@@ -7,7 +7,7 @@ changing them.
 ## genesispy.reporting
 
 ```python
-# `code` is a stable string identifier on every subclass — assert on it
+# `code` is a stable string identifier on every subclass -- assert on it
 # in tests rather than matching prose. `msg` is the constructor argument
 # preserved verbatim.
 class GenesisPyError(Exception):
@@ -54,12 +54,16 @@ class Manager:
     top: str | None
     debug: int
     src_path: list[str]
-    # Resolved input-template paths, appended by parse_files() (one per
-    # --input after find_file resolution). Consumed together with
-    # cache.INCLUDED_FILES by output_writer.write_file_lists as the
-    # `.depend` prerequisite list.
+    # Resolved template paths: appended by parse_files() (one per --input
+    # after find_file resolution) and by resolve_module_class() for every
+    # module loaded on demand (an --input not yet parsed, or a name found on
+    # src_path). Consumed together with cache.INCLUDED_FILES by
+    # output_writer.write_file_lists as the `.depend` prerequisite list.
     parsed_source_files: list[str]
     inc_path: list[str]
+    # --py-path dirs: prepended to sys.path in __init__ and searched first
+    # by user_config._resolve_pyinclude.
+    py_paths: list[str]
     output_dir: str
     # Scratch directory for generated .py files and (when --gen-raw is set)
     # raw Verilog dumps. Defaults to "./genesis_raw"; overridden by --raw-dir
@@ -86,7 +90,7 @@ class Manager:
     # Every directory touched during elaboration: appended to by
     # find_file() and _resolve_cfg_path(); consumed by
     # output_writer.write_pathfile (the --path output). Plain list
-    # of absolute directory paths in append order, deduped at read time.
+    # of absolute directory paths in append order, deduped on append.
     touched_dirs: list[str]
     # Search path for `.cfg` config files; consumed by
     # output_writer.write_pathfile alongside src_path /
@@ -156,7 +160,7 @@ class Manager:
     def execute(self) -> int: ...
     # Phase gating: --parse-only stops after parse_files(); --gen-only skips
     # parse_files() and instead loads previously generated .py modules from
-    # raw_dir via _discover_generated_modules() — no --input required, but
+    # raw_dir via _discover_generated_modules() -- no --input required, but
     # --top is mandatory and raw_dir must exist (GenesisPyError otherwise).
     # parsed_source_files is empty in gen-only mode, so .depend prerequisites
     # will be absent.
@@ -166,6 +170,11 @@ class Manager:
     def load_top_module(self) -> type: ...
     def gen_verilog(self) -> None: ...
     def flush_outputs(self) -> None: ...
+    # Removes everything _clean_targets names: raw/synth/verif dirs, the
+    # default lists, and the products of --depend, --path, --product /
+    # --vf-out (with side-files), --json-out (all three) and --log. Reads
+    # the same attributes the generating run used, so --clean takes the
+    # same output flags.
     def clean(self) -> None: ...
 
     # Look up a generated module class by name (string form is what
@@ -173,10 +182,21 @@ class Manager:
     #   1. _loaded_classes cache,
     #   2. _generated_modules cache,
     #   3. CLI input_files (parse + emit on demand),
-    #   4. inc_path fallback over every registered input extension
-    #      (mirrors Perl @INC scan in load_base_module).
+    #   4. ["."] + src_path fallback over every registered input extension,
+    #      as Perl's load_base_module does (UniqueModule.pm:3210-3230,
+    #      Manager.pm:1081-1136). inc_path serves include() only.
     # Raises GenesisPyError on miss.
     def resolve_module_class(self, name: str) -> type: ...
+
+    # Module-level helpers shared with gvpy_cli._GvpyManager, which has no
+    # source path and no raw dir but the same search and error contract.
+    # find_file: absolute name as-is, else first hit under `paths`; `record`
+    # receives each hit's directory. ParseError on a miss, naming `paths`.
+    # resolve_cfg_path: absolute or existing relative name as an absolute
+    # path, else first hit under `cfg_path`, else `name` unchanged.
+
+# def find_file(name: str, paths: list[str], record=None) -> str: ...
+# def resolve_cfg_path(name: str, cfg_path: list[str], record=None) -> str: ...
 
     # Class-level synonym (mirrors Perl `synonym(src, target)`):
     # registers `target_name` as a dynamic subclass of `src_name`'s
@@ -187,7 +207,9 @@ class Manager:
     # the original source template name (Perl get_source_name parity).
     # Idempotent: re-registering the same (src, target) pair returns
     # the existing subclass; rebinding `target_name` to a different
-    # `src_name` raises GenesisPyError.
+    # `src_name` raises GenesisPyError, as does a `target_name` that names
+    # a template on the input list or the search paths (Perl
+    # UniqueModule.pm:1758-1764).
     def synonym_class(self, src_name: str, target_name: str) -> type: ...
 ```
 
@@ -203,11 +225,11 @@ class Manager:
 PRIORITY_LABELS: dict[int, str]
 def priority_label(priority: int | None) -> str: ...
 
-
 class ConfigHandler:
     def __init__(self, manager: "Manager") -> None: ...
-    # read_json deep-merges into the in-memory database. Repeated reads
-    # accumulate (matching dicts merge, matching lists concatenate).
+    # read_json validates the HierarchyTop shape (ConfigError names the
+    # offending node) and deep-merges into the in-memory database. Repeated
+    # reads accumulate (matching dicts merge, matching lists concatenate).
     # Legacy XML inputs must be converted via genesispy-xml2json first;
     # ConfigHandler no longer reads or writes XML.
     def read_json(self, path: str) -> None: ...
@@ -215,23 +237,33 @@ class ConfigHandler:
     # Writes a HierarchyTop snapshot of the elaborated module tree at
     # ``top_inst`` -- port of Perl ConfigHandler.pm::WriteXml /
     # extract_stats. Emits three sibling files in dirname(path):
-    # ``path`` (full), ``<stem>-small<ext>`` (no ImmutableParameters),
-    # ``<stem>-tiny<ext>`` (priority >= EXTERNAL_PARAM_FILE only), where
-    # ``<stem>``/``<ext>`` come from splitext(basename(path)). ``top_inst``
-    # is required; passing None raises GenesisPyError.
-    def write_json(self, path: str, top_inst: "UniqueModule") -> None: ...
+    # ``path`` (full: every parameter incl. declared defaults, force-pinned
+    # ones under ImmutableParameters), ``<stem>-small<ext>`` (no
+    # ImmutableParameters), ``<stem>-tiny<ext>`` (priority >=
+    # EXTERNAL_PARAM_FILE only), where ``<stem>``/``<ext>`` come from
+    # splitext(basename(path)). Values are written under ``Val``, which
+    # read_json accepts alongside ``__Val__``. ``top_inst`` is required;
+    # passing None raises GenesisPyError.
+    def write_json(self, path: str, top_inst: "UniqueModule" = None) -> None: ...
 
-    # Legacy name; underlying store is JSON-only. Returns None for absence
-    # OR for an explicit null value; use exists_configuration to
-    # disambiguate.
+    # Legacy name; underlying store is JSON-only. Reads the root node's
+    # Parameters. Returns None for absence OR for an explicit null value;
+    # use exists_configuration to disambiguate.
     def get_param_val(self, name: str) -> object | None: ...
-    def get_cfg_param_val(self, name: str) -> object | None: ...
     def get_cmdln_param_val(self, name: str) -> object | None: ...
 
+    # The .cfg API addresses a parameter as `path.name` (at least one \w+
+    # segment before the name; the first is the top's instance name), as
+    # Genesis2 does (ConfigHandler.pm:1349-1356); a bare name raises
+    # ConfigError. With `instance_path` (the engine's form) `name` is bare
+    # and the tuple is the path. Scoped overrides (`--parameter
+    # top.child.x=2`, `configure("top.child.x", v)`) match by exact-path
+    # equality, JSON Parameters are read from the node at that path only,
+    # and a bare `--parameter NAME=VALUE` applies at every path. A scoped
+    # CMD_LINE match wins outright. Every source that names the parameter
+    # is marked consumed for report_unused. get_configuration raises
+    # ConfigError when no source defines the parameter (ConfigHandler.pm:1512).
     def configure(self, name: str, value: object, **flags) -> None: ...
-    # `instance_path`: optional tuple of segment names (root..self) used
-    # to match hierarchical CLI overrides (`--parameter top.child.x=2`).
-    # Match is exact-path equality; scoped match wins outright at CMD_LINE.
     def get_configuration(
         self, name: str, *, instance_path: tuple[str, ...] | None = None,
     ) -> object | None: ...
@@ -252,10 +284,24 @@ class ConfigHandler:
     # UniqueModule._scoped_*  helpers (cross-class internal access) and by
     # tests; mutating the returned dict does not affect the ConfigHandler.
     def cmdln_db_snapshot(self) -> dict[str, dict]: ...
-    def cfg_db_snapshot(self) -> dict[str, dict]: ...
     def cmdln_scoped_db_snapshot(
         self,
     ) -> dict[tuple[tuple[str, ...], str], dict]: ...
+    # Every path-addressed value merged: JSON parameters (lowest), .cfg
+    # scoped, command-line scoped (highest). Feeds
+    # UniqueModule._scoped_subtree_signature, so a JSON value on one
+    # instance keeps it from deduplicating onto a sibling without it.
+    def scoped_db_snapshot(self) -> dict[tuple[tuple[str, ...], str], dict]: ...
+    # {name: value} of the command-line and .cfg scoped overrides addressed
+    # to exactly instance_path; marks them (and any bare --parameter of the
+    # same name) consumed. Applied by UniqueModule._resolve_params before
+    # the child elaborates.
+    def scoped_overrides_for(self, instance_path: tuple[str, ...]) -> dict[str, object]: ...
+    # One message per command-line / .cfg override no lookup consumed.
+    # Manager.gen_verilog emits each through reporting.warning after
+    # elaboration (Perl Finalize dies instead). JSON parameters are not
+    # checked, as in Perl.
+    def report_unused(self) -> list[str]: ...
 
     # Variant returning ``(value, priority)`` so callers can stamp the
     # winning source's priority onto a UniqueModule param. Used by
@@ -268,8 +314,7 @@ class ConfigHandler:
 
     # Module uniquification style ('numeric' | 'param'); read by
     # UniqueModule.generate to dispatch unique_inst vs unique_inst_param.
-    unq_style: str  # default 'numeric', from --unq-style CLI flag
-    def set_unq_style(self, style: str) -> None: ...
+    unq_style: str  # default 'numeric', from --unq-style CLI flag (validated in __init__)
 ```
 
 ## genesispy.unique_module.UniqueModule
@@ -297,13 +342,15 @@ class UniqueModule:
                       parent: "UniqueModule") -> "UniqueModule": ...
 
     # Source instance for clones; None on non-clones. Set by
-    # _new_as_clone, read by ConfigHandler.extract_stats to emit
-    # CloneOf.InstancePath in --json-out snapshots.
+    # _new_as_clone, read by config_handler.extract_stats (module-level
+    # function) to emit CloneOf.InstancePath in --json-out snapshots.
     _clone_of: "UniqueModule | None"
 
-    # parameters
-    def define_param(self, name: str, default=None, **flags) -> None: ...
-    # parameter(): Perl-compat kwargs (UniqueModule.pm:1981) — force/doc
+    # parameters. `name` must match \w+ (ParameterError otherwise): a dotted
+    # name would collide with the `-p PATH.NAME` grammar.
+    def define_param(self, name: str, default=None, doc: str | None = None,
+                     type: str | None = None, **flags) -> None: ...
+    # parameter(): Perl-compat kwargs (UniqueModule.pm:1981) -- force/doc
     # plus min/max/step XOR list (range guard) plus opt store-only.
     # Range checked at register-time AND on every subsequent override.
     #
@@ -339,6 +386,13 @@ class UniqueModule:
         min: object = None, max: object = None,
         step: object = None, list_: object = None,
     ) -> None: ...
+    # Writes (define_param, parameter, override_param, force_param) are
+    # allowed until the body has run, and not on a clone or on the parent
+    # while a child elaborates: ParameterError otherwise (UniqueModule.pm:833,
+    # 1246, 314-326). Declaring a name twice is fatal; a parent's keyword
+    # (override_param) does not count as a declaration.
+    # get_param: ParameterError for an unknown name and for a name only a
+    # parent's keyword set (UniqueModule.pm:2296).
     def get_param(self, name: str) -> object: ...
     def override_param(self, name: str, value: object) -> None: ...
 
@@ -358,7 +412,8 @@ class UniqueModule:
     # When the instance sits on a scoped-override path, appends _unqN.
     def unique_inst_param(self, module_cls: type | str, inst_name: str,
                           **params) -> "UniqueModule": ...
-    def clone_inst(self, src_inst: "UniqueModule",
+    # src_inst may be the instance or its dotted instance path (get_instance_obj).
+    def clone_inst(self, src_inst: "UniqueModule | str",
                    new_name: str) -> "UniqueModule": ...
     # ununique_inst preserves the bare base name on first call (no `_unqN`).
     # Second call for the same base name:
@@ -376,12 +431,13 @@ class UniqueModule:
                       **params) -> "UniqueModule": ...
     def synonym(self, name: str) -> None: ...
 
-    # Forced override (pinned, cannot be re-overridden by parameter()).
+    # Forced override (pinned, cannot be re-overridden by parameter()). A
+    # second force of the same name is fatal (UniqueModule.pm:2443).
     def force_param(self, name: str, value: object) -> None: ...
     # {name: value} for all parameters (Perl get_mod_param_list, :2691).
     def get_mod_param_list(self) -> dict[str, object]: ...
     # Perl-compat accessors (UniqueModule.pm:496/:550/:515).
-    def exists_param(self, name: str) -> bool: ...
+    def exists_param(self, name: str) -> bool: ...   # declared by the body (Perl 'Used')
     def get_top_param(self, name: str) -> object: ...
     def list_params(self) -> list[str]: ...  # sorted names, distinct from get_mod_param_list
 
@@ -393,10 +449,11 @@ class UniqueModule:
                         inst_name: str, **params) -> "UniqueModule": ...
 
     # name/path
-    def get_module_name(self) -> str: ...
-    def get_unique_module_name(self) -> str: ...
+    def get_module_name(self) -> str: ...        # unique (emitted) name, as in Perl
+    def get_unique_module_name(self) -> str: ... # same value
+    def get_base_name(self) -> str: ...          # template name
     def get_instance_name(self) -> str: ...
-    def get_instance_path(self) -> str: ...
+    def get_instance_path(self) -> str: ...      # "."-joined from the top's name
     def get_parent(self) -> "UniqueModule | None": ...
     def get_top(self) -> "UniqueModule": ...
     # Shallow copy of synonym names registered via synonym(); read-only
@@ -571,7 +628,6 @@ def build_extension_map(pairs: Iterable[tuple[str, str]]) -> dict[str, str]: ...
 
 # Sorted list of accepted input extensions; the `allowed` argument threaded
 # into parse_vpy / write_module.
-def allowed_inputs(extension_map: dict[str, str]) -> list[str]: ...
 ```
 
 ## genesispy.template.emitter
@@ -583,7 +639,6 @@ def allowed_inputs(extension_map: dict[str, str]) -> list[str]: ...
 # the second class factory, which has no _FOOTER of its own -- appends the
 # same tail, so the two cannot drift.
 CLASS_BODY_TAIL: str
-
 
 def write_module(
     vpy_path: str,
@@ -623,9 +678,9 @@ def emit_module(
 
 ## genesispy.template.aliases
 
-Single source of truth for the Genesis2 bare-name alias table. Two consumers must agree: the
-emitter's generated prelude and `user_config._include`'s exec namespace. Both are produced here,
-so they cannot drift.
+Single source of truth for the Genesis2 bare-name alias table. Three consumers must agree: the
+emitter's generated prelude, `user_config._include`'s exec namespace and the gvpy class factory
+(`gvpy_cli._build_class_from_vpy`). All three are produced here, so they cannot drift.
 
 ```python
 # (bare_name, UniqueModule method name) pairs for the plain forwards.
@@ -776,10 +831,23 @@ def context(manager: "Manager", module: "UniqueModule") -> Iterator[None]: ...
 def _include(path: str) -> None: ...
 ```
 
-The `.cfg` sandbox helpers (`_configure`, `_get_configuration`, `_exists_configuration`,
-`_remove_configuration`, `_print_configuration`, `_get_top_name`, `_get_synthtop_path`, `error`)
-are injected into `.cfg` exec namespaces under their unprefixed names by `ConfigHandler.read_cfg`.
-User-facing list: user-guide section 11.6.
+`ConfigHandler.read_cfg` binds its own bound methods (`configure`, `get_configuration`,
+`exists_configuration`, `remove_configuration`, `print_configuration`, `include` ->
+`_include_dispatch`) plus `_get_top_name`, `_get_synthtop_path`, `reporting.error` and
+`reporting.warning` into the `.cfg` exec namespace under those names; the `_configure` ...
+proxies above are the `.vpy`-side equivalents. User-facing list: user-guide section 11.6.
+
+```python
+# pyinclude: exec a raw .py into the namespace `ns` (the calling code's globals).
+def _make_pyinclude(ns: dict) -> Callable[[str], None]: ...
+# Deprecated spelling of the same, warning once per process.
+def _make_pinclude(ns: dict) -> Callable[[str], None]: ...
+# As-is when it exists from cwd, else the first hit under py_paths + inc_path;
+# ParseError (via find_file) naming every candidate otherwise.
+def _resolve_pyinclude(path: str) -> str: ...
+# Clears the compiled-body cache and the pinclude warning; called by cache.clear_all.
+def _reset_pyinclude_state() -> None: ...
+```
 
 ## genesispy.output_writer
 
@@ -896,7 +964,9 @@ OUTFILE_ORDER: List[str]
 # Append order; deduped at read time. Cleared by clear_all().
 INCLUDED_FILES: List[str]
 
-
+# Also clears template.runtime's line maps, user_config's pyinclude state
+# and the reporting log tee (set_log_file(None)); tests/conftest.py calls
+# it before and after every test.
 def clear_all() -> None: ...
 def next_derivation(base_name: str) -> int: ...
 def register(unique_name: str, instance: "UniqueModule") -> None: ...
@@ -961,4 +1031,3 @@ def convert(source: str, *, strict: bool = True) -> tuple[str, list[Issue]]:
     display. The companion CLI is `genesispy-jinja2j2` (entry point:
     `tools.jinja2j2.main`)."""
 ```
-

@@ -12,9 +12,11 @@ exceptions raised from elaboration can be remapped to .vpy coordinates.
 
 from __future__ import annotations
 
+import keyword
 import os
 from typing import Iterable, Optional
 
+from ..reporting import ParseError
 from .aliases import alias_prelude_source
 from .parser import parse_vpy
 from . import runtime
@@ -60,13 +62,22 @@ _FOOTER = CLASS_BODY_TAIL + (
 )
 
 
-def _module_name_from_path(vpy_path: str) -> str:
+def module_name_from_path(vpy_path: str) -> str:
+    """The generated class and ``.py`` stem for a template path: the file
+    stem with every non-identifier character replaced by ``_``. Raises
+    ParseError when the result is a Python keyword, since it becomes a
+    ``class`` name."""
     stem = os.path.splitext(os.path.basename(vpy_path))[0]
-    # Sanitize: Python identifier-safe.
     safe = "".join(c if c.isalnum() or c == "_" else "_" for c in stem)
     if safe and safe[0].isdigit():
         safe = "_" + safe
-    return safe or "GeneratedModule"
+    safe = safe or "GeneratedModule"
+    if keyword.iskeyword(safe):
+        raise ParseError(
+            f"{vpy_path}: stem {stem!r} is a Python keyword and cannot name a module; "
+            "rename the file"
+        )
+    return safe
 
 
 def emit_module(
@@ -86,7 +97,7 @@ def emit_module(
     (``UniqueModule._flush_outfile`` / ``synonym``) know which Verilog
     extension to emit without consulting the Manager.
     """
-    cls_name = module_name or _module_name_from_path(vpy_path)
+    cls_name = module_name or module_name_from_path(vpy_path)
     indent = "        "  # 8 spaces
 
     if parsed_body:
@@ -128,7 +139,7 @@ def write_module(
     body = parse_vpy(vpy_path, allowed, syntax=syntax, comment=comment)
     src = emit_module(vpy_path, body, output_suffix=output_suffix)
 
-    stem = _module_name_from_path(vpy_path)
+    stem = module_name_from_path(vpy_path)
     out_path = os.path.abspath(os.path.join(output_dir, f"{stem}.py"))
     with open(out_path, "w", encoding="utf-8") as fh:
         fh.write(src)

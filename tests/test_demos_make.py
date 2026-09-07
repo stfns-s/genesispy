@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._stale import ignore_stale
 
 DEMOS = Path(__file__).resolve().parents[1] / "demos"
 DEMO_NAMES = [
@@ -25,19 +26,6 @@ DEMO_NAMES = [
     "include_examples",
     "pyinclude_examples",
 ]
-
-# Build artefacts that must not be copied into the staging directory.
-# A copied stale product is newer than the sources, causing make to skip
-# regeneration and assert against the copied (not freshly built) files.
-# *.flags are the flag-stamp files written by genesispy.mk (C1); glob
-# patterns are accepted by shutil.ignore_patterns.
-_STALE_PATTERNS = (
-    "genesis_synth", "genesis_verif", "genesis_raw", "genesis_work",
-    "obj_dir", "xcelium.d", "xrun.history", "xrun.log",
-    "genesis_vlog.vf", "genesis_vlog.j2.vf", "*.flags",
-    "depend.list", "genesis.log", "genesis_clean.cmd",
-)
-
 
 def _have_make() -> bool:
     return shutil.which("make") is not None
@@ -58,7 +46,7 @@ def demo_copy(tmp_path: Path, request) -> Path:
     name = request.param
     src = DEMOS / name
     dst = tmp_path / name
-    shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*_STALE_PATTERNS))
+    shutil.copytree(src, dst, ignore=ignore_stale)
     shutil.copy(DEMOS / "genesispy.mk", tmp_path / "genesispy.mk")
     return dst
 
@@ -202,7 +190,7 @@ def test_generation_examples_make_vlint(tmp_path: Path) -> None:
 def _copy_many_wallace(tmp_path: Path) -> Path:
     src = DEMOS / "many_iterative_wallace_trees"
     dst = tmp_path / "many_iterative_wallace_trees"
-    shutil.copytree(src, dst)
+    shutil.copytree(src, dst, ignore=ignore_stale)
     shutil.copy(DEMOS / "genesispy.mk", tmp_path / "genesispy.mk")
     return dst
 
@@ -277,24 +265,42 @@ def test_make_gen_rebuilds_on_included_leaf_edit(demo_copy: Path, leaf: str) -> 
     )
 
 
+def _make_gen(dst: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+    r = subprocess.run(
+        ["make", "gen", *extra], cwd=dst, capture_output=True, text=True, timeout=300,
+    )
+    assert r.returncode == 0, f"make gen {extra} failed:\n{r.stdout}\n{r.stderr}"
+    return r
+
+
 def test_make_gen_no_spurious_rebuild(tmp_path: Path) -> None:
-    """Identical consecutive make gen invocations must not re-run the genesispy recipe."""
+    """Identical consecutive make gen invocations must not re-run the genesispy recipe.
+
+    genesispy writes are idempotent (content unchanged -> mtime stable), so the
+    recipe echo in make's stdout is the only reliable signal; the product
+    mtime is unchanged whether or not the recipe ran.
+    """
     dst = _copy_many_wallace(tmp_path)
-
-    r1 = subprocess.run(
-        ["make", "gen"], cwd=dst, capture_output=True, text=True, timeout=300,
+    r1 = _make_gen(dst)
+    assert "genesispy" in r1.stdout, r1.stdout
+    r2 = _make_gen(dst)
+    assert "genesispy" not in r2.stdout, (
+        f"genesispy recipe ran again on identical make gen\n{r2.stdout}"
     )
-    assert r1.returncode == 0, f"make gen failed:\n{r1.stdout}\n{r1.stderr}"
-    vf_mtime = (dst / "genesis_vlog.vf").stat().st_mtime
 
-    # A second identical make gen must not re-run the genesispy recipe: the
-    # product file's mtime must not change (flag stamp content is unchanged,
-    # so the stamp's mtime is also unchanged, so VLOG_VF stays up to date).
-    r2 = subprocess.run(
-        ["make", "gen"], cwd=dst, capture_output=True, text=True, timeout=300,
-    )
-    assert r2.returncode == 0, f"second make gen failed:\n{r2.stdout}\n{r2.stderr}"
-    vf_mtime2 = (dst / "genesis_vlog.vf").stat().st_mtime
-    assert vf_mtime2 == vf_mtime, (
-        "genesispy recipe ran again on identical make gen (mtime changed)"
+
+def test_make_gen_reaches_steady_state_after_flag_change(tmp_path: Path) -> None:
+    """A flag change re-runs the recipe once; the next identical call must not.
+
+    The generator leaves an unchanged genesis_vlog.vf with its old mtime, so
+    without the rule touching its target the stamp stays newer forever.
+    """
+    dst = _copy_many_wallace(tmp_path)
+    _make_gen(dst)
+    flag = "EXTRA_FLAGS=--debug 1"
+    r = _make_gen(dst, flag)
+    assert "genesispy" in r.stdout, r.stdout
+    r = _make_gen(dst, flag)
+    assert "genesispy" not in r.stdout, (
+        f"genesispy recipe ran again after the flag change had been built\n{r.stdout}"
     )

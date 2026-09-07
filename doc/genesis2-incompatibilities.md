@@ -16,6 +16,7 @@ Genesis2 used Perl `Data::Dumper` output hashed with `Digest::SHA`.
 
 The SHA-256 is used as a cache key, not as a visible name component.
 Generated unique-module names differ in format between the two implementations:
+
 - `unique_inst` (numeric style): `Foo_unq1`, `Foo_unq2`, ...
 - `unique_inst_param` (param style): `Foo_KEY_VAL[_KEY_VAL...]`; non-word values use a short-digest
   pair (`KEY_<8hexchars>`); on scoped-override paths a `_unqN` counter is appended.
@@ -31,7 +32,7 @@ uniques by structural position before diffing the emitted Verilog.
 genesispy core is JSON-only. The `--xml`/`--xmlout` CLI flags are removed; `xml_io.py` is gone. Legacy
 Genesis2 XML configs convert via the standalone helpers:
 
-```
+```sh
 genesispy-xml2json in.xml out.json
 genesispy-json2xml in.json out.xml   # symmetry; lossy on plural-collapse
 ```
@@ -51,7 +52,7 @@ match, even if their explicit overrides differ -- e.g. `unique_inst(Foo)` and `u
 would emit both as separate unique modules even though the bodies are byte-identical.
 
 The mechanics (two-stage pre-key/post-key cache, scoped-subtree signature, journaled rollback of the
-discarded child's cache writes) live in [code-structure.md](./code-structure.md) §5.
+discarded child's cache writes) live in [code-structure.md](./code-structure.md) section 5.
 
 The parity test suite compares emitted Verilog as a *set* of files rather than a multiset, so the extra Perl
 duplicates do not register as a parity failure.
@@ -61,5 +62,20 @@ duplicates do not register as a parity failure.
 **Where:** `config_handler.py:write_json`
 
 Perl emits `FILE`, `small_<basename>`, `tiny_<basename>` (underscore prefix). genesispy emits
-`FILE`, `<stem>-small<ext>`, `<stem>-tiny<ext>` (suffix on the stem). Content unchanged; filenames only.
+`FILE`, `<stem>-small<ext>`, `<stem>-tiny<ext>` (suffix on the stem). Filenames only, with one
+content difference: `ImmutableParameters` holds the force-pinned parameters, where Perl fills it by
+inheritance recursion (`ConfigHandler.pm:683-708`).
 
+## 5. Command-line overrides: bare names, unused overrides warn
+
+**Where:** `config_handler.py:_parse_cmdln_param`, `report_unused`
+
+- A bare `-p W=9` is accepted and applies to every instance whose body reads `W`; Genesis2
+  requires `path.name` (`ConfigHandler.pm:364`). The dotted form works in both engines.
+- A command-line or `.cfg` override that no instance reads is reported after elaboration as
+  `warning: override NAME was never used` and the run exits 0; Genesis2's `Finalize` dies
+  (`ConfigHandler.pm:436-442`). JSON parameters are not checked in either engine.
+
+The `.cfg` API (`configure`, `get_configuration`, `exists_configuration`, `remove_configuration`)
+requires `path.name`, and `get_configuration` on a name nothing set is fatal, as in Genesis2
+(`ConfigHandler.pm:1349-1356, 1512`).

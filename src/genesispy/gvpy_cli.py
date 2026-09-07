@@ -28,9 +28,10 @@ from typing import Any, Iterable
 
 from genesispy import __version__, cache, user_config
 from genesispy import reporting
-from genesispy.cli import _add_deprecated_alias, _comment_arg, _output_comment_arg
+from genesispy.cli_common import _add_deprecated_alias, _comment_arg, _output_comment_arg
 from genesispy.config_handler import ConfigHandler
-from genesispy.reporting import ParameterError
+from genesispy.manager import find_file, resolve_cfg_path
+from genesispy.reporting import GenesisPyError, ParameterError
 from genesispy.extensions import build_extension_map, parse_extension_spec
 from genesispy.template import emitter
 from genesispy.template.aliases import alias_prelude_source
@@ -91,25 +92,33 @@ class _GvpyManager:
         self.depend_file: str | None = None
         self.touched_dirs: list[str] = []
         self.cfg_handler = ConfigHandler(self)
-        self._synonym_classes: dict[tuple[str, str], type] = {}
+        # Module name -> class, for templates built from disk and for
+        # synonyms; the same registry Manager keeps, so a synonym registered
+        # in one body resolves in a later string-named generate().
+        self._loaded_classes: dict[str, type] = {}
 
-    def _resolve_cfg_path(self, name: str) -> str | None:
-        """No-op: gvpy does not invoke ConfigHandler.read_cfg."""
-        return None
+    def _record_dir(self, d: str) -> None:
+        if d and d not in self.touched_dirs:
+            self.touched_dirs.append(d)
+
+    def _resolve_cfg_path(self, name: str) -> str:
+        return resolve_cfg_path(name, self.cfg_path, self._record_dir)
 
     def find_file(self, name: str, paths: list[str] | None = None) -> str:
-        # Diverges from Manager.find_file: cwd always appended, inc_path-only,
-        # raises FileNotFoundError (gvpy main's handler keys off built-ins).
-        if os.path.isabs(name):
-            if os.path.exists(name):
-                return name
-            raise FileNotFoundError(name)
-        search = paths if paths is not None else self.inc_path
-        for d in [*search, "."]:
-            cand = os.path.join(d, name)
-            if os.path.exists(cand):
-                return os.path.abspath(cand)
-        raise FileNotFoundError(name)
+        """Same search as Manager.find_file over inc_path + ".": gvpy has no
+        source path. Raises ParseError on a miss."""
+        if paths is None:
+            paths = [*self.inc_path, "."]
+        return find_file(name, paths, self._record_dir)
+
+    def _template_for(self, name: str) -> str | None:
+        """The template file ``name`` would resolve to, or None."""
+        for ext in list(self.extension_map.keys()) + [".gvpy"]:
+            try:
+                return self.find_file(name + ext)
+            except GenesisPyError:
+                continue
+        return None
 
     def resolve_module_class(self, name: str) -> type:
         """Locate a sibling template by name and produce a UniqueModule class.
@@ -118,31 +127,46 @@ class _GvpyManager:
         emission: we parse and exec the body directly into a class body.
         Searches every input extension registered in
         :attr:`self.extension_map`, plus ``.gvpy`` as a gvpy-only fallback.
+        Raises GenesisPyError on a miss.
         """
-        candidates = list(self.extension_map.keys()) + [".gvpy"]
-        for ext in candidates:
-            try:
-                path = self.find_file(name + ext)
-            except FileNotFoundError:
-                continue
-            return _build_class_from_vpy(
-                name, path, self.extension_map,
-                syntax=self.syntax, comment=self.source_comment,
+        cls = self._loaded_classes.get(name)
+        if cls is not None:
+            return cls
+        path = self._template_for(name)
+        if path is None:
+            candidates = list(self.extension_map.keys()) + [".gvpy"]
+            raise GenesisPyError(
+                f"Cannot resolve module {name!r}: no {name}{{{','.join(candidates)}}} found"
             )
-        raise RuntimeError(
-            f"Cannot resolve module {name!r}: no {name}{{{','.join(candidates)}}} found"
+        cls = _build_class_from_vpy(
+            name, path, self.extension_map,
+            syntax=self.syntax, comment=self.source_comment,
         )
+        self._loaded_classes[name] = cls
+        return cls
 
     def synonym_class(self, src_name: str, target_name: str) -> type:
-        # Cache per (src, target): same call returns the same class so
-        # ununique_inst doesn't re-allocate `_unqN` on every visit.
-        key = (src_name, target_name)
-        existing = self._synonym_classes.get(key)
-        if existing is not None:
-            return existing
+        """Register ``target_name`` as a dynamic subclass of ``src_name``
+        (same contract as Manager.synonym_class): idempotent for the same
+        pair, GenesisPyError when the target is bound to a different class
+        or names an existing template."""
         src_cls = self.resolve_module_class(src_name)
+        existing = self._loaded_classes.get(target_name)
+        if existing is not None:
+            if existing is src_cls or issubclass(existing, src_cls):
+                return existing
+            raise GenesisPyError(
+                f"synonym_class: cannot alias {target_name!r} to {src_name!r}; "
+                f"{target_name!r} already registered to a different class."
+            )
+        shadowed = self._template_for(target_name)
+        if shadowed is not None:
+            raise GenesisPyError(
+                f"synonym_class: cannot alias {target_name!r} to {src_name!r}; "
+                f"a module template named {target_name!r} already exists: {shadowed}"
+            )
         new_cls = type(target_name, (src_cls,), {"_synonym_for": src_name})
-        self._synonym_classes[key] = new_cls
+        self._loaded_classes[target_name] = new_cls
         return new_cls
 
 
@@ -237,7 +261,7 @@ def _strict_overrides(inst_for_cfg: UniqueModule, emit_fn) -> dict[str, Any]:
         return None
 
     def parameter(name=None, val=None, **kw):
-        """Accept both gvpy ``parameter(name=, val=)`` and genesispy ``parameter(name, default)``."""
+        """Accept gvpy ``parameter(name=, val=)`` and genesispy ``parameter(name, default)``."""
         n = kw.get("name", name)
         v = kw.get("val", val)
         cfg = inst_for_cfg._manager.cfg_handler
@@ -245,9 +269,8 @@ def _strict_overrides(inst_for_cfg: UniqueModule, emit_fn) -> dict[str, Any]:
             return v
         # Honour scoped overrides; distinguish explicit None from "not configured".
         path = inst_for_cfg._instance_path_segments()
-        if cfg.exists_configuration(n, instance_path=path):
-            return cfg.get_configuration(n, instance_path=path)
-        return v
+        value, prio = cfg.get_configuration_with_priority(n, instance_path=path)
+        return v if prio is None else value
 
     return {
         "generate": generate,
@@ -333,7 +356,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     _add_deprecated_alias(
         parser, "--comment", "--source-comment", dest="source_comment",
-        kind="store", type=_comment_arg, prog=PROG,
+        kind="store", arg_type=_comment_arg, prog=PROG,
     )
     parser.add_argument(
         "--output-comment",
@@ -423,7 +446,7 @@ def main(argv: list[str] | None = None) -> int:
     for fname in args.files:
         try:
             _process(fname, mgr, args)
-        except Exception as exc:  # surface the source location
+        except Exception as exc:  # noqa: BLE001 -- report and remap any user-code failure
             reporting.error(
                 f"{PROG}: error processing {fname}: {exc}", fatal=False
             )
@@ -463,6 +486,7 @@ def _process(
 
     with user_config.context(mgr, inst):
         inst.execute()
+    inst._lock_params()
 
     out = inst._outfile_handle.getvalue() if inst._outfile_handle else ""
     sys.stdout.write(out)
@@ -470,10 +494,10 @@ def _process(
 
 def _stem(path: str, extra: Iterable[str] = ()) -> str:
     base = os.path.basename(path)
-    # Built-in/legacy gvpy extensions stripped unconditionally. ``extra`` is
-    # used by callers that know about user-registered extensions (e.g. from
-    # an extension_map).
-    candidates = list(extra) + [".vpy", ".gvpy", ".vp", ".gvp", ".svpy", ".svp"]
+    # gvpy's own extensions are stripped unconditionally. ``extra`` is used by
+    # callers that know about user-registered extensions (an extension_map).
+    # The Perl-era .vp/.gvp/.svp are not listed: parse_vpy rejects them.
+    candidates = list(extra) + [".vpy", ".gvpy", ".svpy"]
     for ext in candidates:
         if base.endswith(ext):
             return base[: -len(ext)]

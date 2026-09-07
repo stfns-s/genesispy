@@ -61,6 +61,22 @@ def test_xml_to_json_scalar_typing(tmp_path):
     assert by_name["OPTS"]["__HashType__"] == {"a": 1, "b": 2}
 
 
+def test_xml_to_json_keeps_non_canonical_text(tmp_path):
+    """XML::Simple handed Genesis2 the text; only a lossless number is typed."""
+    src = tmp_path / "in.xml"
+    src.write_text(
+        "<config><Parameters>"
+        "<Parameter><Name>A</Name><Val>010</Val></Parameter>"
+        "<Parameter><Name>B</Name><Val>1e3</Val></Parameter>"
+        "<Parameter><Name>C</Name><Val>8</Val></Parameter>"
+        "</Parameters></config>\n"
+    )
+    dst = tmp_path / "out.json"
+    xml_json.xml_to_json(str(src), str(dst))
+    by_name = {p["Name"]: p["__Val__"] for p in json.loads(dst.read_text())["config"]["Parameters"]}
+    assert by_name == {"A": "010", "B": "1e3", "C": 8}
+
+
 def test_xml_json_idempotent_round_trip(tmp_path):
     """xml -> json -> xml -> json should reach a fixed point on the JSON side
     (XML side is lossy on the plural-collapse wrapper, which is documented)."""
@@ -141,3 +157,29 @@ def test_native_hash_raises_on_malformed_hashitem():
     bad = {"HashItem": [{"Val": "orphan"}]}  # no "Key"
     with pytest.raises(ValueError):
         _native_hash(bad)
+
+
+def test_text_only_root_becomes_a_scalar(tmp_path):
+    src = tmp_path / "t.xml"
+    src.write_text("<top>hello</top>\n")
+    dst = tmp_path / "t.json"
+    xml_json.xml_to_json(str(src), str(dst))
+    assert json.loads(dst.read_text()) == {"top": "hello"}
+
+
+def test_main_takes_bare_arguments(tmp_path):
+    src = tmp_path / "c.xml"
+    src.write_text("<config><Val>8</Val></config>\n")
+    dst = tmp_path / "c.json"
+    assert xml_json.main_xml2json([str(src), str(dst)]) == 0
+    assert dst.exists()
+    back = tmp_path / "back.xml"
+    assert xml_json.main_json2xml([str(dst), str(back)]) == 0
+    assert back.exists()
+
+
+def test_missing_inputs_raise_file_not_found(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        xml_json.xml_to_json(str(tmp_path / "nope.xml"), str(tmp_path / "o.json"))
+    with pytest.raises(FileNotFoundError):
+        xml_json.json_to_xml(str(tmp_path / "nope.json"), str(tmp_path / "o.xml"))

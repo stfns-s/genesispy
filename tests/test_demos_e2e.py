@@ -25,12 +25,6 @@ from genesispy.manager import Manager
 DEMOS = Path(__file__).resolve().parents[1] / "demos"
 
 
-@pytest.fixture(autouse=True)
-def _reset_cache():
-    cache.clear_all()
-    yield
-    cache.clear_all()
-
 
 SYNTAXES = ("genesis", "j2")
 

@@ -18,7 +18,19 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - run: pip install ".[dev]"
+      - name: Install perl PPI (vp2vpy helper)
+        run: sudo apt-get update && sudo apt-get install -y libppi-perl && perl -MPPI -e 1
+      - name: ruff
+        run: ruff check src tests
       - run: PYTHONPATH=src pytest tests/ -v
+      - name: vp2vpy tests must run, not skip
+        run: |
+          PYTHONPATH=src pytest tests/test_vp2vpy_units.py -q -rs 2>&1 | tee vp2vpy.log
+          test "${PIPESTATUS[0]}" -eq 0
+          if grep -q "SKIPPED" vp2vpy.log; then
+            echo "vp2vpy unit tests skipped: PPI not reachable" >&2
+            exit 1
+          fi
 
   demos:
     needs: pytest
@@ -38,7 +50,7 @@ jobs:
       GEN_VLINT_DEMOS: demos/generation_examples
       GVPY_DEMO: demos/gvpy
       # Own Makefile and build layout (build/<top>/default/), gen + pylint +
-      # vlint. Its `make test` sweeps ~124 simulator configurations and is not
+      # vlint. Its `make test` sweeps a few hundred simulator configurations and is not
       # run here.
       DSP_DEMO: demos/dsp
       VLINT_DEMOS: >-

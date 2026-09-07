@@ -6,8 +6,8 @@ demos in ``test_demos_make.py``, whose assertions all assume
 ``genesis_synth/`` and ``genesis_vlog.vf``.
 
 ``make test`` and ``make test-smoke`` are deliberately not run here: they
-sweep roughly 124 configurations through a simulator. That is the demo's own
-gate, run by hand from ``demos/dsp``.
+sweep every configuration in ``verif/sweeps.mk`` (a few hundred) through a
+simulator. That is the demo's own gate, run by hand from ``demos/dsp``.
 """
 
 from __future__ import annotations
@@ -19,16 +19,16 @@ from pathlib import Path
 
 import pytest
 
+from tests._stale import ignore_stale
+
 
 REPO = Path(__file__).resolve().parents[1]
 DEMO = REPO / "demos" / "dsp"
-TOPS = ("iir", "intg")
+TOPS = ("iir", "intg", "spec_mux")
 
 # Build artefacts that must not reach the staging copy: a copied product is
 # newer than the sources, so make skips the recipe and the assertions then
 # check the copy rather than a fresh build.
-_STALE_PATTERNS = ("build", "__pycache__", "genesis_raw", "tmp")
-
 pytestmark = pytest.mark.skipif(
     shutil.which("make") is None, reason="`make` not in PATH"
 )
@@ -37,7 +37,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture
 def demo(tmp_path: Path) -> Path:
     dst = tmp_path / "dsp"
-    shutil.copytree(DEMO, dst, ignore=shutil.ignore_patterns(*_STALE_PATTERNS))
+    shutil.copytree(DEMO, dst, ignore=ignore_stale)
     return dst
 
 

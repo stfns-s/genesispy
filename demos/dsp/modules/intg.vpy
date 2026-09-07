@@ -111,9 +111,9 @@ module `mname` #(
             2'b11 : acnxt = acsum[AW-1:0];
             endcase
         onxt  = acnxt[AW-1:AW-OW];
-        liml = lim != 'd0 && (onxt < -lim);
+        liml = lim != {OW{1'b0}} && (onxt < -lim);
         if ( liml ) acnxt = liml_val;
-        limh = lim != 'd0 && (onxt >  lim);
+        limh = lim != {OW{1'b0}} && (onxt >  lim);
         if ( limh ) acnxt = limh_val;
     end
 

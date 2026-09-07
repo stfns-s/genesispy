@@ -42,6 +42,10 @@ genesis_vlog.vf
 genesis_vlog.j2.vf
 genesis_vlog_ex*.vf
 *.vf.flags
+# Default product lists and the clean script, when written at a demo root.
+*.vlist
+*.vlist.verif
+genesispy_clean.sh
 # gvpy demo outputs (bin/gvpy writes to stdout; the Makefile redirects).
 demos/gvpy/example.out.v
 demos/gvpy/example.j2.out.v
@@ -67,6 +71,10 @@ transcript
 vsim.wlf
 # Verilator
 obj_dir/
+# Icarus
+*.vvp
+# `make sim DUMP=1` (dsp)
+dump.vcd
 genesispy.log
 # dsp scratch area (its build/ and genesis_raw/ are covered above).
 demos/dsp/tmp/

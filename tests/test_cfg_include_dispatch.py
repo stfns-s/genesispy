@@ -90,13 +90,13 @@ def test_include_dispatches_uppercase_extension(tmp_path):
 
 def test_include_dispatches_cfg(tmp_path):
     inner_cfg = tmp_path / "inner.cfg"
-    inner_cfg.write_text("configure('QUX', 44)\n")
+    inner_cfg.write_text("configure('top.QUX', 44)\n")
     outer_cfg = tmp_path / "outer.cfg"
     outer_cfg.write_text(f"include({str(inner_cfg)!r})\n")
 
     ch = _ch()
     ch.read_cfg(str(outer_cfg))
-    assert ch.get_configuration("QUX") == 44
+    assert ch.get_configuration("top.QUX") == 44
 
 
 def test_include_json_then_json_merges(tmp_path):
@@ -127,13 +127,13 @@ def test_include_json_then_json_merges(tmp_path):
 def test_include_relative_cfg_resolves_via_cfgpath(tmp_path):
     cfgs = tmp_path / "cfgs"
     cfgs.mkdir()
-    (cfgs / "inner.cfg").write_text("configure('Q', 7)\n")
+    (cfgs / "inner.cfg").write_text("configure('top.Q', 7)\n")
     outer = tmp_path / "outer.cfg"
     outer.write_text("include('inner.cfg')\n")
 
     ch = _ch_with_cfg_path([str(cfgs)])
     ch.read_cfg(str(outer))
-    assert ch.get_configuration("Q") == 7
+    assert ch.get_configuration("top.Q") == 7
 
 
 def test_include_relative_json_resolves_via_cfgpath(tmp_path):

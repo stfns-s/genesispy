@@ -7,9 +7,10 @@ reference itself is generated one-off by ``_refresh_parity_reference.py``
 against a Perl Genesis2 install; this test does not need Perl at runtime.
 
 Comparison is by *set* of normalised module bodies per base, matching the
-outer ``test_parity/`` suite. Uniquification suffixes (``_unq<N>`` /
-``_KEY_VAL_...``) are folded to ``__U`` so genesispy's post-elaboration
-dedup vs Perl's non-deduped output don't register as differences.
+outer ``test_parity/`` suite. Uniquified names (``_unq<N>`` /
+``_KEY_VAL_...``) are replaced by content-ranked ``<base>__U<rank>`` tokens
+(``build_variant_map``) so genesispy's post-elaboration dedup vs Perl's
+non-deduped output don't register as differences.
 
 A missing reference is a hard failure; refresh per
 ``doc/genesis2-incompatibilities.md``.
@@ -32,6 +33,7 @@ from genesispy.manager import Manager
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _parity_normalize import build_variant_map, normalize, parse_header  # noqa: E402
+from _stale import ignore_stale  # noqa: E402
 
 DEMOS_DIR = Path(__file__).resolve().parents[1] / "demos"
 REF_ROOT = Path(__file__).resolve().parent / "fixtures" / "parity_reference"
@@ -48,7 +50,7 @@ _DEMO_ARGS: Dict[str, Tuple[str, Tuple[str, ...], Tuple[str, ...]]] = {
         "top", ("top.vpy", "wallace.vpy", "CSA.vpy"), (),
     ),
     "many_iterative_wallace_trees": (
-        "top", ("top.vpy", "wallace.vpy", "CSA.vpy"), ("--json", "config.json"),
+        "top", ("top.vpy", "wallace.vpy", "CSA.vpy"), ("--json-cfg", "config.json"),
     ),
     "random_logic": (
         "top", ("top.vpy", "OneHotMux.vpy"), (),
@@ -58,9 +60,7 @@ _DEMO_ARGS: Dict[str, Tuple[str, Tuple[str, ...], Tuple[str, ...]]] = {
 
 def _stage_demo(tmp: Path, demo: str) -> Path:
     dst = tmp / demo
-    shutil.copytree(DEMOS_DIR / demo, dst, dirs_exist_ok=False,
-                    ignore=shutil.ignore_patterns(
-                        "genesis_synth", "genesis_verif", "genesis_raw"))
+    shutil.copytree(DEMOS_DIR / demo, dst, dirs_exist_ok=False, ignore=ignore_stale)
     return dst
 
 
@@ -73,7 +73,7 @@ def _run_genesispy(workdir: Path, demo: str, syntax: str = "genesis") -> None:
     argv = []
     for inp in inputs:
         argv.extend(["--input", inp])
-    argv.extend(["--top", top, "--srcpath", _SRCPATH[syntax]])
+    argv.extend(["--top", top, "--src-path", _SRCPATH[syntax]])
     if syntax == "j2":
         argv.append("--j2")
     argv.extend(extra)

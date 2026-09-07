@@ -36,6 +36,7 @@ verif/
                     tb_ref_log2.vpy (64-bit f_log2 reference, shared by the three log tests)
   sweeps.mk         which configurations make test runs
   run-tb.sh         generate, build and run one testbench in one configuration
+                    (BUILDDIR, when set, must be relative to the demo root)
   plot.py           plot a data file
   requirements.txt  matplotlib, for plot.py
 build/              everything generated; not in git
@@ -229,8 +230,8 @@ overflow. `ld` loads `ld_val`, `neg` negates the input, `en` gates updates.
 | `ISYM`       | 0            | input is already symmetric, skip the `f_sym` clamp  |
 | `DEBUG`      | 0            | reserved; no debug logic at present, and nothing is emitted |
 
-`AW` must be greater than or equal to `OW`, `IW` and `LW`; `OW` must be at least 2; and `LW` must be
-at least 2, since the leak negates a signed `LW`-bit word and a one-bit one negates to zero either
+`AW` must be greater than or equal to `OW`, `IW` and `LW`; `OW` must be at least 2; `lk_mu` must exceed
+`mu`, which must be positive (`lk_mu > mu > 0`, the sweep tables respect it); and `LW` must be at least 2, since the leak negates a signed `LW`-bit word and a one-bit one negates to zero either
 way. `LW` defaults to `OW>>1`, so `OW=2` and `OW=3` need an explicit `LW`. Each is checked at
 generation time; a violation reports the offending value and writes no file.
 

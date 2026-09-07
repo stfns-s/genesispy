@@ -1,4 +1,7 @@
 //; IW     = parameter('IW',     8)   # input width
+//; if IW < 1:
+//;     error(f"{mname}: IW ({IW}) must be >= 1")
+//; # endif
 //; APPROX = parameter('APPROX', 0)   # negate as ~x, one LSB cheap
 //; ISYM   = parameter('ISYM',   0)   # caller promises the most negative value never arrives
 //; MIN    = -(1 << (IW-1))

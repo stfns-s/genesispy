@@ -102,7 +102,7 @@ def test_directly_raised_error_is_not_marked_reported():
     assert ParseError("boom").reported is False
 
 
-def test_manager_execute_reports_a_vpy_error_once(tmp_path, capsys):
+def test_manager_execute_reports_a_vpy_error_once(tmp_path, capsys, monkeypatch):
     """A .vpy body calling error() must produce exactly one `error:` line.
 
     Regression: reporting.error() writes the message to stderr and then
@@ -112,23 +112,15 @@ def test_manager_execute_reports_a_vpy_error_once(tmp_path, capsys):
     engine-side failures (e.g. Manager.find_file) `raise` directly and are
     still the handler's job to print.
     """
-    import os
-
-    from genesispy import cache, cli
+    from genesispy import cli
     from genesispy.manager import Manager
 
     src = tmp_path / "boom.vpy"
     src.write_text("//; error('deliberate failure')\n", encoding="utf-8")
 
-    cwd = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        cache.clear_all()
-        args = cli.parse_args(["-i", str(src), "-t", "boom", "--log", "/dev/null"])
-        rc = Manager(args).execute()
-    finally:
-        os.chdir(cwd)
-        cache.clear_all()
+    monkeypatch.chdir(tmp_path)
+    args = cli.parse_args(["-i", str(src), "-t", "boom", "--log", "/dev/null"])
+    rc = Manager(args).execute()
     captured = capsys.readouterr()
 
     assert rc == 1
@@ -136,20 +128,14 @@ def test_manager_execute_reports_a_vpy_error_once(tmp_path, capsys):
     assert captured.err.count("error:") == 1
 
 
-def test_manager_execute_still_reports_unreported_errors(tmp_path, capsys):
+def test_manager_execute_still_reports_unreported_errors(tmp_path, capsys, monkeypatch):
     """An exception raised directly (reported=False) is still printed once."""
-    import os
-
     from genesispy import cli
     from genesispy.manager import Manager
 
-    cwd = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        args = cli.parse_args(["-i", "nosuch.vpy", "-t", "top", "--log", "/dev/null"])
-        rc = Manager(args).execute()
-    finally:
-        os.chdir(cwd)
+    monkeypatch.chdir(tmp_path)
+    args = cli.parse_args(["-i", "nosuch.vpy", "-t", "top", "--log", "/dev/null"])
+    rc = Manager(args).execute()
     captured = capsys.readouterr()
 
     assert rc == 1

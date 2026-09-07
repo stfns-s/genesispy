@@ -6,7 +6,6 @@ correctly handle the JSON-native shape used by genesispy core.
 
 from __future__ import annotations
 
-import pytest
 
 from genesispy import config_handler as ch
 
@@ -131,20 +130,19 @@ def test_find_param_first_match_wins():
 
 
 # Pin D22b-2: scalar coercion and plain-container recursion in _unwrap_array.
-def test_unwrap_array_string_scalars_coerced() -> None:
-    """String elements are coerced: int-like -> int, float-like -> float,
-    'true'/'false' -> bool."""
-    assert ch._unwrap_array(["8", "2.5", "true"]) == [8, 2.5, True]
+def test_unwrap_array_string_scalars_kept() -> None:
+    """String elements keep their JSON type: a leaf is what the author typed."""
+    assert ch._unwrap_array(["8", "2.5", "true"]) == ["8", "2.5", "true"]
 
 
-def test_unwrap_array_nested_plain_dict_leaf_coerced() -> None:
-    """Plain dict nested inside a list has its string-scalar leaves coerced."""
-    assert ch._unwrap_array([{"a": "4", "b": "false"}]) == [{"a": 4, "b": False}]
+def test_unwrap_array_nested_plain_dict_leaf_kept() -> None:
+    """Plain dict nested inside a list keeps its string leaves."""
+    assert ch._unwrap_array([{"a": "4", "b": False}]) == [{"a": "4", "b": False}]
 
 
-def test_unwrap_hash_string_scalars_coerced() -> None:
-    """String values in a plain hash are coerced to native types."""
-    assert ch._unwrap_hash({"x": "10", "flag": "true"}) == {"x": 10, "flag": True}
+def test_unwrap_hash_string_scalars_kept() -> None:
+    """String values in a plain hash are not coerced."""
+    assert ch._unwrap_hash({"x": "10", "flag": True}) == {"x": "10", "flag": True}
 
 
 def test_val_carried_container_unwraps_and_coerces() -> None:

@@ -2,7 +2,7 @@
 //; from math import floor
 
 // PARAMETERS
-//; N         = parameter('N', 4)
+//; N         = parameter('N', 4, min=2, step=1)
 //; cond      = parameter('COND', True)
 //; cache_geo = parameter('ParamHash', {})
 

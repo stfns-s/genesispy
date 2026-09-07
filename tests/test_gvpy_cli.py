@@ -11,7 +11,6 @@ import sys
 
 import pytest
 
-from genesispy import gvpy_cli
 from genesispy.gvpy_cli import _flatten_csv, _stem, main
 
 
@@ -39,10 +38,7 @@ def test_flatten_csv_empty():
     [
         ("foo.vpy", "foo"),
         ("foo.gvpy", "foo"),
-        ("foo.vp", "foo"),
-        ("foo.gvp", "foo"),
         ("foo.svpy", "foo"),
-        ("foo.svp", "foo"),
         ("/abs/path/bar.vpy", "bar"),
         ("noext", "noext"),
         ("name.unknown", "name.unknown"),

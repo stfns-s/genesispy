@@ -27,6 +27,9 @@ INFIX_OPERATOR_MAP: dict[str, str] = {
     # Logical.
     "&&": "and", "||": "or", "//": "or",
     "and": "and", "or": "or", "not": "not", "xor": "!=",
+    # List separator (inside a Structure::List; call arguments are split
+    # before rendering, so this is only reached for literal lists).
+    ",": ",",
     # Assignment.
     "=": "=",
     "+=": "+=", "-=": "-=", "*=": "*=", "/=": "/=", "%=": "%=", "**=": "**=",
@@ -87,6 +90,25 @@ BUILTIN_MAP: dict[str, object] = {
     "wantarray":         None,
     "qw":                None,  # handled structurally
     "looks_like_number": True,
+    "sort":              True,  # list form only; a comparator block is unmappable
+    "reverse":           True,
+    "substr":            True,  # 2- and 3-argument forms
+    "map":               None,
+    "grep":              None,
+}
+
+# Barewords that must never reach the output verbatim: builtins with no
+# argument shape the walker handles, and filehandles outside ``print``.
+UNSUPPORTED_BAREWORDS: frozenset[str] = frozenset({
+    "shift", "pop", "map", "grep", "sort", "reverse", "wantarray", "local",
+    "STDIN", "STDOUT", "STDERR",
+})
+
+# List::Util functions with a Python builtin of the same meaning.
+LIST_UTIL_MAP: dict[str, str] = {
+    "max": "max",
+    "min": "min",
+    "sum": "sum",
 }
 
 # POSIX:: math passthrough.
@@ -163,6 +185,10 @@ METHOD_TABLE: dict[str, str] = {
     "Params":         "params",
     "tname":          "tname",
     "iname":          "iname",
+    "get_module_name":        "get_module_name",
+    "GetModuleName":          "get_module_name",
+    "get_unique_module_name": "get_unique_module_name",
+    "get_base_name":          "get_base_name",
     "Instantiate":    "instantiate",
     "Generate":       "generate",
     "Parameter":      "parameter",
@@ -230,6 +256,35 @@ RUNTIME_HELPERS: dict[str, str] = {
     "_vp2vpy_error": (
         "def _vp2vpy_error(msg):\n"
         "    raise RuntimeError(msg)\n"
+    ),
+    # Every helper line is a ``//;`` directive in the output, so indents
+    # must stay multiples of four: no hanging continuation lines here.
+    # Perl semantics: integral floats print as ints under %d / %x, and a
+    # conversion with no argument left prints as 0 (Perl warns; Python raises).
+    "_vp2vpy_sprintf": (
+        "def _vp2vpy_sprintf(fmt, *args):\n"
+        "    fixed = [int(a) if isinstance(a, float) and a.is_integer() else a for a in args]\n"
+        "    while True:\n"
+        "        try:\n"
+        "            return fmt % tuple(fixed)\n"
+        "        except TypeError:\n"
+        "            if len(fixed) > len(fmt):\n"
+        "                raise\n"
+        "            fixed.append(0)\n"
+    ),
+    "_vp2vpy_cmp": (
+        "def _vp2vpy_cmp(a, b):\n"
+        "    return (a > b) - (a < b)\n"
+    ),
+    "_vp2vpy_join": (
+        "def _vp2vpy_join(sep, *items):\n"
+        "    out = []\n"
+        "    for item in items:\n"
+        "        if isinstance(item, (list, tuple)):\n"
+        "            out.extend(str(x) for x in item)\n"
+        "        else:\n"
+        "            out.append(str(item))\n"
+        "    return sep.join(out)\n"
     ),
     "_vp2vpy_looks_like_number": (
         "def _vp2vpy_looks_like_number(x):\n"

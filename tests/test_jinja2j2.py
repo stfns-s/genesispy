@@ -6,7 +6,6 @@ Skipped wholesale when the optional ``jinja2`` package is absent.
 from __future__ import annotations
 
 import textwrap
-from pathlib import Path
 
 import pytest
 
@@ -365,9 +364,11 @@ def test_sentinel_closer_pops_stack():
     # After the sentinel endfor, a subsequent top-level else should be an error
     # only if stack is empty/non-for — here we just verify no crash and the
     # for body's if-else converts cleanly when sentinel form is used.
-    src = "{% for x in xs %}{% if c %}A{% else %}B{% endif %}{% endfor %}"
+    src = "{% for x in xs %}A{% # endfor %}{% if c %}B{% else %}C{% endif %}"
     out, issues = convert(src, strict=True)
-    assert "else:" in out
+    # The sentinel popped the `for`, so the later else binds to the `if`
+    # rather than being flagged as a for-else.
+    assert "{% else: %}" in out
     assert issues == []
 
 
@@ -388,3 +389,38 @@ def test_sentinel_closer_input_pops_stack():
     # encountered, so conversion succeeds without raising _Unmappable.
     assert issues == []
     assert "else:" in out
+
+
+# --------------------------------------------------------------------------- #
+# Fault paths: no raw jinja2 exception escapes; quoted strings; empty tests;
+# raw blocks; loop helpers.
+# --------------------------------------------------------------------------- #
+
+def test_broken_filter_pipe_is_unmappable_not_a_traceback():
+    with pytest.raises(_Unmappable):
+        convert("{{ x | }}", strict=True)
+    out, issues = convert("{{ x | }}", strict=False)
+    assert issues and "TODO" in out
+
+
+def test_percent_brace_inside_a_string_does_not_end_the_span():
+    out, issues = convert('{% set x = "100%}" %}', strict=True)
+    assert not issues
+    assert out == "{% x = '100%}' %}"
+
+
+def test_if_without_a_test_is_unmappable():
+    with pytest.raises(_Unmappable):
+        convert("{% if %}a{% endif %}", strict=True)
+
+
+def test_raw_body_is_untouched_in_best_effort_mode():
+    src = "{% raw %}{{ x | upper }}{% endraw %}"
+    out, issues = convert(src, strict=False)
+    assert "{{ x | upper }}" in out
+    assert issues
+
+
+def test_loop_helpers_are_unmappable():
+    with pytest.raises(_Unmappable):
+        convert("{% for i in xs %}{{ loop.index }}{% endfor %}", strict=True)

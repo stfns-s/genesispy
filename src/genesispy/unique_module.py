@@ -17,15 +17,17 @@ from __future__ import annotations
 import copy
 import hashlib
 import io
+import pprint
 import re
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-from . import cache, hashing
+from . import cache, hashing, reporting
 from .config_handler import PRIORITY_LABELS, Priority, priority_label
 from .reporting import ElaborationError, ParameterError
 
 if TYPE_CHECKING:  # pragma: no cover
     from .manager import Manager
+    from .template.runtime import StrCallable
 
 
 # Parameter "state" values, mirroring the Perl flag triplet.
@@ -121,6 +123,9 @@ class UniqueModule:
         self._instance_name: str = cls_name         # default to class name
 
         self._params: Dict[str, Dict[str, Any]] = {}
+        # Perl's priority register: writes are allowed until the body has
+        # run, and not while a child elaborates (UniqueModule.pm:833, 1246).
+        self._params_open: bool = True
         self._synonyms: List[str] = []
         self._clone_of: Optional[UniqueModule] = None
 
@@ -161,6 +166,8 @@ class UniqueModule:
         self._instance_name = src._instance_name
 
         self._params = copy.deepcopy(src._params)
+        # A clone takes no parameters (UniqueModule.pm:314-326).
+        self._params_open = False
         self._synonyms = list(src._synonyms)
         self._clone_of = src
         # Don't share src's StringIO; clone emits leak into src and a renamed
@@ -169,6 +176,66 @@ class UniqueModule:
         return self
 
     # ----------------------------------------------------------- parameters
+    def _check_params_open(self, method: str) -> None:
+        if not self._params_open:
+            raise ParameterError(
+                f"{self._module_name}->{method}: Adding parameter definitions "
+                f"not allowed at this point (the module has been elaborated)"
+            )
+
+    def _new_entry(
+        self, name: str, default: Any, *, doc: Optional[str] = None,
+        type: Optional[str] = None, declared: bool,  # noqa: A002
+    ) -> Dict[str, Any]:
+        entry = {
+            "value": default,
+            "default": default,
+            "state": STATE_DEFINED,
+            "priority": 0,
+            "doc": doc,
+            "type": type,
+            # Perl's 'Used' state: set by a body declaration, not by a
+            # parent's keyword; get_param needs it (UniqueModule.pm:2296).
+            "declared": declared,
+            # Perl's SeenAt levels: a second declaration at the same level is
+            # fatal (UniqueModule.pm:2443-2452).
+            "seen_declaration": False,
+            "seen_forced": False,
+        }
+        self._params[name] = entry
+        return entry
+
+    def _declare(
+        self, name: str, default: Any, doc: Optional[str], type: Optional[str],  # noqa: A002
+    ) -> Dict[str, Any]:
+        """The body's declaration of ``name``: creates the entry, or marks
+        one a parent's keyword created as declared and refreshes its
+        metadata (the keyword value outranks the default). A second
+        declaration is fatal (UniqueModule.pm:2443-2452)."""
+        self._check_params_open("define_param")
+        if not re.fullmatch(r"\w+", name or ""):
+            raise ParameterError(
+                f"{self._module_name}->define_param: illegal parameter name {name!r} "
+                "(alphanumeric and underscore only)"
+            )
+        entry = self._params.get(name)
+        if entry is None:
+            entry = self._new_entry(name, default, doc=doc, type=type, declared=True)
+        elif entry["seen_declaration"]:
+            raise ParameterError(
+                f"{self._module_name}->define_param: Parameter {name} already "
+                f"declared/seen at the same priority {Priority.DECLARATION.name}"
+            )
+        else:
+            entry["declared"] = True
+            entry["default"] = default
+            if doc is not None:
+                entry["doc"] = doc
+            if type is not None:
+                entry["type"] = type
+        entry["seen_declaration"] = True
+        return entry
+
     def define_param(
         self,
         name: str,
@@ -179,44 +246,27 @@ class UniqueModule:
     ) -> None:
         """Register a parameter (Perl ``define_param`` ~UniqueModule.pm:387).
 
-        If the parameter already exists in OVERRIDDEN/FORCED state (set by
-        unique_inst's pre-elaboration override pass), keep the value but
-        update default/doc/type metadata. A second DEFINED-state entry is
-        an error unless ``flags['force']`` is truthy.
+        A value a parent's keyword already set is kept; the default and the
+        metadata are recorded. Declaring a name twice, or declaring after
+        the body has run, is fatal. ``name`` must match ``\\w+``
+        (Perl UniqueModule.pm:2015): a dotted name would collide with the
+        ``-p PATH.NAME`` grammar.
         """
-        if name in self._params:
-            existing = self._params[name]
-            if existing["state"] in (STATE_OVERRIDDEN, STATE_FORCED):
-                existing["default"] = default
-                if doc is not None:
-                    existing["doc"] = doc
-                if type is not None:
-                    existing["type"] = type
-                return
-            if not flags.get("force", False):
-                raise ParameterError(
-                    f"Parameter {name!r} already defined on {self._module_name}"
-                )
-        self._params[name] = {
-            "value": default,
-            "default": default,
-            "state": STATE_DEFINED,
-            "priority": flags.get("priority", 0),
-            "doc": doc,
-            "type": type,
-        }
+        entry = self._declare(name, default, doc, type)
+        if "priority" in flags:
+            entry["priority"] = flags["priority"]
 
-    def parameter(  # noqa: A002 -- min/max/list shadow builtins; matches Perl wiki
+    def parameter(
         self,
         name: str,
         default: Any = None,
         *,
         force: bool = False,
         doc: Optional[str] = None,
-        min: Any = None,
-        max: Any = None,
+        min: Any = None,  # noqa: A002 -- public keyword, mirrors the Perl Min/Max/List names
+        max: Any = None,  # noqa: A002
         step: Any = None,
-        list: Any = None,
+        list: Any = None,  # noqa: A002
         opt: Optional[str] = None,
     ) -> Any:
         """Declarative shortcut (Perl ``parameter`` UniqueModule.pm:1981).
@@ -249,12 +299,10 @@ class UniqueModule:
         same). Custom Python objects bypass dedup and don't roundtrip
         to JSON.
         """
-        if name not in self._params:
-            self.define_param(name, default=default, doc=doc)
-        else:
-            # Update metadata if the param exists.
-            if doc is not None:
-                self._params[name]["doc"] = doc
+        if not force:
+            self._declare(name, default, doc, None)
+        elif name in self._params and doc is not None:
+            self._params[name]["doc"] = doc
 
         # Register range constraint before resolution so range-check runs
         # against the final value. Validation order matches Perl's
@@ -270,9 +318,12 @@ class UniqueModule:
                 name, min=min, max=max, step=step, list_=list
             )
 
-        # Forced form: write at FORCED priority and skip cfg lookup.
+        # Forced form: write at FORCED priority and skip cfg lookup
+        # (Perl force_param: define_param at IMMUTABLE, UniqueModule.pm:479).
         if force:
             self.force_param(name, default)
+            if doc is not None:
+                self._params[name]["doc"] = doc
             self._range_check(name, self._params[name]["value"])
             if opt is not None:
                 self._params[name]["opt"] = self._normalise_opt(opt)
@@ -291,11 +342,12 @@ class UniqueModule:
             v, prio = cfg.get_configuration_with_priority(
                 name, instance_path=path
             )
-            if v is not None:
+            # prio is None only when no source defines the name; an explicit
+            # JSON null arrives as (None, EXTERNAL_PARAM_FILE) and applies.
+            if prio is not None:
                 self._params[name]["value"] = v
                 self._params[name]["state"] = STATE_OVERRIDDEN
-                if prio is not None:
-                    self._params[name]["priority"] = prio
+                self._params[name]["priority"] = prio
                 self._range_check(name, v)
                 return v
         self._range_check(name, self._params[name]["value"])
@@ -314,9 +366,7 @@ class UniqueModule:
                 f"cannot document un-existing parameter {name!r}"
             )
         if self._params[name].get("doc") is not None:
-            from . import reporting as _errors
-
-            _errors.warning(
+            reporting.warning(
                 f"{self._module_name}->doc_param: "
                 f"Re-documentation of parameter {name!r}. Overwriting!"
             )
@@ -455,19 +505,27 @@ class UniqueModule:
         return o
 
     def get_param(self, name: str) -> Any:
+        """The value of a parameter the body declared. A name only a parent's
+        keyword set is fatal (UniqueModule.pm:2296)."""
         if name not in self._params:
             raise ParameterError(
                 f"Unknown parameter {name!r} on {self._module_name}"
             )
+        if not self._params[name]["declared"]:
+            raise ParameterError(
+                f"{self._module_name}->get_param: Trying to extract the value of "
+                f"a parameter that was never explicitly declared. Use "
+                f"parameter({name!r}, default) to declare it"
+            )
         return self._params[name]["value"]
 
     def override_param(self, name: str, value: Any) -> None:
+        """A parent's keyword value (INHERITANCE priority). An unknown name
+        is created undeclared; a forced value is kept (UniqueModule.pm:2406)."""
+        self._check_params_open("override_param")
         if name not in self._params:
-            # Match Perl behaviour: overriding an unknown parameter
-            # quietly defines it.
-            self.define_param(name, default=value)
+            self._new_entry(name, value, declared=False)
         if self._params[name]["state"] == STATE_FORCED:
-            # force_param pins the value; later override_param() is a no-op.
             return
         self._params[name]["value"] = value
         self._params[name]["state"] = STATE_OVERRIDDEN
@@ -475,16 +533,34 @@ class UniqueModule:
         self._range_check(name, value)
 
     def force_param(self, name: str, value: Any) -> None:
-        """Forced override -- pinned, cannot be re-overridden."""
+        """Forced override -- pinned, cannot be re-overridden. A second
+        force of the same name is fatal (UniqueModule.pm:2443-2452)."""
+        self._check_params_open("force_param")
         if name not in self._params:
-            self.define_param(name, default=value)
-        # Already pinned: keep first value (matches override_param's pin).
-        if self._params[name]["state"] == STATE_FORCED:
-            return
-        self._params[name]["value"] = value
-        self._params[name]["state"] = STATE_FORCED
-        self._params[name]["priority"] = int(Priority.IMMUTABLE)
+            self._new_entry(name, value, declared=True)
+        entry = self._params[name]
+        if entry["seen_forced"]:
+            raise ParameterError(
+                f"{self._module_name}->force_param: Parameter {name} already "
+                f"declared/seen at the same priority {Priority.IMMUTABLE.name}"
+            )
+        entry["seen_forced"] = True
+        entry["declared"] = True
+        entry["value"] = value
+        entry["state"] = STATE_FORCED
+        entry["priority"] = int(Priority.IMMUTABLE)
         self._range_check(name, value)
+
+    def _lock_params(self) -> None:
+        """Close the parameter store once the body has run (UniqueModule.pm:1246)
+        and warn about every keyword the body never declared (:2183-2189)."""
+        self._params_open = False
+        for name, entry in self._params.items():
+            if not entry["declared"]:
+                self.warning(
+                    f"Parameter '{name}' was passed to {self.get_instance_path()} "
+                    f"but it was never actually declared/used in {self._instance_name}"
+                )
 
     def get_mod_param_list(self) -> Dict[str, Any]:
         """Return ``{name: value}`` for all parameters (Perl :2691)."""
@@ -500,13 +576,9 @@ class UniqueModule:
         return sorted(self._params.keys())
 
     def exists_param(self, name: str) -> bool:
-        """Return True iff a parameter named ``name`` is registered.
-
-        Mirrors Perl ``exists_param`` (UniqueModule.pm:496); diverges
-        from Perl's ``'Used'``-state-only check for cleaner Python
-        semantics (``define_param`` alone is enough to count).
-        """
-        return name in self._params
+        """True iff the body declared ``name`` (Perl ``exists_param``,
+        UniqueModule.pm:496: a parent's keyword alone does not count)."""
+        return name in self._params and self._params[name]["declared"]
 
     def get_top_param(self, name: str) -> Any:
         """Return the value of parameter ``name`` on the top module.
@@ -516,34 +588,26 @@ class UniqueModule:
         return self.get_top().get_param(name)
 
     # ----------------------------------------------------------- hierarchy
-    def _scoped_cmdln_overrides_for(
+    def _scoped_overrides_for(
         self, child_path: tuple[str, ...]
     ) -> Dict[str, Any]:
-        """Collect hierarchical CLI overrides scoped to ``child_path``.
+        """Collect the scoped overrides (``--parameter PATH.NAME=V`` and
+        ``configure("PATH.NAME", v)``) addressed to ``child_path`` exactly.
 
-        Returns ``{name: value}`` for every scoped CLI override whose
-        instance path equals ``child_path`` exactly. Empty dict when none
-        apply or no cfg_handler is attached. Used pre-elaboration so the
-        dedup hash reflects scoped overrides and the child's
-        ``parameter()`` call returns the overridden value.
+        Empty dict when none apply or no cfg_handler is attached. Used
+        pre-elaboration so the dedup hash reflects scoped overrides and
+        the child's ``parameter()`` call returns the overridden value.
         """
         cfg = self._manager.cfg_handler
         if cfg is None:
             return {}
-        scoped_db = cfg.cmdln_scoped_db_snapshot()
-        if not scoped_db:
-            return {}
-        return {
-            name: entry["value"]
-            for (path, name), entry in scoped_db.items()
-            if path == child_path
-        }
+        return dict(cfg.scoped_overrides_for(child_path))
 
     def _scoped_subtree_signature(
         self, child_path: tuple[str, ...]
     ) -> tuple:
-        """Return a hashable signature of every scoped CLI override whose
-        instance path is rooted at ``child_path``.
+        """Return a hashable signature of every scoped override (CLI and
+        ``.cfg``) whose instance path is rooted at ``child_path``.
 
         Used as a dedup discriminator: two instances at different paths
         share a unique module only if the same subtree overrides apply
@@ -555,7 +619,7 @@ class UniqueModule:
         cfg = self._manager.cfg_handler
         if cfg is None:
             return ()
-        scoped_db = cfg.cmdln_scoped_db_snapshot()
+        scoped_db = cfg.scoped_db_snapshot()
         if not scoped_db:
             return ()
         n = len(child_path)
@@ -568,18 +632,18 @@ class UniqueModule:
         return tuple(sorted(rel, key=lambda t: (t[0], t[1])))
 
     def _resolve_params(
-        self, module_cls: type, inst_name: str, overrides: Dict[str, Any]
+        self, inst_name: str, overrides: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Materialise final parameter dict for an instantiation.
 
         We don't actually run the child's defaults until elaboration, but
         we *do* need a stable param dict for the dedup hash. Layers are:
-        explicit kwargs (highest), then hierarchical CLI overrides
+        explicit kwargs (highest), then scoped CLI and ``.cfg`` overrides
         targeting this exact instance path. The child fills in untouched
         defaults once it elaborates.
         """
         child_path = self._instance_path_segments() + (inst_name,)
-        merged = dict(self._scoped_cmdln_overrides_for(child_path))
+        merged = dict(self._scoped_overrides_for(child_path))
         merged.update(overrides)  # explicit kwargs win
         return merged
 
@@ -618,7 +682,7 @@ class UniqueModule:
 
         self._guard_new_instance_name(inst_name, "unique_inst")
 
-        eff_pre = self._resolve_params(module_cls, inst_name, params)
+        eff_pre = self._resolve_params(inst_name, params)
         child_path = self._instance_path_segments() + (inst_name,)
         subtree_sig = self._scoped_subtree_signature(child_path)
         sig_pre = hashing.sha256_param_signature(module_cls.__name__, eff_pre)
@@ -696,7 +760,7 @@ class UniqueModule:
 
         self._guard_new_instance_name(inst_name, "unique_inst_param")
 
-        eff = self._resolve_params(module_cls, inst_name, params)
+        eff = self._resolve_params(inst_name, params)
         child_path = self._instance_path_segments() + (inst_name,)
         subtree_sig = self._scoped_subtree_signature(child_path)
         subtree_tag = _subtree_tag(subtree_sig)
@@ -748,9 +812,10 @@ class UniqueModule:
         return child
 
     def clone_inst(
-        self, src_inst: "UniqueModule", new_name: str
+        self, src_inst: "UniqueModule | str", new_name: str
     ) -> "UniqueModule":
-        """Duplicate ``src_inst`` under ``new_name``.
+        """Duplicate ``src_inst`` (an instance, or its dotted instance path)
+        under ``new_name``.
 
         Mirrors Perl ``clone_inst`` (UniqueModule.pm:1480): a clone is an
         instance-level alias only — same ``UniqueModuleName`` as the source,
@@ -764,6 +829,7 @@ class UniqueModule:
         hierarchy.
         """
         self._guard_new_instance_name(new_name, "clone_inst")
+        src_inst = self.get_instance_obj(src_inst)
 
         src_uname = src_inst._unique_module_name
         ancestor: Optional[UniqueModule] = self
@@ -812,12 +878,16 @@ class UniqueModule:
         self._guard_new_instance_name(inst_name, "ununique_inst")
 
         # Same scoped-override layering as unique_inst / unique_inst_param.
-        eff = self._resolve_params(module_cls, inst_name, params)
+        eff = self._resolve_params(inst_name, params)
         base_name = module_cls.__name__
         child_path = self._instance_path_segments() + (inst_name,)
         subtree_sig = self._scoped_subtree_signature(child_path)
 
-        existing = cache.UNUNIQUE_REGISTRY.get(base_name)
+        # --no-module-cache forces a fresh elaboration here as well.
+        existing = (
+            None if self._manager.no_module_cache
+            else cache.UNUNIQUE_REGISTRY.get(base_name)
+        )
         if existing is not None:
             if subtree_sig != existing["subtree_sig"]:
                 # Differing descendant scoped overrides: optimistic reuse
@@ -991,10 +1061,14 @@ class UniqueModule:
 
     # ----------------------------------------------------------- name/path
     def get_module_name(self) -> str:
-        return self._module_name
+        """The emitted (unique) module name, as Perl's ``get_module_name``."""
+        return self._unique_module_name
 
     def get_unique_module_name(self) -> str:
         return self._unique_module_name
+
+    def get_base_name(self) -> str:
+        return self._module_name
 
     def get_instance_name(self) -> str:
         return self._instance_name
@@ -1059,7 +1133,9 @@ class UniqueModule:
         return tuple(reversed(chain))
 
     def get_instance_path(self) -> str:
-        return "/".join(self._instance_path_segments())
+        """Root-to-self instance names joined with ``.``, the form
+        ``get_instance_obj`` and the config overrides take (UniqueModule.pm:1070)."""
+        return ".".join(self._instance_path_segments())
 
     # ------------------------------------------------- sub-instance navigation
     def get_subinst(self, name: str) -> "UniqueModule":
@@ -1090,11 +1166,9 @@ class UniqueModule:
         Order follows insertion (mirrors Perl ``SubInstanceList`` order;
         UniqueModule.pm:932).
         """
-        import re as _re
-
         out: List[UniqueModule] = []
         for name, inst in self._sub_instances.items():
-            if not pattern or _re.search(pattern, name):
+            if not pattern or re.search(pattern, name):
                 out.append(inst)
         return out
 
@@ -1106,13 +1180,9 @@ class UniqueModule:
         - A :class:`UniqueModule` passes through unchanged.
         - A dotted path ``"top.a.b"`` is walked from the top instance.
 
-        Mirrors Perl ``get_instance_obj`` (UniqueModule.pm:1087). Note
-        that Perl's `get_instance_path()` joins with ``"/"`` while
-        ``get_instance_obj`` expects ``"."`` — the two methods do not
-        compose directly. Inherited gotcha.
+        Mirrors Perl ``get_instance_obj`` (UniqueModule.pm:1087); the path
+        is what ``get_instance_path()`` returns.
         """
-        import re as _re
-
         if isinstance(inst, UniqueModule):
             return inst
         if not isinstance(inst, str):
@@ -1122,12 +1192,12 @@ class UniqueModule:
             )
         top = self.get_top()
         top_name = top.get_instance_name()
-        if not _re.fullmatch(rf"{_re.escape(top_name)}(\.\w+)*", inst):
+        if not re.fullmatch(rf"{re.escape(top_name)}(\.\w+)*", inst):
             raise ElaborationError(
                 f"{self._module_name}->get_instance_obj: "
                 f"{inst!r} is not a legal instance path under {top_name!r}"
             )
-        stripped = _re.sub(rf"^{_re.escape(top_name)}\.?", "", inst)
+        stripped = re.sub(rf"^{re.escape(top_name)}\.?", "", inst)
         node: UniqueModule = top
         for tok in (stripped.split(".") if stripped else []):
             if tok not in node._sub_instances:
@@ -1163,8 +1233,6 @@ class UniqueModule:
         names are snake_case (Perl wiki uses CamelCase: ``PathRegex``,
         ``INameRegex``, etc.); translate at the call site.
         """
-        import re as _re
-
         start = (
             self.get_instance_obj(start_from)
             if start_from is not None
@@ -1185,7 +1253,7 @@ class UniqueModule:
         _dfs(start, depth)
 
         def _match(regex: Optional[str], value: str) -> bool:
-            return regex is None or regex == "" or _re.search(regex, value) is not None
+            return regex is None or regex == "" or re.search(regex, value) is not None
 
         def _has_param(node: "UniqueModule", patterns) -> bool:
             params = node.get_mod_param_list()
@@ -1193,7 +1261,7 @@ class UniqueModule:
             for p in pats:
                 if p == "":
                     continue
-                if not any(_re.search(p, pname) for pname in params):
+                if not any(re.search(p, pname) for pname in params):
                     return False
             return True
 
@@ -1307,9 +1375,7 @@ class UniqueModule:
                 f"{self._module_name}->to_string: "
                 f"expected at least one argument"
             )
-        import pprint as _pprint
-
-        return "\n".join(_pprint.pformat(a) for a in args)
+        return "\n".join(pprint.pformat(a) for a in args)
 
     def error(self, msg: str) -> None:
         """Raise a fatal error tagged with this module's identity.
@@ -1319,9 +1385,7 @@ class UniqueModule:
         the current module and instance path so the failure points at the
         source of the elaboration error.
         """
-        from . import reporting as _errors
-
-        _errors.error(
+        reporting.error(
             f"{self._module_name}@{self.get_instance_path()}: {msg}",
             fatal=True,
         )
@@ -1332,9 +1396,7 @@ class UniqueModule:
         Mirrors Perl ``$self->warning(msg)`` / bare ``warning(msg)``
         (UniqueModule.pm:2863).
         """
-        from . import reporting as _errors
-
-        _errors.warning(
+        reporting.warning(
             f"{self._module_name}@{self.get_instance_path()}: {msg}"
         )
 
@@ -1431,8 +1493,16 @@ class UniqueModule:
         """
         from . import user_config
 
-        with user_config.context(self._manager, child):
-            child.execute()
+        # The child may not touch its parent's parameters (UniqueModule.pm:833).
+        parent_open = self._params_open
+        self._params_open = False
+        try:
+            with user_config.context(self._manager, child):
+                child.execute()
+        finally:
+            self._params_open = parent_open
+            child._params_open = False
+        child._lock_params()
 
     def execute(self) -> None:
         """Elaborate this module: open buffer, emit header, flush.

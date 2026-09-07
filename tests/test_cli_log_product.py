@@ -15,13 +15,6 @@ from genesispy.reporting import GenesisPyError
 from genesispy.manager import Manager
 
 
-@pytest.fixture(autouse=True)
-def _reset_log_state():
-    """Avoid cross-test contamination of the process-global log state."""
-    reporting.set_log_file(None)
-    yield
-    reporting.set_log_file(None)
-
 
 # ----------------------------------------------------------- J1 --log default
 
@@ -51,11 +44,15 @@ def test_log_file_created_on_first_warning(tmp_path: Path) -> None:
     assert "first warning" in content
 
 
-def test_log_set_to_none_disables() -> None:
+def test_log_set_to_none_disables(tmp_path, monkeypatch) -> None:
+    """After set_log_file(None) a warning reaches stderr only: no file is opened."""
+    monkeypatch.chdir(tmp_path)
+    reporting.set_log_file(str(tmp_path / "would-be.log"))
     reporting.set_log_file(None)
-    # No file path stored; _log is a no-op.
     reporting.warning("no log path set")
-    # No exception; just confirms the disable path works.
+    assert reporting._LOG_FH is None
+    assert not (tmp_path / "would-be.log").exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 # ----------------------------------------------- J2 --product / --vf-out

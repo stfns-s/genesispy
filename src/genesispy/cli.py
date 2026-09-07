@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shlex
 import sys
 from typing import List, Optional, Sequence, Tuple
@@ -15,6 +16,14 @@ from typing import List, Optional, Sequence, Tuple
 from genesispy import __version__
 from genesispy import reporting
 from genesispy.reporting import warning
+from genesispy.cli_common import (  # noqa: F401 -- re-exported for callers and tests
+    _add_deprecated_alias,
+    _comment_arg,
+    _output_comment_arg,
+    _emit_deprecation,
+    _reset_deprecation_warnings,
+    _warned_aliases,
+)
 from genesispy.extensions import parse_extension_spec
 
 
@@ -31,160 +40,6 @@ _LISTFILE_DEPRECATED = {
     "--srcpath": "--src-path",
     "--includepath": "--inc-path",
 }
-
-
-# Module-level guard so each deprecated alias warns at most once per process.
-_warned_aliases: set = set()
-
-
-def _reset_deprecation_warnings() -> None:
-    """Clear the one-time-per-flag deprecation guard. Test hook."""
-    _warned_aliases.clear()
-
-
-def _emit_deprecation(prog: str, old: str, new: str) -> None:
-    if old in _warned_aliases:
-        return
-    _warned_aliases.add(old)
-    reporting.warning(f"{prog}: {old} is deprecated; use {new}")
-
-
-class _DeprStoreAction(argparse.Action):
-    """Deprecated alias: stores a single value (like the default store action)."""
-
-    def __init__(self, option_strings, dest, *, new_flag, prog="genesispy", **kw):
-        self._new = new_flag
-        self._prog = prog
-        kw.setdefault("default", argparse.SUPPRESS)
-        super().__init__(option_strings, dest, help=argparse.SUPPRESS, **kw)
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        _emit_deprecation(self._prog, option_string, self._new)
-        setattr(namespace, self.dest, values)
-
-
-class _DeprAppendAction(argparse.Action):
-    """Deprecated alias: appends a value (like ``action='append'``)."""
-
-    def __init__(self, option_strings, dest, *, new_flag, prog="genesispy", **kw):
-        self._new = new_flag
-        self._prog = prog
-        kw.setdefault("default", argparse.SUPPRESS)
-        super().__init__(option_strings, dest, help=argparse.SUPPRESS, **kw)
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        _emit_deprecation(self._prog, option_string, self._new)
-        items = getattr(namespace, self.dest, None)
-        if items is None:
-            items = []
-        items = list(items)
-        items.append(values)
-        setattr(namespace, self.dest, items)
-
-
-class _DeprStoreTrueAction(argparse.Action):
-    """Deprecated alias: sets a flag to True (like ``action='store_true'``)."""
-
-    def __init__(self, option_strings, dest, *, new_flag, prog="genesispy", **kw):
-        self._new = new_flag
-        self._prog = prog
-        kw.setdefault("default", argparse.SUPPRESS)
-        super().__init__(
-            option_strings,
-            dest,
-            nargs=0,
-            help=argparse.SUPPRESS,
-            **kw,
-        )
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        _emit_deprecation(self._prog, option_string, self._new)
-        setattr(namespace, self.dest, True)
-
-
-def _add_deprecated_alias(
-    parser_or_group,
-    old_flags,
-    new_flag: str,
-    dest: str,
-    *,
-    kind: str = "store",
-    prog: str = "genesispy",
-    type=None,
-    choices=None,
-    metavar=None,
-) -> None:
-    """Register one or more deprecated aliases that forward to ``dest``.
-
-    ``kind`` is ``"store"``, ``"append"`` or ``"store_true"``. Each old flag
-    emits a one-time stderr warning naming ``new_flag``. ``help`` is always
-    SUPPRESS so the alias is hidden from both the ``usage:`` synopsis and
-    the body of ``--help``.
-    """
-    if isinstance(old_flags, str):
-        old_flags = [old_flags]
-    extras = {}
-    if type is not None:
-        extras["type"] = type
-    if choices is not None:
-        extras["choices"] = choices
-    if metavar is not None:
-        extras["metavar"] = metavar
-    if kind == "store":
-        action_cls = _DeprStoreAction
-    elif kind == "append":
-        action_cls = _DeprAppendAction
-    elif kind == "store_true":
-        action_cls = _DeprStoreTrueAction
-        # store_true has no value, so type/choices/metavar are nonsensical.
-        extras = {}
-    else:
-        raise ValueError(f"_add_deprecated_alias: unknown kind {kind!r}")
-
-    parser_or_group.add_argument(
-        *old_flags,
-        action=action_cls,
-        dest=dest,
-        new_flag=new_flag,
-        prog=prog,
-        **extras,
-    )
-
-
-def _comment_arg(raw: str) -> str:
-    """argparse ``type=`` validator for ``--comment``.
-
-    Rejects empty/whitespace-only values: an empty prefix collapses the
-    directive sentinel to bare ``;`` and emits banner lines without any
-    comment marker.
-    """
-    if not raw.strip():
-        raise argparse.ArgumentTypeError(
-            f"--comment {raw!r}: empty/whitespace-only comment prefix"
-        )
-    return raw
-
-
-def _output_comment_arg(raw: str):
-    """argparse ``type=`` for ``--output-comment``.
-
-    A ``,`` splits the value into ``(open, close)`` block delimiters; both
-    halves must be non-empty. Without a ``,`` the value is a line prefix.
-    Empty/whitespace-only values (or halves) are rejected.
-    """
-    if "," in raw:
-        open_d, _, close_d = raw.partition(",")
-        if not open_d.strip() or not close_d.strip():
-            raise argparse.ArgumentTypeError(
-                f"--output-comment {raw!r}: both OPEN and CLOSE must be "
-                f"non-empty (form 'OPEN,CLOSE')"
-            )
-        return (open_d, close_d)
-    if not raw.strip():
-        raise argparse.ArgumentTypeError(
-            f"--output-comment {raw!r}: empty/whitespace-only comment prefix"
-        )
-    return raw
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -575,7 +430,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_deprecated_alias(
         g_tmpl, "--comment", "--source-comment", dest="source_comment",
-        kind="store", type=_comment_arg,
+        kind="store", arg_type=_comment_arg,
     )
     g_tmpl.add_argument(
         "--output-comment",
@@ -697,7 +552,7 @@ def _parse_listfile_line(raw: str) -> Tuple[Optional[str], List[str]]:
     cleaned = _strip_inline_comment(raw).strip()
     if not cleaned:
         return None, []
-    tokens = shlex.split(cleaned, posix=True)
+    tokens = shlex.split(cleaned, posix=True)  # ValueError on an unbalanced quote
     if not tokens:
         return None, []
     head = tokens[0]
@@ -710,6 +565,30 @@ def _parse_listfile_line(raw: str) -> Tuple[Optional[str], List[str]]:
     return None, tokens
 
 
+_ENV_REF_RE = re.compile(r"\$\{?(\w+)\}?")
+
+
+def _resolve_listfile_path(token: str, listfile_dir: str, where: str) -> Optional[str]:
+    """A directive argument from a listfile, resolved as Genesis2 does
+    (Manager.pm:614-650): ``$VAR`` / ``${VAR}`` expanded, a relative path
+    joined to the listfile's own directory, the result made canonical.
+    An undefined variable or a path that does not exist is reported as a
+    warning and dropped (``None``). ``where`` is ``<listfile>:<line>``."""
+    for var in _ENV_REF_RE.findall(token):
+        if var not in os.environ:
+            warning(
+                f"ignoring path {token}: environment var {var} is undefined at {where}"
+            )
+            return None
+    path = os.path.expandvars(token)
+    if not os.path.isabs(path):
+        path = os.path.join(listfile_dir, path)
+    if not os.path.exists(path):
+        warning(f"ignoring path {path} (derived from {token}): non-existent path on {where}")
+        return None
+    return os.path.realpath(path)
+
+
 def _expand_listfiles(
     listfiles: List[str],
     parser: argparse.ArgumentParser,
@@ -720,12 +599,14 @@ def _expand_listfiles(
     """Recursively expand ``--input-list`` files.
 
     Returns ``(inputs, srcpaths, includepaths)`` accumulated across all
-    listfiles in order. True cycles (a listfile that is its own ancestor)
-    raise via ``parser.error``. A listfile that has already been fully
-    expanded (diamond / repeated reference) is skipped silently — no error,
-    no duplicate inputs. Empty listfiles (no inputs produced) emit a warning.
-    Duplicate input paths (within or across listfiles) emit a warning but are
-    kept.
+    listfiles in order. Path arguments resolve per
+    :func:`_resolve_listfile_path`. True cycles (a listfile that is its own
+    ancestor) raise via ``parser.error``. A bare path line is kept as
+    written (Perl Manager.pm:686-690). A listfile that has already been
+    fully expanded (diamond / repeated reference) is skipped silently -- no
+    error, no duplicate inputs. Empty listfiles (no inputs produced) emit a
+    warning. Duplicate input paths (within or across listfiles) emit a
+    warning but are kept.
 
     ``ancestors`` is a tuple of realpaths on the current recursion stack, used
     to detect true cycles.  ``processed`` is a shared set of realpaths that
@@ -761,10 +642,20 @@ def _expand_listfiles(
 
         produced_inputs = 0
         child_ancestors = ancestors + (abs_lf,)
+        lf_dir = os.path.dirname(abs_lf)
         for lineno, raw in enumerate(lines, 1):
-            directive, tokens = _parse_listfile_line(raw)
+            try:
+                directive, tokens = _parse_listfile_line(raw)
+            except ValueError as exc:
+                parser.error(f"--input-list {lf!r}:{lineno}: {exc}")
             if not tokens:
                 continue
+            if directive is not None:
+                where = f"{abs_lf}:{lineno}"
+                tokens = [
+                    r for r in (_resolve_listfile_path(t, lf_dir, where) for t in tokens)
+                    if r is not None
+                ]
             if directive is None or directive == "--input":
                 inputs.extend(tokens)
                 produced_inputs += len(tokens)
@@ -842,8 +733,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     # Local import to avoid a circular dep if Manager ever imports cli.
     from .manager import Manager
+    from .reporting import GenesisPyError
 
-    mgr = Manager(args)
+    try:
+        mgr = Manager(args)
+    except GenesisPyError as exc:
+        # Same one-line path execute() gives errors raised later on.
+        if not getattr(exc, "reported", False):
+            reporting.error(str(exc), fatal=False)
+        return 1
     return mgr.execute()
 
 

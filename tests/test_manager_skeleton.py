@@ -98,27 +98,27 @@ def test_find_file_missing_absolute_raises(tmp_path):
         m.find_file(str(tmp_path / "nope.vpy"))
 
 
-def test_resolve_module_class_walks_inc_path(tmp_path):
-    """resolve_module_class falls back to inc_path when input list misses.
+def test_resolve_module_class_walks_src_path(tmp_path):
+    """A string-named module not on --input is found under --src-path, as
+    Perl's load_base_module does (UniqueModule.pm:3210-3230)."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "lib_mod.vpy").write_text("module lib_mod;\nendmodule\n")
+    m = _make_manager(["--src-path", str(src), "--raw-dir", str(tmp_path / "raw")])
+    cls = m.resolve_module_class("lib_mod")
+    assert cls.__name__ == "lib_mod"
 
-    Mirrors Perl's @INC scan in load_base_module (UniqueModule.pm). Required
-    so that bare-name `synonym(src, trgt)` (Cluster A) and `unique_inst` by
-    string name can find `.vpy` sources that the user placed on `--inc-path`
-    instead of `--input`.
-    """
+
+def test_resolve_module_class_ignores_inc_path(tmp_path):
+    """--inc-path serves include() only; a template found there alone is not
+    a module (Perl consults IncludesPath in parse_file "inc" only)."""
+    from genesispy.reporting import GenesisPyError
     inc = tmp_path / "inc"
     inc.mkdir()
     (inc / "lib_mod.vpy").write_text("module lib_mod;\nendmodule\n")
-    raw = tmp_path / "raw"
-    m = _make_manager(
-        [
-            "--inc-path", str(inc),
-            "--raw-dir", str(raw),
-        ]
-    )
-    cls = m.resolve_module_class("lib_mod")
-    assert cls is not None
-    assert cls.__name__ == "lib_mod"
+    m = _make_manager(["--inc-path", str(inc), "--raw-dir", str(tmp_path / "raw")])
+    with pytest.raises(GenesisPyError, match="not found"):
+        m.resolve_module_class("lib_mod")
 
 
 def test_resolve_module_class_missing_raises(tmp_path):
@@ -129,9 +129,8 @@ def test_resolve_module_class_missing_raises(tmp_path):
         m.resolve_module_class("nonexistent_xyz")
 
 
-def test_execute_returns_zero(capsys):
+def test_execute_without_inputs_is_an_error(capsys):
     m = _make_manager([])
     rc = m.execute()
-    assert rc == 0
-    captured = capsys.readouterr()
-    assert "stub" in captured.err
+    assert rc == 1
+    assert "no input files" in capsys.readouterr().err

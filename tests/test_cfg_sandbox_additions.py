@@ -4,10 +4,8 @@ print_configuration to match Perl (ConfigHandler.pm:244-258).
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-import pytest
 
 from genesispy.cli import parse_args
 from genesispy.manager import Manager
@@ -20,12 +18,14 @@ def _write_cfg(tmp_path: Path, body: str) -> str:
 
 
 def _run_manager_with_cfg(cfg_path: str, top: str = "demo_top") -> Manager:
+    """Output dirs sit beside the cfg, so nothing lands outside tmp_path."""
+    scratch = Path(cfg_path).parent
     args = parse_args(
         [
             "--top", top,
             "--cfg", cfg_path,
-            "--out-dir", "/tmp/_cfg_test_out",
-            "--raw-dir", "/tmp/_cfg_test_raw",
+            "--out-dir", str(scratch / "out"),
+            "--raw-dir", str(scratch / "raw"),
         ]
     )
     return Manager(args)
@@ -61,7 +61,7 @@ def test_cfg_print_configuration_callable(tmp_path: Path, capsys) -> None:
     """A .cfg script can call print_configuration() without NameError."""
     cfg = _write_cfg(
         tmp_path,
-        "configure('A', 1)\n"
+        "configure('top.A', 1)\n"
         "print_configuration()\n",
     )
     mgr = _run_manager_with_cfg(cfg)

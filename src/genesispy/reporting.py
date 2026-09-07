@@ -48,7 +48,7 @@ def _close_log_at_exit() -> None:
         try:
             _LOG_FH.flush()
             _LOG_FH.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- shutdown: a failing log must not mask the run
             pass
         _LOG_FH = None
 
@@ -66,7 +66,7 @@ def set_log_file(path: Optional[str]) -> None:
     if _LOG_FH is not None:
         try:
             _LOG_FH.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- the tee is best-effort; stderr still has the text
             pass
         _LOG_FH = None
     _LOG_PATH = path
@@ -80,16 +80,15 @@ def _log(msg: str) -> None:
     if _LOG_FH is None and _LOG_PATH:
         try:
             _LOG_FH = open(_LOG_PATH, "w", encoding="utf-8")
-        except Exception:
-            # Couldn't open — disable logging silently; tee-to-stderr
-            # in error()/warning() still surfaces the message.
+        except Exception:  # noqa: BLE001 -- unopenable log: stderr still has the text
+            # Disable the tee silently; error()/warning() already wrote stderr.
             _LOG_PATH = None
             return
     if _LOG_FH is not None:
         try:
             _LOG_FH.write(msg)
             _LOG_FH.flush()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- the tee is best-effort
             pass
 
 

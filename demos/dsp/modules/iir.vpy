@@ -56,18 +56,18 @@ module `mname` #(
     wire signed     [IW-1:-FRAC_W]     iir_sh0 = acc >>> lm0;
 
     // 1st fractional - shift arithmetic broken down to maintain >>> signed properties
-    wire            [MWX-1:0]       lm1     = mu_int + 'd1;
-    wire signed     [IW-1:-FRAC_W]     _in_sh1  = in_sx >>> lm1;
-    wire signed     [IW-1:-FRAC_W]     _iir_sh1 = acc >>> lm1;
-    wire signed     [IW-1:-FRAC_W]     in_sh1   = _in_sh1  & { (IW+FRAC_W) { mf[1] } };
-    wire signed     [IW-1:-FRAC_W]     iir_sh1  = _iir_sh1 & { (IW+FRAC_W) { mf[1] } };
+    wire            [MWX-1:0]       lm1     = mu_int + {{(MWX-1){1'b0}}, 1'b1};
+    wire signed     [IW-1:-FRAC_W]     in_sh1_raw  = in_sx >>> lm1;
+    wire signed     [IW-1:-FRAC_W]     iir_sh1_raw = acc >>> lm1;
+    wire signed     [IW-1:-FRAC_W]     in_sh1   = in_sh1_raw  & { (IW+FRAC_W) { mf[1] } };
+    wire signed     [IW-1:-FRAC_W]     iir_sh1  = iir_sh1_raw & { (IW+FRAC_W) { mf[1] } };
 
     // 2nd fractional
-    wire            [MWX-1:0]       lm2     = mu_int + 'd2;
-    wire signed     [IW-1:-FRAC_W]     _in_sh2  = in_sx >>> lm2;
-    wire signed     [IW-1:-FRAC_W]     _iir_sh2 = acc >>> lm2;
-    wire signed     [IW-1:-FRAC_W]     in_sh2   = _in_sh2  & { (IW+FRAC_W) { mf[0] } };
-    wire signed     [IW-1:-FRAC_W]     iir_sh2  = _iir_sh2 & { (IW+FRAC_W) { mf[0] } };
+    wire            [MWX-1:0]       lm2     = mu_int + {{(MWX-2){1'b0}}, 2'b10};
+    wire signed     [IW-1:-FRAC_W]     in_sh2_raw  = in_sx >>> lm2;
+    wire signed     [IW-1:-FRAC_W]     iir_sh2_raw = acc >>> lm2;
+    wire signed     [IW-1:-FRAC_W]     in_sh2   = in_sh2_raw  & { (IW+FRAC_W) { mf[0] } };
+    wire signed     [IW-1:-FRAC_W]     iir_sh2  = iir_sh2_raw & { (IW+FRAC_W) { mf[0] } };
 
     // feedback
     wire signed     [IW-1:-FRAC_W]     in_sh   = in_sh0  + in_sh1  + in_sh2;
@@ -80,7 +80,7 @@ module `mname` #(
     always @(posedge clk)
 //; # endif
         if ( reset )
-            acc <= 'd0;
+            acc <= {(IW+FRAC_W){1'b0}};
         else
             acc <= en ? iir_res + in_sh : acc;
 

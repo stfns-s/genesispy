@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable
 
 try:
     from lxml import etree as _ET  # type: ignore
@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover
     import xml.etree.ElementTree as _ET  # type: ignore
     _USING_LXML = False
 
-from .._scalars import coerce_scalar as _coerce_scalar_str
+from .._scalars import coerce_canonical
 
 
 # Tags that always become lists when reading XML (matches XML::Simple's
@@ -128,15 +128,16 @@ def _element_to_obj(elem: Any, force_list: frozenset[str]) -> Any:
     return result
 
 
-def _read_xml(path: str, force_list: Optional[Iterable[str]] = None) -> dict:
+def _read_xml(path: str, force_list: Iterable[str] | None = None) -> dict:
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
     fl = frozenset(force_list) if force_list is not None else DEFAULT_FORCE_LIST
     tree = _ET.parse(path)
     root = tree.getroot()
     obj = _element_to_obj(root, fl)
-    if not isinstance(obj, dict):
-        obj = {"_text": obj} if obj else {}
+    # A text-only root is a scalar document, e.g. ``<top>hello</top>``.
+    if not isinstance(obj, dict) and not obj:
+        obj = {}
     return {_strip_ns(root.tag): obj}
 
 
@@ -226,9 +227,7 @@ def _to_native(value: Any) -> Any:
         return out
     if isinstance(value, list):
         return [_to_native(v) for v in value]
-    if isinstance(value, str):
-        return _coerce_scalar_str(value)
-    return value
+    return coerce_canonical(value)
 
 
 def xml_to_json(xml_path: str, json_path: str) -> None:
@@ -286,10 +285,12 @@ def _hash_item(key: Any, value: Any) -> dict:
         return {"Key": key, "ArrayType": {"ArrayItem": [_array_item(i) for i in value]}}
     if isinstance(value, dict):
         if "__ArrayType__" in value:
-            return {"Key": key, "ArrayType": {"ArrayItem": [_array_item(i) for i in value["__ArrayType__"]]}}
+            items = [_array_item(i) for i in value["__ArrayType__"]]
+            return {"Key": key, "ArrayType": {"ArrayItem": items}}
         if "__HashType__" in value:
             inner = value["__HashType__"]
-            return {"Key": key, "HashType": {"HashItem": [_hash_item(k, v) for k, v in inner.items()]}}
+            items = [_hash_item(k, v) for k, v in inner.items()]
+            return {"Key": key, "HashType": {"HashItem": items}}
         if "__Val__" in value:
             return {"Key": key, "Val": value["__Val__"]}
         return {"Key": key, **_from_native(value)}
@@ -375,9 +376,9 @@ _USAGE = (
 )
 
 
-def _main(argv: list[str], mode: str) -> int:
+def _main(args: list[str], mode: str) -> int:
+    """``args`` are the bare command-line arguments (no program name)."""
     prog = f"genesispy-{mode}"
-    args = argv[1:]
     if len(args) != 2 or args[0] in ("-h", "--help"):
         direction = "XML to JSON" if mode == "xml2json" else "JSON to XML"
         sys.stderr.write(_USAGE.format(prog=prog, direction=direction))
@@ -390,9 +391,9 @@ def _main(argv: list[str], mode: str) -> int:
     return 0
 
 
-def main_xml2json(argv: Optional[list[str]] = None) -> int:
-    return _main(list(sys.argv if argv is None else argv), "xml2json")
+def main_xml2json(argv: list[str] | None = None) -> int:
+    return _main(list(sys.argv[1:] if argv is None else argv), "xml2json")
 
 
-def main_json2xml(argv: Optional[list[str]] = None) -> int:
-    return _main(list(sys.argv if argv is None else argv), "json2xml")
+def main_json2xml(argv: list[str] | None = None) -> int:
+    return _main(list(sys.argv[1:] if argv is None else argv), "json2xml")

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Shared body of the in-tree launchers: run a genesispy module from ../src
+# without an install. Usage: _launch MODULE [ARGS...]
+set -euo pipefail
+
+here="$(cd -P -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd)"
+repo_root="$(cd -- "$here/.." && pwd)"
+module="$1"
+shift
+export PYTHONPATH="$repo_root/src${PYTHONPATH:+:$PYTHONPATH}"
+# PYTHON selects the interpreter (default python3).
+exec "${PYTHON:-python3}" -m "$module" "$@"

@@ -116,7 +116,8 @@ INCLUDED_FILES: List[str] = []
 
 
 def clear_all() -> None:
-    """Reset every singleton.  Intended for tests."""
+    """Reset every process-global: the caches here, the runtime line maps,
+    the pyinclude state, and the reporting log tee."""
     MODULE_CACHE.clear()
     MODULE_NAME_NUM_DERIVS.clear()
     OUTFILE_CONTENT_CACHE.clear()
@@ -129,6 +130,8 @@ def clear_all() -> None:
     _rt.clear_line_maps()
     from . import user_config as _uc
     _uc._reset_pyinclude_state()
+    from . import reporting as _reporting
+    _reporting.set_log_file(None)
 
 
 def next_derivation(base_name: str) -> int:

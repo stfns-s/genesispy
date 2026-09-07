@@ -134,7 +134,7 @@
 // =============================================================================
 //                  LIST OF REGISTERS IN THIS MODULE:
 // =============================================================================
-{% base_addr_legend = f"{base_addr}'h{base_addr:x}" %}
+{% base_addr_legend = f"{cfg_addr_width}'h{base_addr:x}" %}
 // LEGEND:
 //      BASE_ADDRESS {{ base_addr_legend }}
 //      IEO:  I for input (register samples design)

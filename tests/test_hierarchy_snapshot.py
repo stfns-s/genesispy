@@ -6,7 +6,6 @@ import json
 
 import pytest
 
-from genesispy import cache
 from genesispy.config_handler import (
     ConfigHandler,
     Priority,
@@ -17,9 +16,6 @@ from genesispy.unique_module import UniqueModule
 
 from ._stubs import StubManager
 
-
-def setup_function(_fn) -> None:
-    cache.clear_all()
 
 
 class _Top(UniqueModule):
@@ -60,6 +56,7 @@ def _make_tree() -> _Top:
     _set_param(a, "WIDTH", 8, int(Priority.CMD_LINE))
     _set_param(a, "DEPTH", 4, int(Priority.DECLARATION), state="DEFINED")
     _set_param(a, "DEBUG", True, int(Priority.INHERITANCE))
+    _set_param(a, "PIN", 3, int(Priority.IMMUTABLE), state="FORCED")
 
     top.clone_inst(a, "u_b")
 
@@ -89,9 +86,10 @@ def test_full_snapshot_shape() -> None:
 
     a = by_name["u_a"]
     a_params = {p["Name"]: p["Val"] for p in a["Parameters"]}
-    # DEPTH dropped (NeverUsed); DEBUG (INHERITANCE) goes in Parameters, not Immutable.
-    assert a_params == {"WIDTH": 8, "DEBUG": True}
-    assert "ImmutableParameters" not in a
+    # DEPTH is a declared default and stays; DEBUG (INHERITANCE) goes in
+    # Parameters; only the force-pinned PIN lands under ImmutableParameters.
+    assert a_params == {"WIDTH": 8, "DEPTH": 4, "DEBUG": True}
+    assert {p["Name"]: p["Val"] for p in a["ImmutableParameters"]} == {"PIN": 3}
 
     # Clone: only CloneOf, no params/subinstances. Path uses dot separator.
     b = by_name["u_b"]
@@ -106,7 +104,7 @@ def test_small_drops_immutable_keeps_subtree() -> None:
     children = snap["HierarchyTop"]["SubInstances"]
     a = next(c for c in children if c["InstanceName"] == "u_a")
     assert "ImmutableParameters" not in a
-    assert {p["Name"] for p in a["Parameters"]} == {"WIDTH", "DEBUG"}
+    assert {p["Name"] for p in a["Parameters"]} == {"WIDTH", "DEPTH", "DEBUG"}
 
 
 def test_tiny_keeps_only_user_overrides() -> None:
@@ -117,7 +115,7 @@ def test_tiny_keeps_only_user_overrides() -> None:
 
     # u_a: WIDTH (CMD_LINE) and DEBUG (INHERITANCE) both >= EXTERNAL_PARAM_FILE.
     # Pre-#81 fix DEBUG was dropped via the immut bucket.
-    assert {p["Name"] for p in by_name["u_a"]["Parameters"]} == {"WIDTH", "DEBUG"}
+    assert {p["Name"] for p in by_name["u_a"]["Parameters"]} == {"WIDTH", "DEBUG", "PIN"}
     assert "ImmutableParameters" not in by_name["u_a"]
 
     # u_c: WIDTH at EXTERNAL_CONFIG (< EXTERNAL_PARAM_FILE) -> empty -> pruned.
@@ -183,8 +181,7 @@ def test_write_json_emits_three_files(tmp_path) -> None:
         c for c in full["HierarchyTop"]["SubInstances"]
         if c["InstanceName"] == "u_a"
     )
-    # ImmutableParameters always empty post-#81 (no recursion tracking).
-    assert "ImmutableParameters" not in full_a
+    assert {p["Name"] for p in full_a["ImmutableParameters"]} == {"PIN"}
 
     small_a = next(
         c for c in small["HierarchyTop"]["SubInstances"]

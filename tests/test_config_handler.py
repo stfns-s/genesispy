@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import os
 
 import pytest
 
+from genesispy.reporting import ConfigError
 from genesispy.config_handler import ConfigHandler, Priority, _parse_cmdln_param
 
 from tests._stubs import args_namespace as _make_manager  # noqa: E402
@@ -83,15 +83,15 @@ def test_configure_priority_aware_writes(capsys):
     ch = ConfigHandler(_make_manager())
 
     # Higher priority first; lower second must not overwrite, must not warn.
-    ch.configure("X", 1, priority=Priority.EXTERNAL_CONFIG)
+    ch.configure("top.X", 1, priority=Priority.EXTERNAL_CONFIG)
     capsys.readouterr()  # drain
-    ch.configure("X", 99, priority=Priority.DECLARATION)
-    assert ch.get_configuration("X") == 1
+    ch.configure("top.X", 99, priority=Priority.DECLARATION)
+    assert ch.get_configuration("top.X") == 1
     assert "redefinition" not in capsys.readouterr().err
 
     # Equal-priority second overwrites and warns.
-    ch.configure("X", 2, priority=Priority.EXTERNAL_CONFIG)
-    assert ch.get_configuration("X") == 2
+    ch.configure("top.X", 2, priority=Priority.EXTERNAL_CONFIG)
+    assert ch.get_configuration("top.X") == 2
     assert "redefinition" in capsys.readouterr().err
 
 
@@ -103,17 +103,28 @@ def test_scoped_cfg_configure_via_dotted_name():
     assert ch.get_configuration(
         "WIDTH", instance_path=("top", "child")
     ) == 64
-    # Different path: no match, falls through to flat (also empty).
-    assert ch.get_configuration(
-        "WIDTH", instance_path=("top", "other")
-    ) is None
-    # Flat configure unaffected.
-    assert ch.get_configuration("WIDTH") is None
-    # exists_configuration honours the scoped entry.
-    assert ch.exists_configuration(
-        "WIDTH", instance_path=("top", "child")
-    )
-    assert not ch.exists_configuration("WIDTH")
+    # Different path: no match (ConfigHandler.pm:1512 dies).
+    with pytest.raises(ConfigError, match="Could not find parameter 'top.other.WIDTH'"):
+        ch.get_configuration("WIDTH", instance_path=("top", "other"))
+    # exists_configuration honours the scoped entry, in both spellings.
+    assert ch.exists_configuration("WIDTH", instance_path=("top", "child"))
+    assert ch.exists_configuration("top.child.WIDTH")
+    assert not ch.exists_configuration("top.WIDTH")
+
+
+def test_cfg_api_requires_a_dotted_name():
+    """ConfigHandler.pm:1349-1356: a bare name is rejected by every .cfg entry point."""
+    ch = ConfigHandler(_make_manager())
+    for call in (
+        lambda: ch.configure("WIDTH", 1),
+        lambda: ch.get_configuration("WIDTH"),
+        lambda: ch.exists_configuration("WIDTH"),
+        lambda: ch.remove_configuration("WIDTH"),
+        lambda: ch.configure("top..WIDTH", 1),
+        lambda: ch.configure("top.WIDTH.", 1),
+    ):
+        with pytest.raises(ConfigError, match="separated by a dot"):
+            call()
 
 
 def test_scoped_cmdln_lookup_exact_match():
@@ -123,21 +134,14 @@ def test_scoped_cmdln_lookup_exact_match():
     assert ch.get_configuration(
         "out_val", instance_path=("top", "child2")
     ) == 2
-    # Different leaf -> no match.
-    assert ch.get_configuration(
-        "out_val", instance_path=("top", "child1")
-    ) is None
-    # Different parent -> no match.
-    assert ch.get_configuration(
-        "out_val", instance_path=("other", "child2")
-    ) is None
-    # No path argument -> scoped DB ignored.
-    assert ch.get_configuration("out_val") is None
+    # Different leaf, different parent, the top itself -> no match.
+    for path in (("top", "child1"), ("other", "child2"), ("top",)):
+        assert not ch.exists_configuration("out_val", instance_path=path)
+        with pytest.raises(ConfigError, match="Could not find parameter"):
+            ch.get_configuration("out_val", instance_path=path)
     # exists_configuration mirrors lookup.
-    assert ch.exists_configuration(
-        "out_val", instance_path=("top", "child2")
-    )
-    assert not ch.exists_configuration("out_val")
+    assert ch.exists_configuration("out_val", instance_path=("top", "child2"))
+    assert ch.exists_configuration("top.child2.out_val")
 
 
 def test_scoped_cmdln_wins_over_flat_for_matching_path():
@@ -149,8 +153,8 @@ def test_scoped_cmdln_wins_over_flat_for_matching_path():
     assert ch.get_configuration("x", instance_path=("top", "a")) == 99
     # Non-matching path: scoped doesn't apply, flat is used.
     assert ch.get_configuration("x", instance_path=("top", "b")) == 1
-    # No path: flat only.
-    assert ch.get_configuration("x") == 1
+    # A bare -p applies at every path.
+    assert ch.get_configuration("top.x") == 1
 
 
 def test_duplicate_scoped_cmdln_raises():
@@ -179,7 +183,7 @@ def test_xml_explicit_null_distinguishable_from_absent(tmp_path):
     # returns True for explicit null, False for absence (_MISSING sentinel).
     json_p = tmp_path / "cfg.json"
     json_p.write_text(
-        '{"HierarchyTop": {"Parameters": ['
+        '{"HierarchyTop": {"InstanceName": "top", "Parameters": ['
         '{"Name": "EXPLICIT_NULL", "__Val__": null}'
         "]}}"
     )
@@ -187,22 +191,25 @@ def test_xml_explicit_null_distinguishable_from_absent(tmp_path):
     ch.read_json(str(json_p))
 
     # Explicit null: present, value None.
-    assert ch.exists_configuration("EXPLICIT_NULL") is True
+    assert ch.exists_configuration("top.EXPLICIT_NULL") is True
+    assert ch.get_configuration("top.EXPLICIT_NULL") is None
     assert ch.get_param_val("EXPLICIT_NULL") is None
 
     # Truly absent name: not present.
-    assert ch.exists_configuration("NEVER_SET") is False
+    assert ch.exists_configuration("top.NEVER_SET") is False
 
 
-def test_get_param_val_malformed_parameter_returns_none(tmp_path):
-    """A Parameter with no value-bearing key is treated as missing."""
+def test_read_json_rejects_parameter_without_value_key(tmp_path):
+    """A Parameter with no value-bearing key fails validation at read time."""
+    from genesispy.reporting import ConfigError
+
     json_path = tmp_path / "c.json"
     json_path.write_text(
         '{"HierarchyTop": {"Parameters": [{"Name": "X"}]}}'
     )
     ch = ConfigHandler(_make_manager())
-    ch.read_json(str(json_path))
-    assert ch.get_param_val("X") is None
+    with pytest.raises(ConfigError, match="exactly one of"):
+        ch.read_json(str(json_path))
 
 
 def test_input_immutable_parameters_ignored(tmp_path):
@@ -211,13 +218,13 @@ def test_input_immutable_parameters_ignored(tmp_path):
     only ``Parameters`` is a value source."""
     json_p = tmp_path / "cfg.json"
     json_p.write_text(
-        '{"HierarchyTop": {"ImmutableParameters": ['
+        '{"HierarchyTop": {"InstanceName": "top", "ImmutableParameters": ['
         '{"Name": "PINNED", "__Val__": 42}'
         "]}}"
     )
     ch = ConfigHandler(_make_manager())
     ch.read_json(str(json_p))
-    assert ch.exists_configuration("PINNED") is False
+    assert ch.exists_configuration("top.PINNED") is False
     assert ch.get_param_val("PINNED") is None
 
 
@@ -237,77 +244,77 @@ def test_read_json_wraps_decode_error(tmp_path):
 def test_json_overrides_cfg(tmp_path):
     json_path = tmp_path / "c.json"
     json_path.write_text(
-        '{"HierarchyTop": {"Parameters": ['
+        '{"HierarchyTop": {"InstanceName": "top", "Parameters": ['
         '{"Name": "WIDTH", "__Val__": 4}'
         "]}}"
     )
     cfg_path = tmp_path / "c.cfg"
-    cfg_path.write_text("configure('WIDTH', 16)\n")
+    cfg_path.write_text("configure('top.WIDTH', 16)\n")
 
     ch = ConfigHandler(_make_manager())
+    ch.read_cfg(str(cfg_path))
+    assert ch.get_configuration("top.WIDTH") == 16
     ch.read_json(str(json_path))
     assert ch.get_param_val("WIDTH") == 4
-    ch.read_cfg(str(cfg_path))
-    assert ch.get_cfg_param_val("WIDTH") == 16
     # JSON outranks .cfg (matches Perl Genesis2).
-    assert ch.get_configuration("WIDTH") == 4
+    assert ch.get_configuration("top.WIDTH") == 4
 
 
 def test_cmdln_overrides_json_overrides_cfg(tmp_path):
     json_path = tmp_path / "c.json"
     json_path.write_text(
-        '{"HierarchyTop": {"Parameters": ['
+        '{"HierarchyTop": {"InstanceName": "top", "Parameters": ['
         '{"Name": "X", "__Val__": 1}'
         "]}}"
     )
     cfg_path = tmp_path / "c.cfg"
-    cfg_path.write_text("configure('X', 2)\n")
+    cfg_path.write_text("configure('top.X', 2)\n")
 
     ch = ConfigHandler(_make_manager(parameter=["X=99"]))
     ch.read_json(str(json_path))
     ch.read_cfg(str(cfg_path))
-    assert ch.get_configuration("X") == 99
+    assert ch.get_configuration("top.X") == 99
     assert ch.get_param_val("X") == 1
-    assert ch.get_cfg_param_val("X") == 2
     assert ch.get_cmdln_param_val("X") == 99
 
     # Without CLI: JSON wins over .cfg.
     ch2 = ConfigHandler(_make_manager())
     ch2.read_json(str(json_path))
     ch2.read_cfg(str(cfg_path))
-    assert ch2.get_configuration("X") == 1
+    assert ch2.get_configuration("top.X") == 1
 
 
 def test_simple_cfg_sandbox(tmp_path):
     cfg_path = tmp_path / "c.cfg"
     cfg_path.write_text(
-        "configure('WIDTH', 8)\n"
-        "configure('NAME', 'top')\n"
-        "if exists_configuration('WIDTH'):\n"
-        "    configure('DOUBLED', get_configuration('WIDTH') * 2)\n"
+        "configure('top.WIDTH', 8)\n"
+        "configure('top.NAME', 'top')\n"
+        "if exists_configuration('top.WIDTH'):\n"
+        "    configure('top.DOUBLED', get_configuration('top.WIDTH') * 2)\n"
     )
 
     ch = ConfigHandler(_make_manager())
     ch.read_cfg(str(cfg_path))
-    assert ch.get_configuration("WIDTH") == 8
-    assert ch.get_configuration("NAME") == "top"
-    assert ch.get_configuration("DOUBLED") == 16
+    assert ch.get_configuration("top.WIDTH") == 8
+    assert ch.get_configuration("top.NAME") == "top"
+    assert ch.get_configuration("top.DOUBLED") == 16
 
 
 def test_exists_and_remove(tmp_path):
     cfg_path = tmp_path / "c.cfg"
-    cfg_path.write_text("configure('A', 1)\n")
+    cfg_path.write_text("configure('top.A', 1)\n")
     ch = ConfigHandler(_make_manager())
     ch.read_cfg(str(cfg_path))
-    assert ch.exists_configuration("A")
-    ch.remove_configuration("A")
-    assert not ch.exists_configuration("A")
-    assert ch.get_configuration("A") is None
+    assert ch.exists_configuration("top.A")
+    ch.remove_configuration("top.A")
+    assert not ch.exists_configuration("top.A")
+    with pytest.raises(ConfigError, match="Could not find parameter 'top.A'"):
+        ch.get_configuration("top.A")
 
 
 def test_print_configuration_non_empty(tmp_path):
     cfg_path = tmp_path / "c.cfg"
-    cfg_path.write_text("configure('WIDTH', 8)\n")
+    cfg_path.write_text("configure('top.WIDTH', 8)\n")
 
     ch = ConfigHandler(_make_manager(parameter=["DEBUG=true"]))
     ch.read_cfg(str(cfg_path))
@@ -320,10 +327,10 @@ def test_print_configuration_non_empty(tmp_path):
 
 def test_configure_with_type_bool():
     ch = ConfigHandler(_make_manager())
-    ch.configure("FLAG", "true", type="bool")
-    assert ch.get_cfg_param_val("FLAG") is True
-    ch.configure("FLAG2", "0", type="bool")
-    assert ch.get_cfg_param_val("FLAG2") is False
+    ch.configure("top.FLAG", "true", type="bool")
+    assert ch.get_configuration("top.FLAG") is True
+    ch.configure("top.FLAG2", "0", type="bool")
+    assert ch.get_configuration("top.FLAG2") is False
 
 
 def test_manager_does_not_re_ingest_parameter_overrides(tmp_path):
@@ -343,15 +350,12 @@ def test_manager_does_not_re_ingest_parameter_overrides(tmp_path):
     ch = m.cfg_handler
 
     cmdln = ch.cmdln_db_snapshot()
-    cfg = ch.cfg_db_snapshot()
     scoped = ch.cmdln_scoped_db_snapshot()
 
-    # Flat override: in cmdln_db only, not cfg_db.
+    # Bare override: in cmdln_db only.
     assert "WIDTH" in cmdln
-    assert "WIDTH" not in cfg
+    assert "WIDTH" not in scoped
 
-    # Scoped override: in cmdln_scoped_db only; the bogus flat key
-    # "top.foo.X" must not appear in cfg_db.
+    # Scoped override: in cmdln_scoped_db only.
     assert (("top", "foo"), "X") in scoped
-    assert "top.foo.X" not in cfg
-    assert "X" not in cfg
+    assert "X" not in cmdln

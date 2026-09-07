@@ -1,15 +1,11 @@
-"""Tests for the unified scalar coercion (``_scalars.coerce_scalar``).
-
-Both ``config_handler._coerce_scalar`` and ``json_io._coerce_scalar_str``
-are aliases for this single function, so this file is the canonical
-behaviour spec.
-"""
+"""Tests for the two scalar coercion rules in ``_scalars``: ``coerce_scalar``
+(command-line values) and ``coerce_canonical`` (``genesispy-xml2json``)."""
 
 from __future__ import annotations
 
 import pytest
 
-from genesispy._scalars import coerce_scalar
+from genesispy._scalars import coerce_canonical, coerce_scalar
 
 
 @pytest.mark.parametrize(
@@ -54,9 +50,36 @@ def test_coerce_scalar_inf_nan_round_trip_as_string(raw):
     assert isinstance(coerce_scalar(raw), str)
 
 
-def test_aliases_resolve_to_same_function():
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("42", 42),
+        ("-7", -7),
+        ("0", 0),
+        ("1.5", 1.5),
+        ("-0.25", -0.25),
+        ("true", True),
+        ("false", False),
+        # Not lossless: the text would not read back the same.
+        ("010", "010"),
+        ("+5", "+5"),
+        ("1e3", "1e3"),
+        (".5", ".5"),
+        ("1.", "1."),
+        ("True", "True"),
+        ("hello", "hello"),
+        ("", ""),
+        (42, 42),
+        (None, None),
+    ],
+)
+def test_coerce_canonical(raw, expected):
+    result = coerce_canonical(raw)
+    assert result == expected
+    assert type(result) is type(expected)
+
+
+def test_command_line_values_use_the_permissive_rule():
     from genesispy.config_handler import _coerce_scalar as ch
-    from genesispy.tools.xml_json import _coerce_scalar_str as helper
 
     assert ch is coerce_scalar
-    assert helper is coerce_scalar

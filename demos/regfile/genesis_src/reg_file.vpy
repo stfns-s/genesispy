@@ -66,7 +66,12 @@
 //;
 //;
 // ACTUAL GENESIS2 PARAMETERIZATIONS
-//; reg_list = parameter('REG_LIST', [{'name': 'regA', 'width': 5, 'default': 17, 'IEO': 'ie', 'comment': 'this is a reg'}, {'name': 'regB', 'width': 10, 'default': 27, 'IEO': 'o'}, {'name': 'regC', 'width': 15, 'IEO': 'ieo'}, {'name': 'regD', 'width': 13, 'default': 4, 'IEO': 'i'}])
+//; reg_list = parameter('REG_LIST', [
+//;     {'name': 'regA', 'width': 5, 'default': 17, 'IEO': 'ie', 'comment': 'this is a reg'},
+//;     {'name': 'regB', 'width': 10, 'default': 27, 'IEO': 'o'},
+//;     {'name': 'regC', 'width': 15, 'IEO': 'ieo'},
+//;     {'name': 'regD', 'width': 13, 'default': 4, 'IEO': 'i'},
+//; ])
 //; num_regs = len(reg_list)
 //; base_addr = parameter('BASE_ADDR', 0)
 //; cfg_ops = parameter('CFG_OPCODES', {'nop': 0, 'read': 1, 'write': 2, 'bypass': 3})
@@ -134,7 +139,7 @@
 // =============================================================================
 //                  LIST OF REGISTERS IN THIS MODULE:
 // =============================================================================
-//; base_addr_legend = f"{base_addr}'h{base_addr:x}"
+//; base_addr_legend = f"{cfg_addr_width}'h{base_addr:x}"
 // LEGEND:
 //      BASE_ADDRESS `base_addr_legend`
 //      IEO:  I for input (register samples design)

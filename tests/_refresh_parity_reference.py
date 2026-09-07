@@ -41,6 +41,7 @@ from typing import Dict, List, Tuple
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 from _parity_normalize import build_variant_map, normalize, parse_header  # noqa: E402
+from _parity_run import run_make, stage_perl, stage_py  # noqa: E402
 
 INNER_REPO = _HERE.parent
 DEMOS_DIR = INNER_REPO / "demos"
@@ -52,7 +53,7 @@ FIXTURES = _HERE / "fixtures" / "parity_reference"
 # genesispy default is no config (different widths). Force the JSON
 # equivalent (config.json is committed alongside config.xml in the demo).
 PY_API_EXTRA: Dict[str, List[str]] = {
-    "many_iterative_wallace_trees": ["--json", "config.json"],
+    "many_iterative_wallace_trees": ["--json-cfg", "config.json"],
 }
 
 # Per-demo argv for the genesispy API call. Mirrors the per-demo Makefile
@@ -86,20 +87,6 @@ DEMOS = (
 PERL_OUT_SUBDIRS = ("genesis_verif", "genesis_synth")
 PY_OUT_SUBDIRS = ("genesis_synth", "genesis_verif")
 
-# Build artefacts left in a live demo dir that confuse `make gen` if copied.
-_STALE_NAMES = {
-    "genesis_synth", "genesis_verif", "genesis_raw", "genesis_work",
-    "obj_dir", "xcelium.d", "xrun.history", "xrun.log",
-    "genesis_vlog.vf", "genesis_vlog.synth.vf", "genesis_vlog.verif.vf",
-    "depend.list", "wallace.xml", "small_wallace.xml", "tiny_wallace.xml",
-    "genesis.log", "genesis_clean.cmd",
-}
-
-
-def _ignore_stale(_dir: str, names: List[str]) -> List[str]:
-    return [n for n in names if n in _STALE_NAMES]
-
-
 def _build_env(genesis_home: Path) -> Dict[str, str]:
     env = os.environ.copy()
     env["GENESIS_HOME"] = str(genesis_home)
@@ -112,18 +99,6 @@ def _build_env(genesis_home: Path) -> Dict[str, str]:
     env["PERL5LIB"] = ":".join(perl_libs)
     env["PATH"] = f"{genesis_home / 'bin'}{os.pathsep}{env.get('PATH', '')}"
     return env
-
-
-def _run_make(workdir: Path, env: Dict[str, str]) -> None:
-    r = subprocess.run(
-        ["make", "gen"], cwd=workdir, env=env,
-        capture_output=True, text=True, timeout=180,
-    )
-    if r.returncode != 0:
-        raise RuntimeError(
-            f"`make gen` failed in {workdir}\n"
-            f"STDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}"
-        )
 
 
 def _collect_bodies(workdir: Path, subdirs: Tuple[str, ...], all_bases: set
@@ -162,35 +137,12 @@ def _bases_only(workdir: Path, subdirs: Tuple[str, ...]) -> set:
     return bases
 
 
-def _stage_perl(tmp: Path, demo: str, genesis_home: Path) -> Path:
-    src = genesis_home / "demo" / demo
-    if not src.is_dir():
-        raise FileNotFoundError(
-            f"Perl demo not found: {src}. Is --genesis-home pointing at a "
-            f"Genesis2 install with demo/{demo}/?"
-        )
-    dst = tmp / "perl"
-    shutil.copytree(src, dst, ignore=_ignore_stale)
-    for rel in PERL_MISSING_SOURCES.get(demo, []):
-        (dst / rel).touch()
-    return dst
-
-
-def _stage_py(tmp: Path, demo: str) -> Path:
-    base = tmp / "py"
-    base.mkdir()
-    shutil.copy(DEMOS_DIR / "genesispy.mk", base / "genesispy.mk")
-    dst = base / demo
-    shutil.copytree(DEMOS_DIR / demo, dst, ignore=_ignore_stale)
-    return dst
-
-
 def _refresh_demo(demo: str, genesis_home: Path, env: Dict[str, str]) -> None:
     print(f"[{demo}] staging + Perl make gen ...")
     with tempfile.TemporaryDirectory(prefix=f"parity_ref_{demo}_") as tmp_str:
         tmp = Path(tmp_str)
-        perl_wd = _stage_perl(tmp, demo, genesis_home)
-        _run_make(perl_wd, env)
+        perl_wd = stage_perl(tmp, demo, genesis_home / "demo", PERL_MISSING_SOURCES)
+        run_make(perl_wd, env)
 
         # First pass: discover all base names so the normaliser can collapse
         # uniquification suffixes correctly across both sides.
@@ -199,7 +151,7 @@ def _refresh_demo(demo: str, genesis_home: Path, env: Dict[str, str]) -> None:
         # genesispy-side cross-check: run via API and compare per-base body
         # sets against Perl. Uses _stage_py + the same demo argv as the
         # smoke test will use.
-        py_wd = _stage_py(tmp, demo)
+        py_wd = stage_py(tmp, demo, DEMOS_DIR)
         py_bases = _run_genesispy_api(py_wd, demo)
         all_bases = perl_bases | py_bases
 
@@ -271,7 +223,7 @@ def _run_genesispy_api(workdir: Path, demo: str) -> set:
     argv = []
     for inp in inputs:
         argv.extend(["--input", inp])
-    argv.extend(["--top", top, "--srcpath", "genesis_src"])
+    argv.extend(["--top", top, "--src-path", "genesis_src"])
     argv.extend(PY_API_EXTRA.get(demo, []))
 
     cwd = os.getcwd()

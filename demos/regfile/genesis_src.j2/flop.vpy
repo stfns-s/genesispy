@@ -16,7 +16,7 @@
 /*******************************************************************************
  * REQUIRED PARAMETERIZATION
  ******************************************************************************/
-{% flop_type = parameter('FLOP_TYPE', "REFLOP") %}
+{% flop_type = parameter('FLOP_TYPE', "REFLOP", list=['constant', 'flop', 'rflop', 'eflop', 'reflop', 'CONSTANT', 'FLOP', 'RFLOP', 'EFLOP', 'REFLOP']) %}
 {% flop_default = None %}
 {% if flop_type.lower() in ('constant', 'rflop', 'reflop'): %}
 {%     flop_default = parameter('FLOP_DEFAULT', "0") %}

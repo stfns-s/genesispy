@@ -21,10 +21,11 @@ import os
 import shutil
 import sys
 import tempfile
-from typing import Dict, List, Optional, Type
+import traceback
+from typing import Callable, Dict, List, Optional, Type
 
 from . import cache, reporting
-from .reporting import GenesisPyError, ParseError, error, warning
+from .reporting import GenesisPyError, ParseError, error
 from .extensions import build_extension_map
 
 
@@ -35,6 +36,49 @@ def _resolve_output_comment(args: argparse.Namespace):
     """
     oc = getattr(args, "output_comment", None)
     return oc if oc is not None else getattr(args, "source_comment", "//")
+
+
+def find_file(
+    name: str, paths: List[str], record: Optional[Callable[[str], None]] = None
+) -> str:
+    """Return the absolute path of ``name``: as-is when absolute, otherwise
+    the first hit under ``paths``. ``record`` is called with each hit's
+    directory (``Manager.touched_dirs``). Raises ParseError on a miss,
+    naming the search paths."""
+    if os.path.isabs(name):
+        if os.path.exists(name):
+            return name
+        raise ParseError(f"find_file: file not found: {name}")
+    for d in paths:
+        candidate = os.path.join(d, name)
+        if os.path.exists(candidate):
+            resolved = os.path.abspath(candidate)
+            if record is not None:
+                record(os.path.dirname(resolved))
+            return resolved
+    raise ParseError(
+        f"find_file: file '{name}' not found in search paths: {list(paths)}"
+    )
+
+
+def resolve_cfg_path(
+    name: str, cfg_path: List[str], record: Optional[Callable[[str], None]] = None
+) -> str:
+    """Absolute or existing relative ``name`` as an absolute path, else the
+    first hit under ``cfg_path``, else ``name`` unchanged (the reader raises)."""
+    if os.path.isabs(name) or os.path.exists(name):
+        resolved = os.path.abspath(name)
+        if record is not None:
+            record(os.path.dirname(resolved))
+        return resolved
+    for d in cfg_path:
+        candidate = os.path.join(d, name)
+        if os.path.exists(candidate):
+            resolved = os.path.abspath(candidate)
+            if record is not None:
+                record(os.path.dirname(resolved))
+            return resolved
+    return name
 
 
 class Manager:
@@ -76,7 +120,9 @@ class Manager:
         # (with cache.INCLUDED_FILES) by output_writer.write_file_lists as
         # the .depend prerequisite list.
         self.parsed_source_files: List[str] = []
-        self.parameter_overrides = list(args.parameter)
+        # Sanitised module stem -> source path that produced it. Two sources
+        # mapping to one stem would silently overwrite each other's .py.
+        self._stem_owner: Dict[str, str] = {}
         self.json_cfg = args.json_cfg
         self.json_out = args.json_out
         self.cfg_files = list(args.cfg)
@@ -172,43 +218,14 @@ class Manager:
         (after being recorded). Otherwise the cfg-path list is searched in
         order.
         """
-        if os.path.isabs(name) or os.path.exists(name):
-            resolved = os.path.abspath(name)
-            self._record_dir(os.path.dirname(resolved))
-            return resolved
-        for d in self.cfg_path:
-            candidate = os.path.join(d, name)
-            if os.path.exists(candidate):
-                resolved = os.path.abspath(candidate)
-                self._record_dir(os.path.dirname(resolved))
-                return resolved
-        # Fall through with the original name; downstream readers raise.
-        return name
-
+        return resolve_cfg_path(name, self.cfg_path, self._record_dir)
 
     def find_file(
         self, name: str, paths: Optional[List[str]] = None
     ) -> str:
-        if os.path.isabs(name):
-            if os.path.exists(name):
-                return name
-            raise ParseError(f"find_file: file not found: {name}")
-
         if paths is None:
-            candidates = [*self.src_path, *self.inc_path, "."]
-        else:
-            candidates = list(paths)
-
-        for d in candidates:
-            candidate = os.path.join(d, name)
-            if os.path.exists(candidate):
-                resolved = os.path.abspath(candidate)
-                self._record_dir(os.path.dirname(resolved))
-                return resolved
-
-        raise ParseError(
-            f"find_file: file '{name}' not found in search paths: {candidates}"
-        )
+            paths = [*self.src_path, *self.inc_path, "."]
+        return find_file(name, paths, self._record_dir)
 
     # ------------------------------------------------------------------
     # Wave-2: parse / emit / load / elaborate
@@ -242,30 +259,42 @@ class Manager:
             allowed = ", ".join(sorted(self.extension_map.keys())) or "<none>"
             raise ParseError(
                 f"{path}: unsupported extension {ext!r}; expected {allowed}."
-            )
+            ) from None
 
     def parse_files(self) -> None:
         """Parse every input template and write a generated .py module."""
-        # Local import to avoid cycle at module import time.
-        from .template import emitter
-
         os.makedirs(self.raw_dir, exist_ok=True)
 
-        allowed = frozenset(self.extension_map.keys())
         for src in self.input_files:
-            path = self.find_file(src) if not os.path.isabs(src) else src
-            self.parsed_source_files.append(path)
-            out_suffix = self._output_suffix_for(path)
-            py_path = emitter.write_module(
-                path,
-                self.raw_dir,
-                output_suffix=out_suffix,
-                allowed=allowed,
-                syntax=self.syntax,
-                comment=self.source_comment,
-            )
-            stem = os.path.splitext(os.path.basename(path))[0]
+            py_path = self._write_generated(self.find_file(src))
+            stem = os.path.splitext(os.path.basename(src))[0]
             self._generated_modules[stem] = py_path
+
+    def _write_generated(self, path: str) -> str:
+        """Parse one template into ``raw_dir`` and record it for ``.depend``.
+
+        Raises ParseError when its sanitised stem is already owned by a
+        different source (``a-b.vpy`` and ``a_b.vpy`` both become ``a_b``).
+        """
+        from .template import emitter
+
+        stem = emitter.module_name_from_path(path)
+        owner = self._stem_owner.get(stem)
+        if owner is not None and os.path.abspath(owner) != os.path.abspath(path):
+            raise ParseError(
+                f"{path}: generated module name {stem!r} is already taken by {owner}; "
+                "two templates cannot share a sanitised stem"
+            )
+        self._stem_owner[stem] = path
+        self.parsed_source_files.append(path)
+        return emitter.write_module(
+            path,
+            self.raw_dir,
+            output_suffix=self._output_suffix_for(path),
+            allowed=frozenset(self.extension_map.keys()),
+            syntax=self.syntax,
+            comment=self.source_comment,
+        )
 
     def _import_generated(self, name: str, py_path: str) -> Type:
         """Import a generated .py file and return the class it defines as ``name``.
@@ -333,52 +362,32 @@ class Manager:
             for src in self.input_files:
                 stem = os.path.splitext(os.path.basename(src))[0]
                 if stem == name:
-                    path = self.find_file(src) if not os.path.isabs(src) else src
-                    from .template import emitter
-
-                    out_suffix = self._output_suffix_for(path)
-                    py_path = emitter.write_module(
-                        path,
-                        self.raw_dir,
-                        output_suffix=out_suffix,
-                        allowed=frozenset(self.extension_map.keys()),
-                        syntax=self.syntax,
-                        comment=self.source_comment,
-                    )
+                    py_path = self._write_generated(self.find_file(src))
                     self._generated_modules[name] = py_path
                     break
 
         if py_path is None:
-            # Fallback: search inc_path for `<name><ext>` over every registered
-            # input extension. Mirrors Perl's @INC scan in load_base_module
-            # (UniqueModule.pm:load_base_module). Without this, calling
-            # `unique_inst("foo", ...)` from a `.vpy` body fails when
-            # `foo.vpy` is only on `--inc-path` and never named on the CLI.
-            search_paths = list(self.inc_path) + ["."]
+            # Fallback for a template never named on the command line:
+            # `<name><ext>` over every registered input extension, under the
+            # invocation directory and then `--src-path`, which is where
+            # Perl's load_base_module looks (UniqueModule.pm:3210-3230,
+            # Manager.pm:1081-1136). `--inc-path` serves include() only.
+            search_paths = ["."] + list(self.src_path)
             for in_ext in self.extension_map.keys():
                 candidate = f"{name}{in_ext}"
                 try:
                     path = self.find_file(candidate, search_paths)
                 except (FileNotFoundError, GenesisPyError):
                     continue
-                from .template import emitter
-
-                out_suffix = self._output_suffix_for(path)
-                py_path = emitter.write_module(
-                    path,
-                    self.raw_dir,
-                    output_suffix=out_suffix,
-                    allowed=frozenset(self.extension_map.keys()),
-                    syntax=self.syntax,
-                    comment=self.source_comment,
-                )
+                py_path = self._write_generated(path)
                 self._generated_modules[name] = py_path
                 break
 
         if py_path is None:
             raise GenesisPyError(
                 f"Module {name!r} not found among inputs "
-                f"{sorted(self._generated_modules)}"
+                f"{sorted(self._generated_modules)} or on the source path "
+                f"{search_paths}"
             )
 
         return self._import_generated(name, py_path)
@@ -398,7 +407,9 @@ class Manager:
 
         Idempotent: calling twice with the same pair returns the same
         subclass; calling with a different src under an already-registered
-        target name raises ``GenesisPyError``.
+        target name raises ``GenesisPyError``, as does a target that names
+        a template on the input list or the search paths (Perl
+        UniqueModule.pm:1758-1764).
         """
         src_cls = self.resolve_module_class(src_name)
         existing = self._loaded_classes.get(target_name)
@@ -409,9 +420,28 @@ class Manager:
                 f"synonym_class: cannot alias {target_name!r} to {src_name!r}; "
                 f"{target_name!r} already registered to a different class."
             )
+        shadowed = self._template_for(target_name)
+        if shadowed is not None:
+            raise GenesisPyError(
+                f"synonym_class: cannot alias {target_name!r} to {src_name!r}; "
+                f"a module template named {target_name!r} already exists: {shadowed}"
+            )
         new_cls = type(target_name, (src_cls,), {"_synonym_for": src_name})
         self._loaded_classes[target_name] = new_cls
         return new_cls
+
+    def _template_for(self, name: str) -> Optional[str]:
+        """The template file that ``name`` would resolve to (an ``--input``
+        stem, or ``<name><ext>`` on the search paths), or None."""
+        for src in self.input_files:
+            if os.path.splitext(os.path.basename(src))[0] == name:
+                return src
+        for in_ext in self.extension_map:
+            try:
+                return self.find_file(f"{name}{in_ext}")
+            except (FileNotFoundError, GenesisPyError):
+                continue
+        return None
 
     def _ensure_cfg_handler(self) -> None:
         """Lazily instantiate ConfigHandler and consume CLI config inputs."""
@@ -419,21 +449,30 @@ class Manager:
             return
         from .config_handler import ConfigHandler
 
-        def _wrap(label: str, fn, *fn_args):
+        def _wrap(label: str, fn, *fn_args, where: Optional[str] = None):
             # Pass GenesisPyError through unchanged; wrap unexpected ones so
-            # the caller sees a uniform message.
+            # the caller sees a uniform message. ``where`` is the config
+            # file being run: its innermost frame gives the file:line.
             try:
                 return fn(*fn_args)
             except GenesisPyError:
                 raise
             except Exception as exc:
-                raise GenesisPyError(f"{label} failed: {exc}") from exc
+                location = None
+                if where is not None:
+                    target = os.path.abspath(where)
+                    for frame in reversed(traceback.extract_tb(exc.__traceback__)):
+                        if os.path.abspath(frame.filename) == target:
+                            location = f"{where}:{frame.lineno}"
+                            break
+                raise GenesisPyError(f"{label} failed: {exc}", location=location) from exc
 
         ch = _wrap("ConfigHandler init", ConfigHandler, self)
         if self.json_cfg:
             _wrap("read_json", ch.read_json, self._resolve_cfg_path(self.json_cfg))
         for cfg in self.cfg_files:
-            _wrap(f"read_cfg ({cfg})", ch.read_cfg, self._resolve_cfg_path(cfg))
+            resolved = self._resolve_cfg_path(cfg)
+            _wrap(f"read_cfg ({cfg})", ch.read_cfg, resolved, where=resolved)
         # Command-line --parameter overrides are ingested by ConfigHandler
         # itself in _init_cmdln_from_manager (run from __init__ above).
         self.cfg_handler = ch
@@ -448,7 +487,10 @@ class Manager:
         self._top_inst = top
         with user_config.context(self, top):
             top.execute()
+        top._lock_params()
 
+        for msg in self.cfg_handler.report_unused():
+            reporting.warning(msg)
         self.flush_outputs()
 
     def flush_outputs(self) -> None:
@@ -529,12 +571,10 @@ class Manager:
                 _promote(f"{syn}{suffix}", tag)
 
     def clean(self) -> None:
-        """Delete generated output directories and lists."""
+        """Delete generated output directories, lists and named products."""
         from . import output_writer
 
         output_writer.clean_outputs(self)
-        if os.path.isdir(self.raw_dir):
-            shutil.rmtree(self.raw_dir, ignore_errors=True)
 
     # ------------------------------------------------------------------
     # Engine entry point
@@ -546,9 +586,11 @@ class Manager:
             return 0
 
         if not self.input_files and not self.gen_only:
-            # Default invocation: warn, exit 0 (Wave-1 stub behaviour).
-            warning("genesispy: stub")
-            return 0
+            error(
+                "no input files: pass --input / --input-list, --gen-only, or --clean",
+                fatal=False,
+            )
+            return 1
 
         try:
             if not self.gen_only:

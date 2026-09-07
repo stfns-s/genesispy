@@ -59,7 +59,6 @@ cp -a bin src "$DEST/"
 export PATH="$DEST/bin:$PATH"
 ```
 
-
 ## Tests
 
 Against the in-tree source, no install required:
@@ -89,3 +88,5 @@ source checkout.
 - [doc/genesis2-incompatibilities.md](https://github.com/stfns-s/genesispy/blob/main/doc/genesis2-incompatibilities.md)
   ([local](./doc/genesis2-incompatibilities.md)) -- non-obvious behavior
   differences from Perl Genesis2.
+- [CHANGELOG.md](https://github.com/stfns-s/genesispy/blob/main/CHANGELOG.md)
+  ([local](./CHANGELOG.md)) -- notable changes per version.

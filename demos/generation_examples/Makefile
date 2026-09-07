@@ -7,6 +7,8 @@ HELP_LOCAL := 1
 
 .PHONY: gen $(EXAMPLES) vlint clean cleangen cleansim help
 
+.DELETE_ON_ERROR:
+
 gen: $(EXAMPLES)
 
 $(EXAMPLES):
@@ -35,7 +37,11 @@ cleangen:
 cleansim:
 	rm -rf obj_dir csrc simv.daidir work
 	rm -rf xcelium.d INCA_libs cov_work .simvision *.shm
+	rm -rf *.daidir
 	rm -f *.vvp simv ucli.key vc_hdrs.h transcript vsim.wlf
+	rm -f xrun.log xrun.history xrun.key xmsim.key xmverilog.key
+	rm -f irun.log irun.history irun.key
+	rm -f ncsim.log ncvlog.log ncelab.log
 	rm -f *.log *.wlf *.vcd *.fst
 
 clean: cleangen cleansim

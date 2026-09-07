@@ -6,9 +6,7 @@ equivalent.
 from __future__ import annotations
 
 import importlib.util
-import sys
 import textwrap
-from pathlib import Path
 
 import pytest
 
@@ -25,8 +23,10 @@ def _import_generated(py_path: str, mod_name: str) -> object:
 
 @pytest.fixture(autouse=True)
 def _reset_runtime_line_maps():
-    # Don't let line-map state from another test interfere.
+    """Line maps are keyed by path; a recycled tmp path must not inherit one."""
+    runtime.clear_line_maps()
     yield
+    runtime.clear_line_maps()
 
 
 def test_j2_e2e_matches_genesis(tmp_path):

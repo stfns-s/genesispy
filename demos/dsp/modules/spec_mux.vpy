@@ -172,6 +172,8 @@ module `mname` (
     // repeats the one below it
 //; # endif
 //; if not UNROLL and LOOKAHEAD:
+    // comp[i][d] feeds comp[i][d+1] through a combinational chain that verilator's
+    // scheduler flags as a possible loop; the dependency is acyclic by construction.
     // verilator lint_off UNOPTFLAT
 //; # endif
     `ROLL`wire `decl(SYM_W, signed=False).ljust(decl_w)` `'comp'.ljust(name_w)` `cdim`;
@@ -220,6 +222,7 @@ module `mname` (
 //; # endif
 //; # one select per symbol, the state is the last N_HIST symbols
 //; if SELF_REF:
+    // sym[i] selects on sym[i-1]: a chain, not a loop, but verilator cannot tell.
     // verilator lint_off UNOPTFLAT
 //; # endif
     wire `decl(SYM_W, signed=False).ljust(decl_w)` `'sym'.ljust(name_w)` [0:`N_SYM-1`];
@@ -227,6 +230,7 @@ module `mname` (
     // verilator lint_on UNOPTFLAT
 //; # endif
 //; if STATE_REF:
+    // state[i] is built from state[i-1]; same acyclic chain as sym.
     // verilator lint_off UNOPTFLAT
 //; # endif
     wire `decl(STATE_W, signed=False).ljust(decl_w)` `'state'.ljust(name_w)` [0:`N_SYM-1`];

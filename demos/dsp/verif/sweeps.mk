@@ -126,6 +126,13 @@ NEG_f_sat   := IW=8:OW=8 IW=1:OW=2
 NEG_f_sx    := IW=8:OW=8 IW=8:OW=4
 NEG_f_round := IW=1:OW=2
 
+# A zero-width input leaves nothing to operate on; the functions reject it instead of
+# letting the literal builder raise.
+NEG_f_umod   := IW=0
+NEG_f_abs    := IW=0
+NEG_f_negate := IW=0
+NEG_f_sym    := IW=0
+
 # A zero-width output has no sign bit to hold the truncated value. The testbench rejects
 # it first: it derives the reference output range from OW before it includes f_trunc.
 NEG_f_trunc := OW=0

@@ -12,8 +12,9 @@ from pathlib import Path
 
 import pytest
 
+from tests._stale import ignore_stale
 
-DEMO = Path(__file__).resolve().parents[1] / "demos" / "gvpy"
+DEMO_SRC = Path(__file__).resolve().parents[1] / "demos" / "gvpy"
 
 
 pytestmark = pytest.mark.skipif(
@@ -21,28 +22,34 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _run(target: str) -> subprocess.CompletedProcess:
+@pytest.fixture
+def demo(tmp_path: Path) -> Path:
+    """A scratch copy of the demo, so the checked-in tree is never touched."""
+    dst = tmp_path / "gvpy"
+    shutil.copytree(DEMO_SRC, dst, ignore=ignore_stale)
+    return dst
+
+
+def _run(demo: Path, target: str, *extra: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["make", target],
-        cwd=DEMO,
+        ["make", target, *extra],
+        cwd=demo,
         capture_output=True,
         text=True,
         timeout=60,
     )
 
 
-def test_make_clean() -> None:
-    r = _run("clean")
+def test_make_clean(demo: Path) -> None:
+    r = _run(demo, "clean")
     assert r.returncode == 0, r.stderr
 
 
-def test_make_gen_produces_expected_verilog() -> None:
-    # Always start clean.
-    _run("clean")
-    r = _run("gen")
+def test_make_gen_produces_expected_verilog(demo: Path) -> None:
+    r = _run(demo, "gen")
     assert r.returncode == 0, f"make gen failed: {r.stderr}"
 
-    out = (DEMO / "example.out.v").read_text()
+    out = (demo / "example.out.v").read_text()
 
     # Module header from --mname.
     assert "module example" in out, out
@@ -66,9 +73,6 @@ def test_make_gen_produces_expected_verilog() -> None:
     # Escaped backtick passthrough (literal backtick in output).
     assert "`not_an_expr`" in out
 
-    # Cleanup.
-    _run("clean")
-
 
 def _verilint() -> str | None:
     for tool in ("slang", "verilator"):
@@ -77,52 +81,34 @@ def _verilint() -> str | None:
     return None
 
 
-def _run_with(target: str, *extra: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["make", target, *extra],
-        cwd=DEMO,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-
-
-def test_make_vlint() -> None:
+def test_make_vlint(demo: Path) -> None:
     tool = _verilint()
     if tool is None:
         pytest.skip("neither slang nor verilator on PATH")
-    _run("clean")
-    r = _run_with("vlint", f"VERILINT={tool}")
+    r = _run(demo, "vlint", f"VERILINT={tool}")
     assert r.returncode == 0, f"make vlint ({tool}) failed:\n{r.stdout}\n{r.stderr}"
-    _run("clean")
 
 
-def test_make_lint() -> None:
+def test_make_lint(demo: Path) -> None:
     tool = _verilint()
     if tool is None:
         pytest.skip("neither slang nor verilator on PATH")
-    _run("clean")
-    r = _run_with("lint", f"VERILINT={tool}")
+    r = _run(demo, "lint", f"VERILINT={tool}")
     assert r.returncode == 0, f"make lint ({tool}) failed:\n{r.stdout}\n{r.stderr}"
-    _run("clean")
 
 
-def test_make_gen_reruns_on_width_change() -> None:
+def test_make_gen_reruns_on_width_change(demo: Path) -> None:
     """make gen WIDTH=16 must re-run even when the output file is already present."""
-    _run("clean")
-    r1 = _run("gen")
+    r1 = _run(demo, "gen")
     assert r1.returncode == 0, f"make gen failed: {r1.stderr}"
 
-    # Verify default width.
-    out_default = (DEMO / "example.out.v").read_text()
+    out_default = (demo / "example.out.v").read_text()
     assert "parameter WIDTH = 8" in out_default, "default WIDTH=8 not found"
 
-    # Re-run with a different width; without the flag-stamp fix this says "up to date".
-    r2 = _run_with("gen", "WIDTH=16")
+    # Re-run with a different width; without the flag stamp this says "up to date".
+    r2 = _run(demo, "gen", "WIDTH=16")
     assert r2.returncode == 0, f"make gen WIDTH=16 failed: {r2.stderr}"
-    out_w16 = (DEMO / "example.out.v").read_text()
+    out_w16 = (demo / "example.out.v").read_text()
     assert "parameter WIDTH = 16" in out_w16, (
         f"WIDTH=16 not reflected in output (stale build?): {out_w16[:500]}"
     )
-
-    _run("clean")

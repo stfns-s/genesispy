@@ -50,6 +50,12 @@ readonly RC_CRASH=8
 REPO="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO
 readonly BUILDDIR="${BUILDDIR:-build}"
+# Output paths are formed as ${REPO}/${BUILDDIR}/...; an absolute BUILDDIR would be
+# joined anyway and land somewhere unintended.
+if [[ "$BUILDDIR" == /* ]]; then
+    echo "run-tb.sh: BUILDDIR must be relative to the demo root, got '$BUILDDIR'" >&2
+    exit 2
+fi
 readonly TBDIR="${TBDIR:-verif}"
 readonly INCDIR="${INCDIR:-functions}"
 readonly LIBDIR="${LIBDIR:-lib}"
@@ -57,7 +63,7 @@ readonly MODDIR="${MODDIR:-modules}"
 readonly GENESISPY="${GENESISPY:-genesispy}"
 
 usage() {
-    local rc=${1:-$RC_USAGE}
+    local rc="${1:-$RC_USAGE}"
     local fd=2
     if [[ $rc -eq 0 ]]; then fd=1; fi
     cat >&"$fd" <<'USAGE'
@@ -266,6 +272,7 @@ esac
 # one epilogue line each simulator prints on $finish -- iverilog's "$finish called at"
 # and verilator's "Verilog $finish" -- which doubles the length of a sweep for nothing.
 set +e
+# shellcheck disable=SC2016  # the $ in the grep pattern is literal simulator text
 (cd -- "$base" && "${run_cmd[@]}" "${runargs[@]}") 2>&1 |
     tee "${base}/run.log" |
     grep -vE '^(- )?\S+\.sv:[0-9]+: (\$finish called at|Verilog \$finish)'

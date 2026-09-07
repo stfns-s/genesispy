@@ -2,7 +2,7 @@
 //; from math import floor
 
 // PARAMETERS
-//; N = parameter('N', 4)
+//; N = parameter('N', 4, min=2, step=1)
 
 // Wallace tree for N=`N` partioal products of width N=`N` //
 module `mname`

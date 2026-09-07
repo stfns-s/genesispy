@@ -9,6 +9,8 @@ from __future__ import annotations
 import types
 from typing import Any, Dict, Optional
 
+from genesispy.reporting import ConfigError
+
 
 class StubConfigHandler:
     """Minimal ConfigHandler shim: configurable-key lookup, otherwise None."""
@@ -24,9 +26,6 @@ class StubConfigHandler:
     def get_param_val(self, name: str) -> Any:
         return None
 
-    def get_cfg_param_val(self, name: str) -> Any:
-        return None
-
     def get_cmdln_param_val(self, name: str) -> Any:
         return None
 
@@ -36,12 +35,16 @@ class StubConfigHandler:
     def get_configuration(
         self, name: str, *, instance_path: Any = None
     ) -> Any:
-        return self._values.get(name)
+        if name not in self._values:
+            raise ConfigError(f"get_configuration: Could not find parameter '{name}'")
+        return self._values[name]
 
     def get_configuration_with_priority(
         self, name: str, *, instance_path: Any = None
     ) -> tuple:
-        return (self._values.get(name), None)
+        if name in self._values:
+            return (self._values[name], 10)  # Priority.EXTERNAL_CONFIG
+        return (None, None)
 
     def exists_configuration(
         self, name: str, *, instance_path: Any = None
@@ -57,11 +60,21 @@ class StubConfigHandler:
     def cmdln_db_snapshot(self) -> Dict[str, dict]:
         return {}
 
-    def cfg_db_snapshot(self) -> Dict[str, dict]:
-        return {}
-
     def cmdln_scoped_db_snapshot(self) -> Dict[tuple, dict]:
         return {}
+
+    def scoped_db_snapshot(self) -> Dict[tuple, dict]:
+        return self.cmdln_scoped_db_snapshot()
+
+    def scoped_overrides_for(self, instance_path: tuple) -> Dict[str, Any]:
+        return {
+            name: entry["value"]
+            for (path, name), entry in self.scoped_db_snapshot().items()
+            if path == instance_path
+        }
+
+    def report_unused(self) -> list:
+        return []
 
 
 class StubManager:

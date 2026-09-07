@@ -70,7 +70,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 from genesispy.reporting import ParseError
 from genesispy.extensions import DEFAULT_EXTENSION_MAP
@@ -108,9 +108,12 @@ def _is_block_opener(stripped: str) -> bool:
     not seen by a single ``//;`` line). The current heuristic has no
     known concrete failure case in practice — see review12 batch C #5.
     """
-    # Strip a trailing comment, naively (does not understand strings, but
-    # template Python lines are typically very simple statements).
-    code = stripped
+    return _strip_comment(stripped).endswith(":")
+
+
+def _strip_comment(code: str) -> str:
+    """``code`` without a trailing ``#`` comment; quotes toggle a naive
+    in-string state so a ``#`` inside a string literal is kept."""
     in_s = False
     in_d = False
     cut = len(code)
@@ -122,8 +125,27 @@ def _is_block_opener(stripped: str) -> bool:
         elif ch == "#" and not in_s and not in_d:
             cut = i
             break
-    code = code[:cut].rstrip()
-    return code.endswith(":")
+    return code[:cut].rstrip()
+
+
+def _bracket_delta(code: str) -> int:
+    """Opening minus closing brackets outside string literals (same naive
+    quote toggle as :func:`_strip_comment`). Positive means the statement
+    continues on the next ``//;`` line."""
+    depth = 0
+    in_s = False
+    in_d = False
+    for ch in _strip_comment(code):
+        if ch == "'" and not in_d:
+            in_s = not in_s
+        elif ch == '"' and not in_s:
+            in_d = not in_d
+        elif not in_s and not in_d:
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth -= 1
+    return depth
 
 
 def _escape_plain(text: str) -> str:
@@ -152,21 +174,25 @@ def _process_verilog_line(line: str, lineno: int, infile: str) -> str:
     becomes literal text.  Returns the Python source for a single ``self.emit``
     call (no trailing newline, no leading indent).
     """
-    pieces: List[str] = []  # alternating text / expr fragments (already escaped)
+    pieces: List[Tuple[str, str]] = []  # ("text" | "expr", fragment)
     has_expr = False
     buf = []
     i = 0
     n = len(line)
     in_expr = False
 
-    # Backtick toggles text/expr mode; backslash escapes only in text mode.
-    # Mirrors Manager.pm:866-880.
+    # Backtick toggles text/expr mode; a backslash escapes a backtick in
+    # either mode (Manager.pm:847-850). On a line that Genesis2 runs through
+    # its character loop (one containing a backtick or `//;`) a run of
+    # backslashes collapses to one (Manager.pm:865-869); other lines keep
+    # every backslash (Manager.pm:914-923).
+    collapse = "`" in line or "//;" in line
     prev_backslash = False
     while i < n:
         ch = line[i]
         if ch == "`":
-            if prev_backslash and not in_expr:
-                # Escaped backtick in text mode -- include the literal backtick.
+            if prev_backslash:
+                # Escaped backtick -- include the literal backtick.
                 buf.append("`")
                 prev_backslash = False
             else:
@@ -181,7 +207,7 @@ def _process_verilog_line(line: str, lineno: int, infile: str) -> str:
                 in_expr = not in_expr
                 prev_backslash = False
         else:
-            if not in_expr and ch == "\\" and not prev_backslash:
+            if ch == "\\" and (collapse or not prev_backslash):
                 prev_backslash = True
                 # Don't append yet; if next is a backtick, it'll be eaten as
                 # an escape; otherwise, we restore the backslash below.
@@ -302,6 +328,11 @@ def _parse_vpy_genesis(
     last_py_indent = 0
     # True if the most recent //; line ended in a colon (block opener).
     last_was_opener = False
+    # Unclosed brackets carried over from earlier //; lines: > 0 while a
+    # multi-line statement is still open, so its continuation lines must
+    # not move the emit indent, and the opener test waits for its last line.
+    open_brackets = 0
+    stmt_indent = 0
 
     for idx, raw in enumerate(raw_lines):
         lineno = idx + 1
@@ -322,6 +353,13 @@ def _parse_vpy_genesis(
             if content.startswith(" "):
                 content = content[1:]
 
+            out_lines.append(f"# line {lineno} {json.dumps(path)}")
+            if content.strip(" \t") == "":
+                # Bare ``//;`` (trailing whitespace allowed): blank line,
+                # indent state unchanged.
+                out_lines.append("")
+                continue
+
             # Indent = leading spaces // 4. Tabs reject (would silently zero-collapse scope).
             leading_ws = content[: len(content) - len(content.lstrip(" \t"))]
             if "\t" in leading_ws:
@@ -339,14 +377,13 @@ def _parse_vpy_genesis(
             body = content[n_spaces:]  # Python source without leading indent
 
             indent_str = "    " * py_indent
-            out_lines.append(f"# line {lineno} {json.dumps(path)}")
-            if body == "":
-                # Bare ``//;``: blank line, indent state unchanged.
-                out_lines.append("")
-            else:
-                out_lines.append(f"{indent_str}{body}")
+            out_lines.append(f"{indent_str}{body}")
+            if open_brackets == 0:
+                stmt_indent = py_indent
+            open_brackets = max(0, open_brackets + _bracket_delta(body))
+            if open_brackets == 0:
                 last_was_opener = _is_block_opener(body)
-                last_py_indent = py_indent
+                last_py_indent = stmt_indent
                 emit_indent = last_py_indent + (1 if last_was_opener else 0)
         else:
             # Plain Verilog line -- emit a self.emit(...) call.
@@ -484,10 +521,6 @@ def _parse_vpy_j2(path: str, source: str) -> List[str]:
     line_pieces_lineno: Optional[int] = None
     # Line number of the start of the current physical line (1-based).
     current_line = 1
-    # Has the current physical line had any non-whitespace text emitted
-    # outside of a form? Used to detect "directive sharing a line with
-    # plain Verilog".
-    line_has_nonspace_text = False
     # Beginning-of-physical-line index in source (used to detect "is the
     # next non-space token at start-of-line").
     line_start = 0
@@ -506,14 +539,12 @@ def _parse_vpy_j2(path: str, source: str) -> List[str]:
     text_buf: List[str] = []
 
     def push_text(s: str) -> None:
-        nonlocal line_has_nonspace_text, line_pieces_lineno
+        nonlocal line_pieces_lineno
         if not s:
             return
         text_buf.append(s)
         if line_pieces_lineno is None:
             line_pieces_lineno = current_line
-        if s.strip(" \t"):
-            line_has_nonspace_text = True
 
     def flush_text_to_pieces() -> None:
         if text_buf:
@@ -531,7 +562,6 @@ def _parse_vpy_j2(path: str, source: str) -> List[str]:
             i += 1
             current_line += 1
             line_start = i
-            line_has_nonspace_text = False
             continue
 
         # `\{{`: literal `{{` in text.
@@ -601,7 +631,6 @@ def _parse_vpy_j2(path: str, source: str) -> List[str]:
                 i = j + 1
                 current_line += 1
                 line_start = i
-                line_has_nonspace_text = False
             else:
                 i = j
             # Block close. Two equivalent forms:
@@ -708,7 +737,6 @@ def _parse_vpy_j2(path: str, source: str) -> List[str]:
             if line_pieces_lineno is None:
                 line_pieces_lineno = opener_line
             pieces.append(("expr", expr))
-            line_has_nonspace_text = True
             continue
 
         # `{#` → comment.
@@ -723,12 +751,9 @@ def _parse_vpy_j2(path: str, source: str) -> List[str]:
             consumed = source.count("\n", i, j)
             current_line = opener_line + consumed
             i = j + 2
-            # If the comment was the only non-whitespace content of the
-            # logical line so far AND nothing follows on the closer's
-            # physical line up to its newline, drop the line entirely.
-            # Otherwise leave the surrounding text untouched (the comment
-            # is just stripped from the logical line).
-            # We don't add anything to pieces.
+            # The comment is stripped from the logical line; a comment that
+            # was the whole line still emits a blank line, so line numbers
+            # in the output track the source.
             continue
 
         # Plain text character.

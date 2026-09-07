@@ -11,11 +11,11 @@ Skipped when ``perl`` + ``PPI`` aren't available
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import pytest
 
+from tests._parity_run import ppi_available
 from genesispy.tools.vp2vpy import (
     DEFAULT_EXT_MAP,
     FileTranslator,
@@ -28,21 +28,9 @@ from genesispy.tools.vp2vpy import (
 )
 
 
-def _ppi_available() -> bool:
-    try:
-        r = subprocess.run(
-            ["perl", "-MPPI", "-e", "1"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-        )
-        return r.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-
 
 pytestmark = pytest.mark.skipif(
-    not _ppi_available(),
+    not ppi_available(),
     reason="perl + PPI not on PATH (try `module load ramyx/perl/5.42.0/0.1.0`)",
 )
 
@@ -104,7 +92,7 @@ def test_assignments_and_array_ops(helper, perl, want):
     ("$x ne $y",      "x != y"),
     ("$x && $y",      "x and y"),
     ("$x || $y",      "x or y"),
-    ("$x . $y",       "x + y"),
+    ("$x . $y",                "str(x) + str(y)"),
     ("$x ** 2",       "x ** 2"),
 ])
 def test_operators(helper, perl, want):
@@ -226,8 +214,8 @@ def test_regex_not_match_compiles(helper):
     ("scalar(@arr)",          "len(arr)"),
     ("length($s)",            "len(s)"),
     ("defined $x",            "(x is not None)"),
-    ("sprintf('%02d', $i)",   "('%02d' % (i,))"),
-    ('join(",", @items)',     ".join(["),  # both '(",")' and "(',')" acceptable
+    ("sprintf('%02d', $i)",   "_vp2vpy_sprintf('%02d', i)"),
+    ('join(",", @items)',     "_vp2vpy_join(',', items)"),
 ])
 def test_builtins(helper, perl, want):
     got = _xlate_expr(helper, perl)
@@ -702,3 +690,90 @@ def test_resolve_inputs_directory_svp_dst_maps_to_svpy(tmp_path):
     svp = next(p for p in found if p.suffix == ".svp")
     dst = _dst_for(svp, root=tmp_path, out=tmp_path / "out")
     assert dst.suffix == ".svpy", f"expected .svpy, got {dst.suffix}"
+
+
+# ---------------------------------------------------------------------------
+# Idioms that used to fall through as invalid Python with no TODO.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("perl,want", [
+    ("my $x;",                          "x = None"),
+    ("my @a;",                          "a = []"),
+    ("my %h;",                          "h = {}"),
+    ('print STDERR "x";',               "file=sys.stderr"),
+    ('my $s = join(", ", @a);',         "_vp2vpy_join(', ', a)"),
+    ('my $w = "wire_" . $i;',           "'wire_' + str(i)"),
+    ("my @s = sort @x;",                "s = sorted(x)"),
+    ("my @r = reverse @x;",             "r = list(reversed(x))"),
+    ("my $c = substr($s, 0, 1);",       "c = s[0:0 + 1]"),
+    ("my $c = substr($s, 2);",          "c = s[2:]"),
+    ("$x ||= 5;",                       "x = x or 5"),
+    ("$x &&= 5;",                       "x = x and 5"),
+    ("$z //= 7;",                       "z = 7 if z is None else z"),
+    ("my $r = $a <=> $b;",              "r = _vp2vpy_cmp(a, b)"),
+    ("my $r = $a cmp $b;",              "r = _vp2vpy_cmp(a, b)"),
+    ('my $t = "$arr[0]";',              'f"{arr[0]}"'),
+    ('my $t = "$h{key}";',              "f\"{h['key']}\""),
+    ('my $u = "\\{$x\\}";',             'f"{{{x}}}"'),
+    ("generate('flop', $n, %params);",  "generate('flop', n, **params)"),
+    ("my $m = List::Util::max(@a);",    "m = max(*a)"),
+])
+def test_idioms_translate(helper, perl, want):
+    got = _xlate_stmt(helper, perl)
+    assert want in got, f"want {want!r} in {got!r}"
+
+
+def test_print_stdout_drops_the_filehandle(helper):
+    got = _xlate_stmt(helper, 'print STDOUT "x";')
+    assert got.startswith("print(") and "STDOUT" not in got, got
+
+
+@pytest.mark.parametrize("perl", [
+    "my $f = shift;",
+    "my $v = $a[$i++];",
+    "my @s = sort { $a <=> $b } @x;",
+    "my @m = map { $_ * 2 } @x;",
+    'my $q = "@{[ $x + 1 ]}";',
+    "my $m = List::Util::first { $_ } @a;",
+    "my $p = Foo::Bar::baz($x);",
+])
+def test_unsupported_idioms_raise(helper, perl):
+    from genesispy.tools.vp2vpy import Unmappable
+
+    with pytest.raises(Unmappable):
+        _xlate_stmt(helper, perl)
+
+
+def test_strict_file_raises_on_unsupported_backtick(helper):
+    from genesispy.tools.vp2vpy import Unmappable
+
+    ft = FileTranslator(helper, strict=True)
+    with pytest.raises(Unmappable):
+        ft.translate("wire w = `$a[$i++]`;\n")
+
+
+def test_best_effort_todo_keeps_every_perl_line_commented(helper):
+    src = "//; my @m = map {\n//;     $_ * 2\n//; } @x;\n"
+    text = _xlate_file(helper, src)
+    assert "# TODO vp2vpy:" in text
+    assert all(line.startswith("//;") for line in text.splitlines() if line.strip()), text
+
+
+def test_block_comment_form_is_plain_verilog(helper):
+    """``/*; ... ;*/`` is not a Genesis2 construct: it is a Verilog comment."""
+    src = "/*; my $x = 1; ;*/\nwire a;\nwire b;\n"
+    text = _xlate_file(helper, src)
+    assert "wire a;" in text and "wire b;" in text, text
+    assert "/*; my $x = 1; ;*/" in text
+
+
+def test_helper_dead_pipe_raises_helper_error():
+    from genesispy.tools.vp2vpy import HelperError
+
+    h = Helper()
+    h.start()
+    h._proc.kill()
+    h._proc.wait()
+    with pytest.raises(HelperError):
+        h.parse("1;")
+    h.close()

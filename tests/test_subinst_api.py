@@ -8,15 +8,11 @@ from __future__ import annotations
 
 import pytest
 
-from genesispy import cache
 from genesispy.reporting import ElaborationError
 from genesispy.unique_module import UniqueModule
 
 from ._stubs import StubManager
 
-
-def setup_function(_fn) -> None:
-    cache.clear_all()
 
 
 class _Top(UniqueModule):
@@ -185,7 +181,7 @@ def test_search_subinst_has_param_regex_string() -> None:
     top = _Top(StubManager())
     top._instance_name = "top"
     mid = top.unique_inst(_Mid, "u_mid")  # defines WIDTH
-    leaf = mid.unique_inst(_Leaf, "u_leaf")  # defines LANES (not WIDTH)
+    mid.unique_inst(_Leaf, "u_leaf")  # defines LANES (not WIDTH)
     found = top.search_subinst(has_param_regex="WIDTH")
     assert found == [mid]
 

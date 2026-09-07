@@ -40,9 +40,10 @@ def _canonical(v: Any) -> Any:
                 )
             out[sk] = _canonical(v[k])
         return out
-    # repr() fallback for class instances passed as params; intra-run only
+    # Class instances passed as params: a tagged repr(), so an object can
+    # never hash equal to a plain string with the same text. Intra-run only
     # (no cross-run cache). Used by demos/regfile/.../cfg_ifc.vpy.
-    return repr(v)
+    return {"__object__": type(v).__name__, "__repr__": repr(v)}
 
 
 def sha256_param_signature(module_name: str, params: dict) -> str:

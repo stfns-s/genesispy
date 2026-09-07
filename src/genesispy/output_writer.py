@@ -11,11 +11,13 @@ This keeps the writer decoupled from the real Manager class; see
 ``tests/_stubs.StubManager`` for the minimal stand-in.  Across this
 module the attributes read are:
 
-``debug``, ``depend_file``, ``gen_raw``, ``out_type``, ``output_dir``,
-``parsed_source_files``, ``product_file``, ``raw_dir``, ``synth_dir``,
-``top``, ``touched_dirs``, ``verif_dir`` -- plus ``src_path``,
-``inc_path`` and ``cfg_path``, which :func:`write_pathfile` reads
-through ``getattr`` and treats as empty when absent.
+``debug``, ``depend_file``, ``extension_map``, ``gen_raw``,
+``output_comment``, ``out_type``, ``output_dir``, ``parsed_source_files``,
+``product_file``, ``raw_dir``, ``synth_dir``, ``top``, ``touched_dirs``,
+``verif_dir`` -- plus ``src_path``, ``inc_path`` and ``cfg_path``, which
+:func:`write_pathfile` reads through ``getattr``, and the ``--clean``
+product attributes (``path_file``, ``product_single``, ``json_out``,
+``log_file``), which :func:`_clean_targets` reads the same way.
 
 Conventions established here (see also docstrings):
 
@@ -46,7 +48,7 @@ import stat
 import sys
 from typing import Dict, Iterable, List, TextIO, Tuple, Union
 
-from . import cache
+from . import cache, reporting
 
 
 # --------------------------------------------------------------------------- #
@@ -238,7 +240,7 @@ def flush_to_disk(manager) -> Dict[str, Union[List[str], List[Tuple[str, str]]]]
 
     if manager.debug:
         for dest_path, kind in written["ordered"]:
-            print(f"output_writer: wrote {kind} -> {dest_path}")
+            reporting.info(f"output_writer: wrote {kind} -> {dest_path}")
 
     return written
 
@@ -329,9 +331,13 @@ def _clean_targets(manager) -> tuple[List[str], List[str]]:
     """Return (dirs, files) that clean_outputs / write_clean_script remove.
 
     ``dirs`` is the raw/synth/verif directory list (falsy entries filtered).
-    ``files`` is the list of file-list artifacts under ``output_dir or '.'``.
-    The clean script self-removal and ``genesispy_clean.sh`` deletion stay
-    at the call sites (asymmetric between in-process clean and shell script).
+    ``files`` is every file this run can write outside those dirs: the
+    default lists under ``output_dir or '.'``, plus the products named by
+    ``--depend``, ``--path``, ``--product`` / ``--vf-out`` (with the
+    ``.synth`` / ``.verif`` side-files), ``--json-out`` (all three) and
+    ``--log`` (Perl Manager.pm:1431-1448 removes the same set). The clean
+    script self-removal and ``genesispy_clean.sh`` deletion stay at the
+    call sites (asymmetric between in-process clean and shell script).
     """
     output_dir = manager.output_dir or "."
     top = _top_name(manager)
@@ -340,9 +346,36 @@ def _clean_targets(manager) -> tuple[List[str], List[str]]:
     files = [
         os.path.join(output_dir, f"{top}.vlist"),
         os.path.join(output_dir, f"{top}.vlist.verif"),
-        os.path.join(output_dir, f"{top}.depend"),
+        getattr(manager, "depend_file", None) or os.path.join(output_dir, f"{top}.depend"),
     ]
+    path_file = getattr(manager, "path_file", None)
+    if path_file:
+        files.append(path_file)
+    product = getattr(manager, "product_file", None)
+    if product:
+        files.append(product)
+        if not getattr(manager, "product_single", False):
+            files.extend(_product_side_files(product))
+    json_out = getattr(manager, "json_out", None)
+    if json_out:
+        directory = os.path.dirname(json_out)
+        stem, ext = os.path.splitext(os.path.basename(json_out))
+        files.append(json_out)
+        files.append(os.path.join(directory, f"{stem}-small{ext}"))
+        files.append(os.path.join(directory, f"{stem}-tiny{ext}"))
+    log_file = getattr(manager, "log_file", None)
+    if log_file and log_file != os.devnull:
+        files.append(log_file)
     return dirs, files
+
+
+def _product_side_files(base: str) -> List[str]:
+    """The ``.synth`` / ``.verif`` companions of a ``--product`` file, named
+    the way :func:`write_product_lists` names them."""
+    stem, ext = os.path.splitext(base)
+    if not ext:
+        return [base + ".synth", base + ".verif"]
+    return [stem + ".synth" + ext, stem + ".verif" + ext]
 
 
 def write_clean_script(manager) -> str:
@@ -386,7 +419,10 @@ def write_clean_script(manager) -> str:
     # +x best-effort: shared-CI dirs may reject chmod; `sh script.sh` still works.
     try:
         mode = os.stat(script_path).st_mode
-        os.chmod(script_path, mode | stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+        os.chmod(
+            script_path,
+            mode | stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH,
+        )
     except OSError:
         pass
 
@@ -512,7 +548,7 @@ def write_pathfile(manager, path: str) -> str:
     """Write the list of directories touched during elaboration to ``path``."""
     dirs: List[str] = []
     for attr in ("src_path", "inc_path", "cfg_path"):
-        for d in getattr(manager, attr):
+        for d in getattr(manager, attr, []):
             ad = os.path.abspath(d)
             if ad not in dirs:
                 dirs.append(ad)

@@ -33,6 +33,7 @@ xml = ["lxml>=4.9"]
 color = ["colorama>=0.4"]
 dev = [
     "pytest>=7",
+    "ruff>=0.5",
     "fixedpoint>=1.0",
     "lxml>=4.9",
     "colorama>=0.4",

@@ -15,7 +15,7 @@ on malformed input so it plugs into ``argparse(type=...)`` directly.
 from __future__ import annotations
 
 import argparse
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, Tuple
 
 
 DEFAULT_EXTENSION_MAP: Dict[str, str] = {
@@ -78,14 +78,8 @@ def build_extension_map(
     return result
 
 
-def allowed_inputs(extension_map: Dict[str, str]) -> List[str]:
-    """Return the list of accepted input extensions (sorted)."""
-    return sorted(extension_map.keys())
-
-
 __all__ = [
     "DEFAULT_EXTENSION_MAP",
     "parse_extension_spec",
     "build_extension_map",
-    "allowed_inputs",
 ]

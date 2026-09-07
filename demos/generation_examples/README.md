@@ -62,7 +62,7 @@ endmodule
 
 ### Output
 
-```
+```text
 genesis_synth_ex1/
 ├── ex1_unique.v
 ├── pll_unq1.v       # M=2
@@ -86,7 +86,7 @@ endmodule
   unique module (post-elaboration dedup).
 - The numeric suffix (`_unq1`, `_unq2`, ...) is the default style.
   `--unq-style param` (or `unique_inst_param`) encodes the parameters
-  in the name instead (e.g. `pll_M2.v`).
+  in the name instead (e.g. `pll_M_2.v`).
 - Examples 2-4 cover the opposite pattern: a single emitted module
   shared across multiple instances.
 
@@ -111,7 +111,7 @@ endmodule
 
 ### Output
 
-```
+```text
 genesis_synth_ex2/
 ├── ex2_ununique.v
 └── pll.v
@@ -167,7 +167,7 @@ endmodule
 
 ### Output
 
-```
+```text
 genesis_synth_ex3/
 ├── ex3_genwname.v
 └── my_pll.v          # synonym name, not 'pll'
@@ -253,7 +253,7 @@ endmodule
 
 ### Output
 
-```
+```text
 genesis_synth_ex5/
 ├── ex5_clone.v
 └── pll_unq1.v          # note the _unq1 suffix (kept, unlike examples 2-4)

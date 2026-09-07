@@ -4,10 +4,7 @@ semantics. Behaviour mirrors the genesis-mode parser; only delimiters change.
 
 from __future__ import annotations
 
-import io
-import os
 import textwrap
-from contextlib import redirect_stdout
 from pathlib import Path
 
 import pytest
@@ -220,12 +217,15 @@ def test_directive_must_end_line(tmp_path):
     assert "must start the line" not in msg
 
 
+def test_aligned_directive_indent_is_accepted(tmp_path):
+    # 4 spaces inside the directive (one optional leading space dropped, 3 left)
+    # is rejected below; a full multiple of 4 after the drop parses.
+    p = _vpy(tmp_path, "{%     x = 1 %}\n")  # 5 spaces -> 4 after the drop
+    parse_vpy(str(p), syntax="j2")
+
+
 def test_misaligned_directive_indent(tmp_path):
-    # 3 spaces inside the directive (after one optional drop) is not a
-    # multiple of 4.
-    p = _vpy(tmp_path, "{%    x = 1 %}\n")
-    # 4 spaces -> py_indent=1: this should NOT raise. Test misalignment:
-    p = _vpy(tmp_path, "{%   x = 1 %}\n")  # 3 spaces inside (after the leading-space-drop, 2)
+    p = _vpy(tmp_path, "{%   x = 1 %}\n")  # 3 spaces inside (after the drop, 2)
     with pytest.raises(ParseError, match="misaligned"):
         parse_vpy(str(p), syntax="j2")
 

@@ -19,10 +19,10 @@ from __future__ import annotations
 import json
 
 import builtins
-import inspect
 import os
 import pprint
-import runpy
+import re
+import sys
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
@@ -178,7 +178,9 @@ def _unwrap_hash(node: Any) -> dict:
 def _normalise_value(v: Any) -> Any:
     """Normalise a JSON-native value.
 
-    Recurses into plain lists and dicts, coercing scalar leaves.  Sentinel
+    Recurses into plain lists and dicts; scalar leaves keep their JSON type
+    (a string that spells a number stays a string, as XML::Simple gave
+    Genesis2 the text).  Sentinel
     keys (``__ArrayType__``, ``__HashType__``, ``__Val__``) inside a nested
     dict are NOT detected -- they pass through with the key preserved.
     In practice this is harmless: ``genesispy-xml2json`` unwraps all nesting
@@ -188,7 +190,7 @@ def _normalise_value(v: Any) -> Any:
         return [_normalise_value(x) for x in v]
     if isinstance(v, dict):
         return {k: _normalise_value(x) for k, x in v.items()}
-    return _coerce_scalar(v)
+    return v
 
 
 def _split_dotted_name(name: str) -> tuple[Optional[tuple[str, ...]], str]:
@@ -208,15 +210,28 @@ def _split_dotted_name(name: str) -> tuple[Optional[tuple[str, ...]], str]:
     return segs, leaf
 
 
-_PARAM_VALUE_KEYS = frozenset(
-    {"__Val__", "__ArrayType__", "__HashType__"}
-)
+_DOTTED_NAME_RE = re.compile(r"(\w+\.)+\w+")
 
-# Keys whose subtrees ``_find_param`` must not descend into. Genesis2
-# treats input ``ImmutableParameters`` as writeback-only metadata (see
-# ConfigHandler.pm:875-919); skipping the subtree on read keeps genesispy
-# in lockstep on input semantics.
-_FIND_PARAM_SKIP_KEYS = frozenset({"ImmutableParameters"})
+
+def _require_dotted(method: str, name: Any) -> tuple[tuple[str, ...], str]:
+    """The ``.cfg`` API takes ``path.name`` (ConfigHandler.pm:1349-1356):
+    at least one ``\\w+`` path segment before the parameter name."""
+    if not isinstance(name, str) or not _DOTTED_NAME_RE.fullmatch(name):
+        raise reporting.ConfigError(
+            f"{method}: Expected first argument structure to have both path and "
+            f"param name separated by a dot. Example: 'top.dut.subinst.prmname'. "
+            f"Found: '{name}'"
+        )
+    head, _, leaf = name.rpartition(".")
+    return tuple(head.split(".")), leaf
+
+
+# Keys that may carry a parameter's value. ``__Val__`` is the JSON-native
+# spelling; ``Val`` is what ``--json-out`` writes (Perl's WriteXml schema), so
+# a snapshot can be fed back through ``--json-cfg``. ``InstancePath`` (Perl's
+# pointer-to-instance form) is accepted by the validator but has no value
+# here: such a parameter reads as absent.
+_PARAM_VALUE_KEYS = ("__Val__", "Val", "__ArrayType__", "__HashType__", "InstancePath")
 
 # Sentinel returned by _find_param when no matching Parameter exists.
 # A separate sentinel lets callers tell "absent" apart from "explicitly
@@ -225,41 +240,168 @@ _FIND_PARAM_SKIP_KEYS = frozenset({"ImmutableParameters"})
 _MISSING: Any = object()
 
 
-def _find_param(node: Any, name: str) -> Any:
-    """Recursively search the JSON-native db tree for a Parameter element
-    with ``Name == name`` and return its value (``__Val__`` /
-    ``__ArrayType__`` / ``__HashType__``). Returns :data:`_MISSING` when
-    no match is found or the Parameter has no value-bearing key.
+def _root_node(db: Any) -> Optional[dict]:
+    """Return the ``HierarchyTop`` node of a loaded config tree (or the
+    tree itself when it is already a node)."""
+    if not isinstance(db, dict):
+        return None
+    root = db.get("HierarchyTop", db)
+    return root if isinstance(root, dict) else None
 
-    Recursion skips ``_PARAM_VALUE_KEYS`` so user data inside a
-    ``__HashType__`` cannot accidentally shadow a real parameter via a
-    stray ``Name`` key, and skips ``_FIND_PARAM_SKIP_KEYS``
-    (``ImmutableParameters``) so input values nested under that tag are
-    not picked up -- matches Genesis2, which reads only ``Parameters``
-    from input XML.
-    """
-    if isinstance(node, dict):
-        nm = node.get("Name")
-        if isinstance(nm, str) and nm == name:
-            if "__Val__" in node:
-                return _normalise_value(node["__Val__"])
-            if "__ArrayType__" in node:
-                return _unwrap_array(node["__ArrayType__"])
-            if "__HashType__" in node:
-                return _unwrap_hash(node["__HashType__"])
-            return _MISSING
-        for k, v in node.items():
-            if k in _PARAM_VALUE_KEYS or k in _FIND_PARAM_SKIP_KEYS:
-                continue
-            r = _find_param(v, name)
-            if r is not _MISSING:
-                return r
-    elif isinstance(node, list):
-        for v in node:
-            r = _find_param(v, name)
-            if r is not _MISSING:
-                return r
+
+def _node_params(node: dict) -> list:
+    items = node.get("Parameters")
+    return items if isinstance(items, list) else []
+
+
+def _node_subinstances(node: dict) -> list:
+    items = node.get("SubInstances")
+    return items if isinstance(items, list) else []
+
+
+def _param_value(item: dict) -> Any:
+    if "__Val__" in item:
+        return _normalise_value(item["__Val__"])
+    if "Val" in item:
+        return _normalise_value(item["Val"])
+    if "__ArrayType__" in item:
+        return _unwrap_array(item["__ArrayType__"])
+    if "__HashType__" in item:
+        return _unwrap_hash(item["__HashType__"])
     return _MISSING
+
+
+def _find_node(db: Any, instance_path: Optional[tuple[str, ...]]) -> Optional[dict]:
+    """Return the node for ``instance_path`` (root..self), or None.
+
+    Port of Perl ``find_xml_node`` (ConfigHandler.pm:812-868): the root's
+    ``InstanceName`` must equal the first path segment, then each further
+    segment selects a ``SubInstances`` entry by ``InstanceName``. With no
+    path the root node itself is returned.
+    """
+    root = _root_node(db)
+    if root is None:
+        return None
+    if instance_path is None:
+        return root
+    top_name = root.get("InstanceName")
+    if top_name is None:
+        return None
+    if top_name != instance_path[0]:
+        raise reporting.ConfigError(
+            f"JSON config: unexpected top-level InstanceName {top_name!r}; "
+            f"expected {instance_path[0]!r}"
+        )
+    node = root
+    for token in instance_path[1:]:
+        node = next(
+            (s for s in _node_subinstances(node)
+             if isinstance(s, dict) and s.get("InstanceName") == token),
+            None,
+        )
+        if node is None:
+            return None
+    return node
+
+
+def _find_param(
+    db: Any, name: str, instance_path: Optional[tuple[str, ...]] = None
+) -> Any:
+    """Return the value of Parameter ``name`` on the node at
+    ``instance_path`` (the root node when no path is given), or
+    :data:`_MISSING`.
+
+    Only that node's own ``Parameters`` list is read: a value written for
+    one instance never applies to another, and ``ImmutableParameters`` is
+    writeback-only metadata (Genesis2 ConfigHandler.pm:875-919).
+    """
+    node = _find_node(db, instance_path)
+    if node is None:
+        return _MISSING
+    for item in _node_params(node):
+        if isinstance(item, dict) and item.get("Name") == name:
+            return _param_value(item)
+    return _MISSING
+
+
+def _validate_param_db(db: Any, path: str) -> None:
+    """Reject a config tree that does not have the ``HierarchyTop`` shape.
+
+    Mirrors the checks Perl makes while reading (ConfigHandler.pm:833-914):
+    a single ``HierarchyTop`` root; ``Parameters`` a list of objects each
+    with a non-empty ``Name`` and exactly one value key; no duplicate
+    names on one node; ``SubInstances`` a list of objects each with an
+    ``InstanceName``. ``""`` stands for an empty list (what
+    ``genesispy-xml2json`` emits for an empty element).
+    """
+    def fail(where: str, msg: str) -> None:
+        raise reporting.ConfigError(f"{path}: {where}: {msg}")
+
+    if not isinstance(db, dict) or set(db) != {"HierarchyTop"}:
+        fail("root", "expected a single HierarchyTop object")
+
+    def check_node(node: Any, where: str) -> None:
+        if not isinstance(node, dict):
+            fail(where, "expected an object")
+        params = node.get("Parameters")
+        if params is not None and params != "":
+            if not isinstance(params, list):
+                fail(where, "Parameters must be a list of "
+                     "{Name, __Val__ | Val | __ArrayType__ | __HashType__} objects")
+            seen: set = set()
+            for i, item in enumerate(params):
+                w = f"{where}.Parameters[{i}]"
+                if not isinstance(item, dict):
+                    fail(w, "expected an object")
+                nm = item.get("Name")
+                if not isinstance(nm, str) or not nm:
+                    fail(w, "Name missing or not a non-empty string")
+                keys = [k for k in _PARAM_VALUE_KEYS if k in item]
+                if len(keys) != 1:
+                    fail(w, f"parameter {nm!r} must carry exactly one of "
+                         f"{', '.join(_PARAM_VALUE_KEYS)} (found {keys or 'none'})")
+                if nm in seen:
+                    fail(where, f"parameter {nm!r} defined more than once")
+                seen.add(nm)
+        subs = node.get("SubInstances")
+        if subs is not None and subs != "":
+            if not isinstance(subs, list):
+                fail(where, "SubInstances must be a list of objects")
+            for i, sub in enumerate(subs):
+                w = f"{where}.SubInstances[{i}]"
+                if not isinstance(sub, dict):
+                    fail(w, "expected an object")
+                iname = sub.get("InstanceName")
+                if not isinstance(iname, str) or not iname:
+                    fail(w, "InstanceName missing or not a non-empty string")
+                check_node(sub, f"{where}.{iname}")
+
+    check_node(db["HierarchyTop"], "HierarchyTop")
+
+
+def _json_scoped_entries(db: Any) -> dict[tuple[tuple[str, ...], str], dict]:
+    """``{(instance_path, name): entry}`` for every valued parameter a config
+    tree defines, keyed the way the scoped override DBs are. Empty when the
+    root carries no ``InstanceName`` (no path can then resolve)."""
+    root = _root_node(db)
+    if root is None or not isinstance(root.get("InstanceName"), str):
+        return {}
+    out: dict[tuple[tuple[str, ...], str], dict] = {}
+    prio = int(Priority.EXTERNAL_PARAM_FILE)
+
+    def walk(node: dict, path: tuple[str, ...]) -> None:
+        for item in _node_params(node):
+            if not isinstance(item, dict) or not isinstance(item.get("Name"), str):
+                continue
+            value = _param_value(item)
+            if value is not _MISSING:
+                out[(path, item["Name"])] = {"value": value, "priority": prio}
+        for sub in _node_subinstances(node):
+            if isinstance(sub, dict) and isinstance(sub.get("InstanceName"), str):
+                walk(sub, path + (sub["InstanceName"],))
+
+    walk(root, (root["InstanceName"],))
+    return out
 
 
 def _deep_merge(dst: dict, src: dict) -> dict:
@@ -294,12 +436,15 @@ class ConfigHandler:
 
         # Backing stores.
         self._param_db: dict = {}
-        self._cfg_db: dict[str, dict] = {}
+        # Bare ``--parameter NAME=VALUE``: applies at every instance path.
         self._cmdln_db: dict[str, dict] = {}
         # Hierarchical (instance_path, param_name) -> entry. Populated by
-        # ``--parameter top.child.x=2`` and ``configure("top.child.x", v)``.
+        # ``--parameter top.child.x=2`` and ``configure("top.child.x", v)``;
+        # configure() takes the dotted form only (ConfigHandler.pm:1349).
         self._cmdln_scoped_db: dict[tuple[tuple[str, ...], str], dict] = {}
         self._cfg_scoped_db: dict[tuple[tuple[str, ...], str], dict] = {}
+        # Overrides a lookup has consumed; report_unused() lists the rest.
+        self._used: set[tuple] = set()
 
         # File names recorded for diagnostics.
         self._json_in_filenames: list[str] = []
@@ -309,22 +454,13 @@ class ConfigHandler:
         # Module uniquification style. Read from manager.args.unq_style if
         # present, default 'numeric'. Mirrors Perl ConfigHandler.UnqStyle.
         self.unq_style: str = manager.args.unq_style or "numeric"
-        self._validate_unq_style(self.unq_style)
+        if self.unq_style not in ("numeric", "param"):
+            raise reporting.GenesisPyError(
+                f"Invalid unq_style {self.unq_style!r}; expected 'numeric' or 'param'"
+            )
 
         # Parse ``manager.args.parameter`` if present (list of NAME=VALUE).
         self._init_cmdln_from_manager()
-
-    @staticmethod
-    def _validate_unq_style(style: str) -> None:
-        if style not in ("numeric", "param"):
-            raise reporting.GenesisPyError(
-                f"Invalid unq_style {style!r}; expected 'numeric' or 'param'"
-            )
-
-    def set_unq_style(self, style: str) -> None:
-        """Set the module uniquification style (mirrors Perl SetUnqStyle)."""
-        self._validate_unq_style(style)
-        self.unq_style = style
 
     # ------------------------------------------------------------------ #
     # Cmd-line parameter ingestion                                       #
@@ -375,6 +511,7 @@ class ConfigHandler:
                 f"malformed JSON in {path}: {exc.msg}",
                 location=f"{path}:{exc.lineno}",
             ) from exc
+        _validate_param_db(new_db, path)
         self._json_in_filenames.append(path)
         if not self._param_db:
             self._param_db = new_db
@@ -484,9 +621,9 @@ class ConfigHandler:
             src = fh.read()
         code = compile(src, path, "exec")
         # Active manager context lets injected ``get_top_name`` and
-        # ``get_synthtop_path`` reach back to the Manager. Module slot
-        # stays None (no UniqueModule is under elaboration during
-        # `.cfg` reading).
+        # ``get_synthtop_path`` reach back to the Manager. No UniqueModule
+        # is under elaboration during `.cfg` reading, so the module slot
+        # is None (context() accepts that).
         with _uc.context(self.manager, None):
             exec(code, cfg_namespace)
 
@@ -505,9 +642,11 @@ class ConfigHandler:
         val = self._param_lookup(name)
         return None if val is _MISSING else val
 
-    def _param_lookup(self, name: str) -> Any:
-        """Return the JSON-config-sourced value for ``name``, or
-        :data:`_MISSING`.
+    def _param_lookup(
+        self, name: str, instance_path: Optional[tuple[str, ...]] = None
+    ) -> Any:
+        """Return the JSON-config-sourced value for ``name`` on the node at
+        ``instance_path`` (the root when None), or :data:`_MISSING`.
 
         Internal helper used by :meth:`get_configuration` and
         :meth:`exists_configuration` to disambiguate explicit JSON null
@@ -515,14 +654,7 @@ class ConfigHandler:
         """
         if not self._param_db:
             return _MISSING
-        return _find_param(self._param_db, name)
-
-    def get_cfg_param_val(self, name: str) -> Optional[object]:
-        """Return the .cfg-sourced value for ``name``, or None."""
-        rec = self._cfg_db.get(name)
-        if rec is None:
-            return None
-        return rec.get("value")
+        return _find_param(self._param_db, name, instance_path)
 
     def get_cmdln_param_val(self, name: str) -> Optional[object]:
         """Return the command-line-sourced value for ``name``, or None."""
@@ -539,15 +671,58 @@ class ConfigHandler:
         """
         return dict(self._cmdln_db)
 
-    def cfg_db_snapshot(self) -> dict[str, dict]:
-        """Shallow copy of the .cfg-sourced override DB."""
-        return dict(self._cfg_db)
-
     def cmdln_scoped_db_snapshot(
         self,
     ) -> dict[tuple[tuple[str, ...], str], dict]:
         """Shallow copy of the hierarchical (path, name) -> entry DB."""
         return dict(self._cmdln_scoped_db)
+
+    def scoped_db_snapshot(self) -> dict[tuple[tuple[str, ...], str], dict]:
+        """Every path-addressed value -- JSON parameters, ``configure()``
+        paths and ``--parameter PATH.NAME`` -- merged in that priority
+        order. Read-only view; feeds the dedup subtree signature (Perl
+        ``BuildParamPathMaps``, ConfigHandler.pm:398-410)."""
+        merged = _json_scoped_entries(self._param_db)
+        merged.update(self._cfg_scoped_db)
+        merged.update(self._cmdln_scoped_db)
+        return merged
+
+    def scoped_overrides_for(self, instance_path: tuple[str, ...]) -> dict[str, Any]:
+        """``{name: value}`` of every scoped override addressed to exactly
+        ``instance_path``; marks each as used."""
+        out: dict[str, Any] = {}
+        for tag, db in (("cfg_scoped", self._cfg_scoped_db),
+                        ("cmdln_scoped", self._cmdln_scoped_db)):
+            for (path, name), entry in db.items():
+                if path == instance_path:
+                    out[name] = entry["value"]
+                    self._used.add((tag, path, name))
+        # The instance never looks the name up itself once a scoped value is
+        # applied, so a bare override of the same name counts as consumed
+        # (outranked, not misspelled).
+        for name in out:
+            if name in self._cmdln_db:
+                self._used.add(("cmdln", name))
+        return out
+
+    def report_unused(self) -> list[str]:
+        """One message per command-line or ``.cfg`` override no lookup
+        consumed (Perl ``Finalize``, ConfigHandler.pm:436-442, which dies;
+        genesispy warns). JSON parameters are not checked, as in Perl."""
+        def dotted(path: tuple[str, ...], name: str) -> str:
+            return ".".join((*path, name))
+
+        found: list[tuple[str, str]] = []
+        for name in self._cmdln_db:
+            if ("cmdln", name) not in self._used:
+                found.append((name, "--parameter"))
+        for (path, name) in self._cmdln_scoped_db:
+            if ("cmdln_scoped", path, name) not in self._used:
+                found.append((dotted(path, name), "--parameter"))
+        for (path, name) in self._cfg_scoped_db:
+            if ("cfg_scoped", path, name) not in self._used:
+                found.append((dotted(path, name), "configure()"))
+        return [f"override {spec} was never used ({src})" for spec, src in sorted(found)]
 
     # ------------------------------------------------------------------ #
     # configure / get_configuration / exists / remove                    #
@@ -555,15 +730,11 @@ class ConfigHandler:
     def configure(self, name: str, value: object, **flags: Any) -> None:
         """Record a configuration value (called from .cfg scripts).
 
-        Stored at :attr:`Priority.EXTERNAL_CONFIG` unless ``priority`` is
-        passed in ``flags``. The optional ``type`` flag (``'bool'``,
-        ``'int'``, ``'float'``, ``'str'``) coerces ``value`` accordingly.
-
-        A dotted ``name`` like ``"top.child.x"`` is parsed into an
-        instance path and parameter name (rightmost ``.`` splits) and
-        recorded in the scoped DB so ``get_configuration("x",
-        instance_path=("top","child"))`` can find it. Mirrors the
-        hierarchical CLI override path (Perl ConfigHandler.pm:1349-1376).
+        ``name`` is ``path.name``: the instance path (its first segment the
+        top's instance name) and the parameter name, rightmost dot splits
+        (ConfigHandler.pm:1349-1376). Stored at :attr:`Priority.EXTERNAL_CONFIG`
+        unless ``priority`` is passed in ``flags``. The optional ``type`` flag
+        (``'bool'``, ``'int'``, ``'float'``, ``'str'``) coerces ``value``.
         """
         type_hint = flags.get("type")
         if type_hint is not None:
@@ -578,48 +749,37 @@ class ConfigHandler:
                 f"priority must be an integer (or Priority enum value)"
             ) from exc
 
-        # Find caller filename for diagnostics.
-        source_file = "<unknown>"
-        try:
-            frame = inspect.stack()[1]
-            source_file = frame.filename
-        except Exception:  # pragma: no cover
-            pass
+        # Caller's filename for diagnostics (the .cfg being exec'd).
+        source_file = sys._getframe(1).f_code.co_filename
 
-        path_segs, leaf = _split_dotted_name(name)
-
+        key = _require_dotted("configure", name)
         entry = {
             "value": value,
             "priority": prio_int,
             "source_file": source_file,
         }
-
         # Priority-aware write: a lower-priority second call to the same
         # name is a no-op; an equal-or-higher call overwrites and warns.
-        if path_segs is not None:
-            key = (path_segs, leaf)
-            existing = self._cfg_scoped_db.get(key)
-            if existing is not None and prio_int < existing["priority"]:
-                return
-            if existing is not None:
-                reporting.warning(
-                    f"configure: redefinition of '{name}' "
-                    f"(was set at {existing.get('source_file')!r}, "
-                    f"now at {source_file!r})"
-                )
-            self._cfg_scoped_db[key] = entry
-            return
-
-        existing = self._cfg_db.get(leaf)
+        existing = self._cfg_scoped_db.get(key)
         if existing is not None and prio_int < existing["priority"]:
             return
         if existing is not None:
             reporting.warning(
-                f"configure: redefinition of '{leaf}' "
+                f"configure: redefinition of '{name}' "
                 f"(was set at {existing.get('source_file')!r}, "
                 f"now at {source_file!r})"
             )
-        self._cfg_db[leaf] = entry
+        self._cfg_scoped_db[key] = entry
+
+    def _address(
+        self, method: str, name: str, instance_path: Optional[tuple[str, ...]]
+    ) -> tuple[tuple[str, ...], str]:
+        """``(path, leaf)`` for a lookup: the dotted ``name`` alone (the
+        ``.cfg`` API form), or a bare ``name`` at ``instance_path`` (the
+        engine's form)."""
+        if instance_path is None:
+            return _require_dotted(method, name)
+        return tuple(instance_path), name
 
     def get_configuration(
         self,
@@ -627,17 +787,23 @@ class ConfigHandler:
         *,
         instance_path: Optional[tuple[str, ...]] = None,
     ) -> Optional[object]:
-        """Return the highest-priority value for ``name`` across all
-        sources, or None.
+        """Return the highest-priority value for a parameter across all
+        sources; ``ConfigError`` when no source defines it
+        (ConfigHandler.pm:1512).
 
-        When ``instance_path`` is provided, hierarchical CLI overrides
-        like ``--parameter top.child.x=2`` are matched first by **exact**
-        instance-path equality (Genesis2 ConfigHandler.pm:355-372). A
-        scoped match wins over flat sources at the same priority.
+        ``name`` is ``path.name``, or a bare name when ``instance_path``
+        gives the path. Scoped overrides (``--parameter top.child.x=2``,
+        ``configure("top.child.x", v)``) match by exact instance-path
+        equality (ConfigHandler.pm:355-372), JSON ``Parameters`` are read
+        from the node at that path only, and a bare ``--parameter`` applies
+        at every path. A scoped command-line match wins outright.
         """
-        value, _prio = self._get_configuration_with_priority(
-            name, instance_path=instance_path
-        )
+        path, leaf = self._address("get_configuration", name, instance_path)
+        value, prio = self._get_configuration_with_priority(leaf, instance_path=path)
+        if prio is None:
+            raise reporting.ConfigError(
+                f"get_configuration: Could not find parameter '{'.'.join((*path, leaf))}'"
+            )
         return value
 
     def get_configuration_with_priority(
@@ -662,11 +828,18 @@ class ConfigHandler:
     ) -> tuple[Optional[object], Optional[int]]:
         candidates: list[tuple[int, object]] = []
 
+        # Every source that names the parameter counts as consumed, even
+        # when a higher-priority source outranks it: layering the same
+        # parameter across sources is legitimate and must not warn.
         if instance_path is not None:
             scoped = self._cmdln_scoped_db.get((instance_path, name))
+            cfg_scoped = self._cfg_scoped_db.get((instance_path, name))
+            if scoped is not None:
+                self._used.add(("cmdln_scoped", instance_path, name))
+            if cfg_scoped is not None:
+                self._used.add(("cfg_scoped", instance_path, name))
             if scoped is not None:
                 return scoped["value"], int(scoped["priority"])
-            cfg_scoped = self._cfg_scoped_db.get((instance_path, name))
             if cfg_scoped is not None:
                 candidates.append(
                     (cfg_scoped["priority"], cfg_scoped["value"])
@@ -674,13 +847,10 @@ class ConfigHandler:
 
         cmd = self._cmdln_db.get(name)
         if cmd is not None:
+            self._used.add(("cmdln", name))
             candidates.append((cmd["priority"], cmd["value"]))
 
-        cfg = self._cfg_db.get(name)
-        if cfg is not None:
-            candidates.append((cfg["priority"], cfg["value"]))
-
-        param_val = self._param_lookup(name)
+        param_val = self._param_lookup(name, instance_path)
         if param_val is not _MISSING:
             candidates.append((int(Priority.EXTERNAL_PARAM_FILE), param_val))
 
@@ -696,42 +866,25 @@ class ConfigHandler:
         *,
         instance_path: Optional[tuple[str, ...]] = None,
     ) -> bool:
-        """True iff some source defines ``name``.
-
-        When ``instance_path`` is provided, a hierarchical CLI override
-        scoped to that exact path also counts.
-        """
-        if instance_path is not None:
-            if (instance_path, name) in self._cmdln_scoped_db:
-                return True
-            if (instance_path, name) in self._cfg_scoped_db:
-                return True
-        if name in self._cmdln_db or name in self._cfg_db:
+        """True iff some source defines the parameter; same addressing as
+        :meth:`get_configuration`."""
+        path, leaf = self._address("exists_configuration", name, instance_path)
+        if (path, leaf) in self._cmdln_scoped_db or (path, leaf) in self._cfg_scoped_db:
             return True
-        return self._param_lookup(name) is not _MISSING
+        if leaf in self._cmdln_db:
+            return True
+        return self._param_lookup(leaf, path) is not _MISSING
 
     def remove_configuration(self, name: str) -> None:
-        """Remove ``name`` from the .cfg database (XML and cmdln untouched).
-
-        A dotted ``name`` removes the matching path-scoped entry (if any).
-        """
-        segs, leaf = _split_dotted_name(name)
-        if segs is not None:
-            key = (segs, leaf)
-            if key in self._cfg_scoped_db:
-                reporting.warning(
-                    f"remove_configuration: removing previously "
-                    f"configured '{name}' (was "
-                    f"{self._cfg_scoped_db[key]['value']!r})"
-                )
-                del self._cfg_scoped_db[key]
-                return
-        if name in self._cfg_db:
+        """Remove ``path.name`` from the ``.cfg`` database (JSON and command
+        line untouched)."""
+        key = _require_dotted("remove_configuration", name)
+        if key in self._cfg_scoped_db:
             reporting.warning(
                 f"remove_configuration: removing previously configured "
-                f"'{name}' (was {self._cfg_db[name]['value']!r})"
+                f"'{name}' (was {self._cfg_scoped_db[key]['value']!r})"
             )
-            del self._cfg_db[name]
+            del self._cfg_scoped_db[key]
 
     # ------------------------------------------------------------------ #
     # Pretty printing                                                    #
@@ -757,12 +910,6 @@ class ConfigHandler:
             out.append("  (empty)")
         out.append("")
         out.append("--- .cfg (priority EXTERNAL_CONFIG) ---")
-        if self._cfg_db:
-            out.append(pprint.pformat(self._cfg_db, width=100))
-        else:
-            out.append("  (empty)")
-        out.append("")
-        out.append("--- .cfg scoped (priority EXTERNAL_CONFIG) ---")
         if self._cfg_scoped_db:
             out.append(pprint.pformat(self._cfg_scoped_db, width=100))
         else:
@@ -780,10 +927,11 @@ def extract_stats(top_inst: Any, *, variant: str = "full") -> dict:
 
     ``variant`` selects the Perl output flavour:
 
-    * ``"full"``  -- every live param (Parameters bucket) plus
-      ImmutableParameters and the full subinstance tree.
-    * ``"small"`` -- Parameters and full subinstance tree; no
-      ImmutableParameters.
+    * ``"full"``  -- every param, declared defaults included: forced
+      (``force=True`` / ``force_param``) ones under ImmutableParameters,
+      the rest under Parameters; the full subinstance tree.
+    * ``"small"`` -- Parameters and full subinstance tree; the
+      ImmutableParameters bucket is dropped.
     * ``"tiny"``  -- only Parameters with priority >= EXTERNAL_PARAM_FILE
       (JSON, CLI, parent-kwargs, and force-pinned overrides;
       ``.cfg`` ``configure(...)`` overrides at ``EXTERNAL_CONFIG`` are
@@ -806,14 +954,14 @@ def extract_stats(top_inst: Any, *, variant: str = "full") -> dict:
     """
     if variant not in ("full", "small", "tiny"):
         raise ValueError(f"extract_stats: unknown variant {variant!r}")
-    return {"HierarchyTop": _stats_entry(top_inst, variant, root=True)}
+    return {"HierarchyTop": _stats_entry(top_inst, variant)}
 
 
 def _instance_path_dotted(inst: Any) -> str:
     return ".".join(inst._instance_path_segments())
 
 
-def _stats_entry(inst: Any, variant: str, *, root: bool = False) -> dict:
+def _stats_entry(inst: Any, variant: str) -> dict:
     entry: dict[str, Any] = {
         "InstanceName": inst.get_instance_name(),
         "UniqueModuleName": inst._unique_module_name,
@@ -845,24 +993,28 @@ def _stats_entry(inst: Any, variant: str, *, root: bool = False) -> dict:
 def _split_params(
     params: dict, variant: str
 ) -> tuple[list[dict], list[dict]]:
-    # Perl splits live/immut by recursion (ConfigHandler.pm:683-708), not
-    # priority. No recursion-tracking here, so immut is always empty.
+    """Return ``(Parameters, ImmutableParameters)`` item lists.
+
+    Perl splits by recursion (ConfigHandler.pm:683-708); genesispy puts
+    force-pinned params (IMMUTABLE priority) in the second bucket, which
+    only the ``full`` variant emits.
+    """
     live: list[dict] = []
     immut: list[dict] = []
-    decl = int(Priority.DECLARATION)
     ext_param = int(Priority.EXTERNAL_PARAM_FILE)
+    immutable = int(Priority.IMMUTABLE)
     for name, p in params.items():
         prio = int(p.get("priority", 0))
-        state = p.get("state")
-        # NeverUsed filter: declared but never read/overridden.
-        if prio <= decl and state == "DEFINED":
-            continue
         if variant == "tiny" and prio < ext_param:
             continue
         item: dict[str, Any] = {"Name": name, "Val": p.get("value")}
         doc = p.get("doc")
         if doc:
             item["Doc"] = doc
+        if prio >= immutable and variant != "tiny":
+            if variant == "full":
+                immut.append(item)
+            continue
         live.append(item)
     return live, immut
 

@@ -43,8 +43,11 @@ FLAGSTAMPS = $(foreach t,$(TOPS),$(call topdir,$(t))/$(t).flags)
 # simulator under the configuration directory, so an elaborate-only run lands in gen/;
 # the simulator artifacts go in sim/ beside it, and an interactive run therefore never
 # overwrites a recorded test result.
+# tag_of turns a configuration string into its directory name the way
+# verif/run-tb.sh does (`IW=8:CW=4` -> `IW8_CW4`); keep the two in step.
+tag_of   = $(subst =,,$(subst :,_,$(1)))
 SIM_NAME = $(patsubst tb_%,%,$(SIM_TOP))
-SIM_TAG  = $(subst =,,$(subst :,_,$(SIM_CFG)))
+SIM_TAG  = $(call tag_of,$(SIM_CFG))
 SIM_DIR  = $(BUILDDIR)/$(SIM_TOP)/$(SIM_TAG)
 SIM_OUT  = $(SIM_DIR)/sim
 SIM_VF   = $(SIM_DIR)/gen/tb.vf
@@ -63,6 +66,9 @@ endif
 .PHONY: gen pylint vlint lint sim pytest test test-extra test-smoke plot cleangen cleansim clean
 .PHONY: help FORCE
 .DEFAULT_GOAL := gen
+
+# A failed recipe must not leave a partial, up-to-date product behind.
+.DELETE_ON_ERROR:
 
 gen: $(VLOG_VF)
 
@@ -87,10 +93,12 @@ $$(TOPDIR_$(1)):
 	@mkdir -p $$@
 
 # Records the command line, rewritten only when it changes, so a flag or
-# parameter change forces a rebuild and an unchanged one does not.
+# parameter change forces a rebuild and an unchanged one does not. The change
+# also removes the product: a fresh stamp can receive the same coarse mtime as
+# a product touched a moment earlier, and make compares strictly.
 $$(TOPDIR_$(1))/$(1).flags: FORCE | $$(TOPDIR_$(1))
 	@printf '%s\n' "$$(GEN_CMD_$(1))" | cmp -s - $$@ 2>/dev/null || \
-	    printf '%s\n' "$$(GEN_CMD_$(1))" > $$@
+	    { printf '%s\n' "$$(GEN_CMD_$(1))" > $$@; rm -f $$(TOPDIR_$(1))/$(1).vf; }
 
 # genesispy leaves an output file alone when its content is unchanged, and
 # the .vf content never varies, so touch it to mark the build done.
@@ -148,7 +156,7 @@ else ifeq ($(SIMULATOR),vcs)
 else ifeq ($(SIMULATOR),vlog)
 	vlog -sv +define+SIMULATION $(DUMP_DEF) -f $(SIM_VF) && vsim -c -do "run -all; quit" $(SIM_TOP)
 else ifeq ($(SIMULATOR),verilator)
-	verilator --binary -Wno-fatal --timing -CFLAGS -std=c++20 \
+	verilator --binary -Wno-fatal --timing --assert -CFLAGS -std=c++20 \
 	    +define+SIMULATION $(DUMP_DEF) $(DUMP_TRACE) --top-module $(SIM_TOP) -f $(SIM_VF) \
 	    -Mdir $(SIM_OUT)/obj && $(SIM_OUT)/obj/V$(SIM_TOP)
 else ifeq ($(SIMULATOR),iverilog)
@@ -271,16 +279,14 @@ define func_vlint_rules
 .PHONY: vlint-tb-$(1)
 vlint-tb-$(1):
 	@fail=0; \
-	for cfg in $$(or $$(SWEEP_$(1)),default); do \
-	    tag=$$$$(echo "$$$$cfg" | tr -d '=' | tr ':' '_'); \
-	    if $$(VERIFDIR)/run-tb.sh $(1) $$$$cfg gen >/dev/null 2>&1; then \
+	$$(foreach cfg,$$(or $$(SWEEP_$(1)),default), \
+	    if $$(VERIFDIR)/run-tb.sh $(1) $$(cfg) gen >/dev/null 2>&1; then \
 	        verilator --lint-only -Wall --top-module tb_$(1) \
-	            -f $$(BUILDDIR)/tb_$(1)/$$$$tag/gen/tb.vf || \
-	            { echo "LINT-FAIL $(1) $$$$cfg"; fail=1; }; \
+	            -f $$(BUILDDIR)/tb_$(1)/$$(call tag_of,$$(cfg))/gen/tb.vf || \
+	            { echo "LINT-FAIL $(1) $$(cfg)"; fail=1; }; \
 	    else \
-	        echo "GEN-FAIL $(1) $$$$cfg"; fail=1; \
-	    fi; \
-	done; \
+	        echo "GEN-FAIL $(1) $$(cfg)"; fail=1; \
+	    fi;) \
 	exit $$$$fail
 endef
 
@@ -330,7 +336,7 @@ test-smoke: $(addprefix test-smoke-,$(FUNCS) $(MODS))
 
 # make plot FUNC=f_shright [CFG=IW=8:CW=4] [OUT=shr.png]
 # The run is allowed to fail: a mismatching function is exactly the one worth plotting.
-plot_tag = $(subst =,,$(subst :,_,$(or $(CFG),default)))
+plot_tag = $(call tag_of,$(or $(CFG),default))
 
 plot:
 	@test -n "$(FUNC)" || { echo "usage: make plot FUNC=<name> [CFG=IW=8:CW=4] [OUT=x.png]"; exit 2; }
@@ -343,9 +349,13 @@ cleangen:
 	rm -rf $(BUILDDIR)
 
 cleansim:
-	rm -rf csrc simv.daidir work
+	rm -rf obj_dir csrc simv.daidir work
 	rm -rf xcelium.d INCA_libs cov_work .simvision *.shm
+	rm -rf *.daidir
 	rm -f *.vvp simv ucli.key vc_hdrs.h transcript vsim.wlf
+	rm -f xrun.log xrun.history xrun.key xmsim.key xmverilog.key
+	rm -f irun.log irun.history irun.key
+	rm -f ncsim.log ncvlog.log ncelab.log
 	rm -f *.log *.wlf *.vcd *.fst
 
 clean: cleangen cleansim
@@ -359,7 +369,7 @@ help:
 	@echo "  vlint    - lint every top (VERILINT=slang|verilator; default verilator)"
 	@echo "  vlint-<top> - lint one top"
 	@echo "  pylint   - py_compile the generated Python modules"
-	@echo "  lint     - pylint + vlint"
+	@echo "  lint     - pylint + vlint + vlint-tb"
 	@echo "  sim      - run SIM_TOP once under SIMULATOR; the checked run is test-<name>"
 	@echo "             make sim DUMP=1 writes dump.vcd (worth it for a module)"
 	@echo "  pytest   - the Q format library in $(LIBDIR)/tests; no simulator"

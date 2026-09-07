@@ -47,7 +47,8 @@
 //;         pat = '0' * (in_msb - bit) + '1' + (format(sub, f'0{nsub}b') if nsub else '') + '?' * (bit - 1 - nsub)
 //;         pfx = ((1 << nsub) | sub) << (lfrac - nsub)
 //;         val = (pfx ** lscale).bit_length() - 1 + lscale * (bit - lfrac)
-                `f"{in_msb}'b{pat}"`: `func_name` = {sign, `lit(val, log_msb, signed=False)`}; // `f"{val / lscale:.{lfrac}f}"`
+                `f"{in_msb}'b{pat}"`:  // `f"{val / lscale:.{lfrac}f}"`
+                    `func_name` = {sign, `lit(val, log_msb, signed=False)`};
 //;     # endfor
 //; # endfor
                 `f"{in_msb}'b" + '0' * in_msb`: `func_name` = {sign, `lit(0, log_msb, signed=False)`};

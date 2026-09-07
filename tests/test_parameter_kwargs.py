@@ -9,15 +9,11 @@ from __future__ import annotations
 
 import pytest
 
-from genesispy import cache
 from genesispy.reporting import ParameterError
 from genesispy.unique_module import UniqueModule
 
 from ._stubs import StubManager
 
-
-def setup_function(_fn) -> None:
-    cache.clear_all()
 
 
 class _Mod(UniqueModule):
@@ -227,10 +223,11 @@ def test_valid_stepped_value_passes() -> None:
 
 
 def test_parameter_range_redefinition_via_parameter_raises() -> None:
-    """Rule 6: calling parameter() with range kwargs when range already set raises."""
+    """A second parameter() call is a same-level re-declaration and fails
+    before its range kwargs are looked at (UniqueModule.pm:2443)."""
     inst = _Mod(StubManager())
     inst.parameter("WIDTH", 5, min=0, max=10)
-    with pytest.raises(ParameterError, match="Re-definition of range"):
+    with pytest.raises(ParameterError, match="already declared/seen"):
         inst.parameter("WIDTH", 5, min=0, max=20)
 
 

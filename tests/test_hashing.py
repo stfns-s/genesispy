@@ -50,12 +50,14 @@ def test_canonical_passthrough_types() -> None:
     assert _canonical(None) is None
 
 
-def test_canonical_unknown_uses_repr() -> None:
+def test_canonical_unknown_uses_tagged_repr() -> None:
+    """An object param hashes by repr(), tagged so it can never equal a string param."""
     class Weird:
         def __repr__(self) -> str:
             return "<weird>"
 
-    assert _canonical(Weird()) == "<weird>"
+    assert _canonical(Weird()) == {"__object__": "Weird", "__repr__": "<weird>"}
+    assert _canonical(Weird()) != _canonical("<weird>")
 
 
 def test_canonical_dict_str_collision_raises() -> None:

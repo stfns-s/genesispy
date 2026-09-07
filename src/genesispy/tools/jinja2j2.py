@@ -36,7 +36,6 @@ dependency ``import-j2``.
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import sys
 from dataclasses import dataclass
@@ -96,7 +95,9 @@ _FILTER_TABLE = {
     "list":       lambda t, a: f"list({t})",
     "default":    lambda t, a: (f"({t} if {t} is not None else {a[0]})" if a else t),
     "d":          lambda t, a: (f"({t} if {t} is not None else {a[0]})" if a else t),
-    "join":       lambda t, a: (f"{a[0]}.join(str(_) for _ in {t})" if a else f"''.join(str(_) for _ in {t})"),
+    "join":       lambda t, a: (
+        f"{a[0]}.join(str(_) for _ in {t})" if a else f"''.join(str(_) for _ in {t})"
+    ),
     "first":      lambda t, a: f"({t})[0]",
     "last":       lambda t, a: f"({t})[-1]",
     "min":        lambda t, a: f"min({t})",
@@ -143,14 +144,17 @@ _TEST_TABLE = {
 
 # Order matters: comment first (so `{#` doesn't get eaten by `{%`-class
 # false matches), then statement, then variable.
+# A quoted string inside a span is consumed whole, so a `%}` or `}}` in a
+# string literal does not end the span.
 _SPAN_RE = re.compile(
     r"""
     (?P<comment>  \{\#[\s\S]*?\#\}      ) |
-    (?P<stmt>     \{%-?\s*[\s\S]*?\s*-?%\} ) |
-    (?P<var>      \{\{-?\s*[\s\S]*?\s*-?\}\} )
+    (?P<stmt>     \{%-?\s*(?:"[^"\n]*"|'[^'\n]*'|[^"'])*?\s*-?%\} ) |
+    (?P<var>      \{\{-?\s*(?:"[^"\n]*"|'[^'\n]*'|[^"'])*?\s*-?\}\} )
     """,
     re.VERBOSE,
 )
+_RAW_END_RE = re.compile(r"\{%-?\s*endraw\s*-?%\}")
 
 
 def _line_col(source: str, offset: int) -> Tuple[int, int]:
@@ -190,6 +194,9 @@ class _ExprRewriter:
     # --- atoms -----------------------------------------------------------
 
     def v_Name(self, n) -> str:
+        if n.name == "loop":
+            # loop.index / loop.first / ... exist only inside Jinja2's renderer.
+            return self._unmappable("Jinja2 'loop' helpers have no genesispy-j2 equivalent")
         return n.name
 
     def v_NSRef(self, n) -> str:
@@ -359,8 +366,12 @@ def _rewrite_expr(env, expr_src: str, *, strict: bool, issues: List[Issue],
     expr_src = expr_src.strip()
     if not expr_src:
         return ""
-    node = _parse_expr(env, expr_src, lineno)
     rw = _ExprRewriter(strict=strict, issues=issues, lineno=lineno)
+    try:
+        node = _parse_expr(env, expr_src, lineno)
+    except (jinja2.TemplateSyntaxError, ValueError) as exc:
+        message = getattr(exc, "message", None) or str(exc)
+        return rw._unmappable(f"cannot parse expression {expr_src!r}: {message}")
     return rw.visit(node)
 
 
@@ -465,7 +476,8 @@ def _rewrite_stmt_span(env, span: str, *, strict: bool, issues: List[Issue],
     if first == "include":
         m = _INCLUDE_LITERAL_RE.fullmatch(body_stripped)
         if m is None:
-            reason = "complex 'include' (with context / ignore missing / dynamic path) is not supported"
+            reason = ("complex 'include' (with context / ignore missing / dynamic path) "
+                      "is not supported")
             if strict:
                 raise _Unmappable(reason, line=lineno)
             issues.append(Issue(lineno, 0, reason))
@@ -530,6 +542,12 @@ def _rewrite_stmt_span(env, span: str, *, strict: bool, issues: List[Issue],
             return ("{%" + lws + " for " + target_py + " in " +
                     genexp + ": " + rws + "%}")
         # if / while
+        if not kw_rest:
+            reason = f"'{first}' without a condition"
+            if strict:
+                raise _Unmappable(reason, line=lineno)
+            issues.append(Issue(lineno, 0, reason))
+            return f"{{# TODO(genesispy-jinja2j2): {reason} -- original: {span} #}}"
         cond_py = _rewrite_expr(env, kw_rest, strict=strict, issues=issues,
                                 lineno=lineno)
         block_stack.append(first)
@@ -543,6 +561,11 @@ def _rewrite_stmt_span(env, span: str, *, strict: bool, issues: List[Issue],
 # --------------------------------------------------------------------------- #
 # Driver
 # --------------------------------------------------------------------------- #
+
+def _raw_opener(span: str) -> bool:
+    _, _, body, _, _ = _strip_block_delims(span)
+    return body.strip() == "raw"
+
 
 def convert(source: str, *, strict: bool = True
             ) -> Tuple[str, List[Issue]]:
@@ -570,11 +593,23 @@ def convert(source: str, *, strict: bool = True
     block_stack: List[str] = []
     last = 0
     for m in _SPAN_RE.finditer(source):
+        if m.start() < last:
+            continue  # inside a raw block copied verbatim below
         out.append(source[last:m.start()])
         last = m.end()
         lineno, _col = _line_col(source, m.start())
         if m.group("comment") is not None:
             out.append(m.group("comment"))
+        elif m.group("stmt") is not None and _raw_opener(m.group("stmt")) and not strict:
+            # Best effort: the raw body must reach the output untouched, so
+            # copy through the matching endraw and record one issue.
+            reason = "'raw' has no genesispy-j2 equivalent; body copied verbatim"
+            issues.append(Issue(lineno, 0, reason))
+            end = _RAW_END_RE.search(source, m.end())
+            stop = end.end() if end else len(source)
+            out.append(f"{{# TODO(genesispy-jinja2j2): {reason} #}}")
+            out.append(source[m.start():stop])
+            last = stop
         elif m.group("stmt") is not None:
             out.append(_rewrite_stmt_span(env, m.group("stmt"),
                                           strict=strict, issues=issues,
@@ -633,7 +668,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         in_label = "<stdin>"
     else:
         try:
-            with open(args.input, "r") as fh:
+            with open(args.input, "r", encoding="utf-8") as fh:
                 source = fh.read()
         except OSError as e:
             reporting.error(f"genesispy-jinja2j2: {e}", fatal=False)
@@ -666,7 +701,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.output is None or args.output == "-":
         sys.stdout.write(result)
     else:
-        with open(args.output, "w") as fh:
+        with open(args.output, "w", encoding="utf-8") as fh:
             fh.write(result)
 
     if issues and not args.strict:

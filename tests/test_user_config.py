@@ -9,13 +9,15 @@ import pytest
 from genesispy import user_config
 from genesispy.config_handler import ConfigHandler
 from genesispy.unique_module import UniqueModule
-from genesispy import cache
-
-from ._stubs import StubManager
 
 
-def setup_function(_fn) -> None:
-    cache.clear_all()
+
+@pytest.fixture(autouse=True)
+def _reset_user_config_state():
+    """Tests below poke the module globals directly; start each from None."""
+    user_config._active_manager = None
+    user_config._active_module = None
+    yield
     user_config._active_manager = None
     user_config._active_module = None
 
@@ -81,7 +83,7 @@ def test_include_without_context_raises(tmp_path) -> None:
     # parse will succeed for an empty file but exec needs current module.
     p = tmp_path / "empty.vpy"
     p.write_text("")
-    with pytest.raises(RuntimeError, match="no active module context"):
+    with pytest.raises(RuntimeError, match="no active (manager|module) context"):
         user_config._include(str(p))
 
 
@@ -117,12 +119,12 @@ def test_configure_get_round_trip() -> None:
     mgr = _RealishManager()
     top = _Top(mgr)
     with user_config.context(mgr, top):
-        user_config._configure("WIDTH", 32)
-        assert user_config._get_configuration("WIDTH") == 32
+        user_config._configure("Top.WIDTH", 32)
+        assert user_config._get_configuration("Top.WIDTH") == 32
 
 
-def test_get_configuration_honours_scoped_cli_override() -> None:
-    """`_get_configuration` honours the active module's instance path."""
+def test_get_configuration_sees_a_scoped_cli_override() -> None:
+    """`_get_configuration("Top.WIDTH")` reads a `--parameter Top.WIDTH=` too."""
     import argparse
     mgr = _RealishManager()
     # Re-init ConfigHandler with a scoped --parameter on the top.
@@ -131,24 +133,24 @@ def test_get_configuration_honours_scoped_cli_override() -> None:
     top = _Top(mgr)
     top._instance_name = "Top"  # path segments derive from instance name
     with user_config.context(mgr, top):
-        assert user_config._get_configuration("WIDTH") == 64
+        assert user_config._get_configuration("Top.WIDTH") == 64
 
 
 def test_exists_and_remove_configuration() -> None:
     mgr = _RealishManager()
     top = _Top(mgr)
     with user_config.context(mgr, top):
-        user_config._configure("X", "hello")
-        assert user_config._exists_configuration("X") is True
-        user_config._remove_configuration("X")
-        assert user_config._exists_configuration("X") is False
+        user_config._configure("Top.X", "hello")
+        assert user_config._exists_configuration("Top.X") is True
+        user_config._remove_configuration("Top.X")
+        assert user_config._exists_configuration("Top.X") is False
 
 
 def test_print_configuration_returns_string() -> None:
     mgr = _RealishManager()
     top = _Top(mgr)
     with user_config.context(mgr, top):
-        user_config._configure("Y", 1)
+        user_config._configure("Top.Y", 1)
         out = user_config._print_configuration()
     assert isinstance(out, str)
     assert "Y" in out
@@ -165,11 +167,11 @@ def test_include_runs_vpy_in_current_module(tmp_path) -> None:
     # ``//;`` lines are Python; this template just calls configure().
     p.write_text(
         "//; from genesispy.user_config import _configure as configure\n"
-        "//; configure('X', 42)\n"
+        "//; configure('Top.X', 42)\n"
     )
     with user_config.context(mgr, top):
         user_config._include(str(p))
-        assert user_config._get_configuration("X") == 42
+        assert user_config._get_configuration("Top.X") == 42
 
 
 def test_include_injects_perl_compat_aliases(tmp_path) -> None:
@@ -193,14 +195,14 @@ def test_include_resolves_relative_via_includepath(tmp_path) -> None:
     inc_dir.mkdir()
     (inc_dir / "frag.vpy").write_text(
         "//; from genesispy.user_config import _configure as configure\n"
-        "//; configure('X', 99)\n"
+        "//; configure('Top.X', 99)\n"
     )
     mgr = _RealishManager()
     mgr.inc_path = [str(inc_dir)]
     top = _Top(mgr)
     with user_config.context(mgr, top):
         user_config._include("frag.vpy")
-        assert user_config._get_configuration("X") == 99
+        assert user_config._get_configuration("Top.X") == 99
 
 
 def test_include_relative_not_on_includepath_raises(tmp_path) -> None:
@@ -274,11 +276,11 @@ def test_include_honors_custom_extension_from_manager(tmp_path) -> None:
     p = tmp_path / "frag.myvpy"
     p.write_text(
         "//; from genesispy.user_config import _configure as configure\n"
-        "//; configure('X', 7)\n"
+        "//; configure('Top.X', 7)\n"
     )
     with user_config.context(mgr, top):
         user_config._include(str(p))
-        assert user_config._get_configuration("X") == 7
+        assert user_config._get_configuration("Top.X") == 7
 
 
 def test_include_rejects_extension_absent_from_manager_map(tmp_path) -> None:
@@ -317,8 +319,10 @@ def test_get_synthtop_path_is_absolute() -> None:
 def test_error_helper_raises() -> None:
     mgr = _RealishManager()
     top = _Top(mgr)
+    from genesispy.reporting import GenesisPyError
+
     with user_config.context(mgr, top):
-        with pytest.raises(Exception):
+        with pytest.raises(GenesisPyError, match="boom"):
             user_config.error("boom")
 
 

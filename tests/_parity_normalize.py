@@ -217,7 +217,7 @@ def build_variant_map(
             rf"\bmodule\s+({re.escape(base)}"
             rf"(?:_unq\d+|(?:_[A-Za-z]\w*_[^\s,;.()\[\]{{}}]+)+)?)\b"
         )
-        for raw_text, stripped in zip(all_texts, stripped_texts):
+        for raw_text, stripped in zip(all_texts, stripped_texts, strict=True):
             # Collect all tokens referenced in this text (bare or suffixed),
             # scanning comment-free text only.
             for m in any_pat.finditer(stripped):

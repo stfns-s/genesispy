@@ -43,7 +43,7 @@
             // right: floor(floor(in*(4+frac)/2**psh) / 4) == floor(in*(4+frac)/2**(psh+2))
             scaled = scaled >>> 2;
 
-            if (sh[`cwidth-1`] == 1'b0) begin // sh > 0 - check for saturation
+            if (sh[`cwidth-1`] == 1'b0) begin // sh >= 0 - check for saturation
                 ovf = ~in[`iwidth-1`] &  (|scaled[`isw-1`:`iwidth-1`]);
                 udf =  in[`iwidth-1`] & ~(&scaled[`isw-1`:`iwidth-1`]);
                 udf =  udf | in[`iwidth-1`] & ( scaled[`iwidth-1`:0] == `lit(sh_minn, iwidth)` );
