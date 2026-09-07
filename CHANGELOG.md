@@ -2,7 +2,7 @@
 
 Notable changes to genesispy. Versions follow `pyproject.toml`.
 
-## Unreleased
+## 0.6.1
 
 Findings of the 2026-09 code review, by area.
 
