@@ -79,6 +79,33 @@ def test_pyincluded_names_reachable_as_bare_names(tmp_path: Path) -> None:
     assert "// aw=12 max=64 n=9" in _emitted("dut")
 
 
+def test_verilog_bound_without_import(tmp_path: Path) -> None:
+    """The template body, and a pyinclude'd function called from a body or an include()'d
+    snippet, all see the bare name verilog."""
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "lits.py").write_text(
+        "def bound(v, w):\n"
+        "    return verilog.lit(v, w)\n"
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "snip.vpy").write_text(
+        "//; pyinclude('lits.py')\n"
+        "//; emit(f'// snip {bound(-3, 4)}')\n"
+    )
+    (tmp_path / "src" / "dut.vpy").write_text(
+        "//; pyinclude('lits.py')\n"
+        "//; emit(f'// body {verilog.lit(5, 8)} pyinc {bound(-3, 4)}')\n"
+        "//; include('snip.vpy')\n"
+    )
+    _run(tmp_path, [
+        "--input", "src/dut.vpy", "--top", "dut",
+        "--src-path", "src", "--inc-path", "src", "--py-path", "lib",
+    ])
+    out = _emitted("dut")
+    assert "// body 8'sd5 pyinc -4'sd3" in out
+    assert "// snip -4'sd3" in out
+
+
 # ---------------------------------------------------------------------------
 # 2. Scoping: one module's pyinclude is invisible to another
 # ---------------------------------------------------------------------------

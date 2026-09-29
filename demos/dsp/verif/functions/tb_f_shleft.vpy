@@ -1,14 +1,14 @@
-//; IW   = parameter('IW',   8)   # input width
-//; CW   = parameter('CW',   4)   # shift control width
-//; OSYM = parameter('OSYM', 0)   # output never takes the most negative value
-//; MIN  = -(1 << (IW-1))
-//; MAX  =  (1 << (IW-1)) - 1
-//; LO   = MIN + 1 if OSYM else MIN
-//; CFG  = f"{mname} IW={IW} CW={CW} OSYM={OSYM}"
+//; IW    = parameter('IW',    8)   # input width
+//; CW    = parameter('CW',    4)   # shift control width
+//; OSYMM = parameter('OSYMM', 0)   # output never takes the most negative value
+//; MIN   = -(1 << (IW-1))
+//; MAX   =  (1 << (IW-1)) - 1
+//; LO    = MIN + 1 if OSYMM else MIN
+//; CFG   = f"{mname} IW={IW} CW={CW} OSYMM={OSYMM}"
 // unit test for f_shleft
 module `mname`;
 
-//; self.include_params = {'func_name': 'dut', 'iwidth': IW, 'cwidth': CW, 'osym': OSYM}
+//; self.include_params = {'func_name': 'dut', 'iwidth': IW, 'cwidth': CW, 'osymm': OSYMM}
 //; include('f_shleft.vpy')
 //; include('tb_util.vpy')
 

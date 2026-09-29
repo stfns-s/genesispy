@@ -1,21 +1,21 @@
 //; AW      = parameter('AW',      8)   # a input width
 //; BW      = parameter('BW',      8)   # b input width
-//; ISYM    = parameter('ISYM',    0)   # inputs are already symmetric
+//; ISYMM   = parameter('ISYMM',   0)   # inputs are already symmetric
 //; IAPPROX = parameter('IAPPROX', 1)   # approximate the input negate
 //; OAPPROX = parameter('OAPPROX', 0)   # approximate the output negate
 //; ZDET    = parameter('ZDET',    1)   # force zero when log2(abs b) is zero
-//; OW      = AW + BW - (1 if ISYM else 0)
+//; OW      = AW + BW - (1 if ISYMM else 0)
 //; MIN_A   = -(1 << (AW-1))
 //; MIN_B   = -(1 << (BW-1))
-//; CFG     = f"{mname} AW={AW} BW={BW} ISYM={ISYM} IAPPROX={IAPPROX} OAPPROX={OAPPROX}"
+//; CFG     = f"{mname} AW={AW} BW={BW} ISYMM={ISYMM} IAPPROX={IAPPROX} OAPPROX={OAPPROX}"
 //; CFG    += f" ZDET={ZDET}"
 // unit test for f_slogmult
 module `mname`;
 
-//; PARAMS = {'awidth': AW, 'bwidth': BW, 'isym': ISYM, 'iapprox': IAPPROX}
+//; PARAMS = {'awidth': AW, 'bwidth': BW, 'isymm': ISYMM, 'iapprox': IAPPROX}
 //; self.include_params = dict(PARAMS, func_name='dut', oapprox=OAPPROX, zdet=ZDET)
 //; include('f_slogmult.vpy')
-//; self.include_params = {'func_name': 'ref_log2', 'iwidth': BW, 'isym': ISYM, 'approx': IAPPROX, 'lfrac': 0}
+//; self.include_params = {'func_name': 'ref_log2', 'iwidth': BW, 'isymm': ISYMM, 'approx': IAPPROX, 'lfrac': 0}
 //; include('tb_ref_log2.vpy')
 //; include('tb_util.vpy')
 //; LOG_MSB = getattr(self, 'ref_log2')['owidth'] - 1
@@ -58,8 +58,8 @@ module `mname`;
             for (int j = 0; j < `1 << BW`; j++) begin
                 b     = j[`BW-1`:0];
                 bs    = longint'(b);
-//; if ISYM:
-                // isym: the caller promises the most negative input never arrives
+//; if ISYMM:
+                // isymm: the caller promises the most negative input never arrives
                 if (as == `MIN_A` || bs == `MIN_B`)
                     tb_skip();
                 else begin
@@ -68,7 +68,7 @@ module `mname`;
                 exp   = ref_slogmult(as, bs);
                 tb_check(64'(y), exp, $sformatf("a=%0d b=%0d", as, bs));
                 tb_data_row($sformatf("%0d,%0d,%0d,%0d", as, bs, y, exp));
-//; if ISYM:
+//; if ISYMM:
                 end
 //; # endif
             end

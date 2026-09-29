@@ -145,7 +145,7 @@ def test_val_key_is_accepted(tmp_path: Path) -> None:
 
 def test_json_out_round_trips_into_json_cfg(tmp_path: Path) -> None:
     _design(tmp_path)
-    assert _run(tmp_path, [*ARGV, "-p", "W=9", "--json-out", "out.json"]) == 0
+    assert _run(tmp_path, [*ARGV, "-p", "W=9", "--params-global", "--json-out", "out.json"]) == 0
     cache.clear_all()
     assert _run(tmp_path, [*ARGV, "--json-cfg", "out.json"]) == 0
     files = _emitted(tmp_path)
@@ -189,7 +189,7 @@ def test_unused_overrides_are_reported(tmp_path: Path, capsys) -> None:
     (tmp_path / "u.json").write_text(json.dumps({"HierarchyTop": {
         "InstanceName": "top", "Parameters": [{"Name": "DEPTH", "__Val__": 2}],
     }}))
-    rc = _run(tmp_path, [*ARGV, "-p", "WIDTH=5", "-p", "top.nosuch.W=3",
+    rc = _run(tmp_path, [*ARGV, "-p", "WIDTH=5", "-p", "top.nosuch.W=3", "--params-global",
                          "--cfg", "u.cfg", "--json-cfg", "u.json"])
     assert rc == 0
     err = capsys.readouterr().err
@@ -202,7 +202,8 @@ def test_unused_overrides_are_reported(tmp_path: Path, capsys) -> None:
 def test_used_overrides_are_not_reported(tmp_path: Path, capsys) -> None:
     _design(tmp_path)
     (tmp_path / "u.cfg").write_text("configure('top.b.W', 6)\n")
-    assert _run(tmp_path, [*ARGV, "-p", "W=9", "-p", "top.a.W=3", "--cfg", "u.cfg"]) == 0
+    assert _run(tmp_path, [*ARGV, "-p", "W=9", "-p", "top.a.W=3", "--params-global",
+                         "--cfg", "u.cfg"]) == 0
     assert "never used" not in capsys.readouterr().err
 
 

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import ast
 import re
 
 import pytest
 
 from genesispy.config_handler import Priority
 from genesispy.unique_module import (
+    _COMMENT_LINE_WIDTH,
     _PARAM_FOOTER_VALUE_WIDTH,
     UniqueModule,
     _comparable_lines,
@@ -135,3 +137,41 @@ def test_param_footer_caps_the_value_column() -> None:
     row_n = next(ln for ln in _footer_of(top).splitlines() if " N " in ln)
     # The short value is padded to the cap, not to the long repr's width.
     assert f"{'8':<{_PARAM_FOOTER_VALUE_WIDTH}}  <- " in row_n
+
+
+def test_param_footer_wraps_long_values() -> None:
+    """A wide value wraps; the provenance stays on the row's last line."""
+    mgr = StubManager()
+    mgr.param_footer = True
+    top = Top(mgr)
+    top.define_param("N", default=8)
+    top.define_param("COEFFS", default=list(range(40)))
+    lines = _footer_of(top).splitlines()
+    head = next(i for i, ln in enumerate(lines) if re.match(r"^//\s+COEFFS\s+: ", ln))
+    tail = next(i for i in range(head, len(lines)) if "<- declaration default" in lines[i])
+    assert tail > head
+
+    indent = len("  COEFFS : ")
+    bodies = [ln[len("// "):] for ln in lines[head:tail + 1]]
+    assert all(ln.startswith(" " * indent) for ln in bodies[1:])
+    joined = "".join(ln[indent:] for ln in bodies)
+    assert ast.literal_eval(joined.split("  <- ")[0].strip()) == list(range(40))
+
+    # The short row is untouched by its neighbour's wrapping.
+    assert re.search(r"^//\s+N\s+: 8\s+<- declaration default$", "\n".join(lines), re.M)
+
+
+@pytest.mark.parametrize("n", range(1, 120))
+def test_param_footer_respects_comment_line_width(n: int) -> None:
+    """No footer line exceeds the budget, at any wrap point.
+
+    Sweeping the element count walks the last line through every width, so a
+    suffix that overruns cannot hide behind a short final row.
+    """
+    mgr = StubManager()
+    mgr.param_footer = True
+    top = Top(mgr)
+    top.define_param("COEFFS", default=list(range(n)))
+    top.define_param("TAPS", default={f"key{i}": i * 1000 for i in range(4)})
+    for ln in _footer_of(top).splitlines():
+        assert len(ln) <= _COMMENT_LINE_WIDTH, ln

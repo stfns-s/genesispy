@@ -2,6 +2,35 @@
 
 Notable changes to genesispy. Versions follow `pyproject.toml`.
 
+## 0.6.2
+
+- Incompatible: a bare `-p NAME=VALUE` (no instance path) is an error unless `--params-global` is
+  given, as in Genesis2; with the flag it applies to every instance that reads `NAME`, as before.
+  Scripts that pass bare `-p` to genesispy must add the flag. gvpy accepts bare `-p` without it.
+  The dsp demo's `Makefile` and `verif/run-tb.sh` pass the flag.
+- New `--defaults FILE` (genesispy and gvpy, repeatable): per-module parameter defaults from a
+  `.py` file's `BLOCK_PARAMS` dict or a `.json` file with the same tree. A module reads its own
+  entry, then its source template's; the tier sits below `.cfg`, so every other source outranks
+  it. Unused entries and keys are warnings. User guide section 6.5.
+- New `genesispy.lib.verilog`: Verilog text from Python values (`lit`, `sext`, `pad_low`, `decl`,
+  `port_map`, `idx`, `wrap_sum`, `parenthesize`). It is the dsp demo's former `lib/vexpr.py`,
+  renamed, with `VExprError` now `VerilogError`, and extended with `port_map`, `wrap_sum` and a
+  `col` argument to `decl`. Templates, `include()` snippets and `pyinclude`'d files see it as the
+  bare name `verilog`; generated modules import it as a global. User guide section 11.7.
+- dsp demo: `lib/vexpr.py` removed, the templates import `genesispy.lib.verilog`. `lib/qfmt.py`
+  updated: keywords `sym`/`bsym`/`osym` of `mult`, `Bounds.of` and `requant` are now
+  `symm`/`bsymm`/`osymm`, `Requant.apply(clamp=)` is `apply(saturate=)`, `round_consts` is public,
+  `requant` takes `container=`, and `osymm` with an unsigned target is an error. `f_sym` is
+  renamed `f_symm`; the parameters `OSYM`/`ISYM` and the include keys `osym`/`isym` are renamed
+  `OSYMM`/`ISYMM` and `osymm`/`isymm`. `tb_spec_mux` declares `rnd` and `seed` before the task
+  that uses them, which current iverilog requires.
+- Comments: a parameter value too wide for one line now wraps across several,
+  continuations hanging under the value column, in both the `to_verilog`
+  banner and the `--param-footer` provenance block. Lines are budgeted to 100
+  columns including the comment prefix. Sequences fill; a dict renders one key
+  per line and a long string still runs over. Previously generated output
+  differs wherever a module carries a list or dict parameter.
+
 ## 0.6.1
 
 Findings of the 2026-09 code review, by area.

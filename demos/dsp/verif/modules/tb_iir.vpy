@@ -1,4 +1,4 @@
-//; from vexpr import lit
+//; from genesispy.lib.verilog import lit
 //; IW   = parameter('IW',   8)    # input width
 //; OW   = parameter('OW',   8)    # output width
 //; MW   = parameter('MW',   4)    # mu width

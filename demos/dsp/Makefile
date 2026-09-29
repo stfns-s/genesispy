@@ -81,7 +81,8 @@ TOPDIR_$(1) := $$(call topdir,$(1))
 # --synth-top names the top's own instance, so the module lands in synth/ and only
 # genesispy's bookkeeping stays at the top of the build directory. -sv maps .vpy input
 # to .sv output: the templates emit SystemVerilog, which the default .v does not say.
-GEN_CMD_$(1) := $$(GENESISPY) -sv --input $(1).vpy --top $(1) \
+# --params-global lets EXTRA_FLAGS_<top> set -p NAME=VALUE without an instance path.
+GEN_CMD_$(1) := $$(GENESISPY) -sv --params-global --input $(1).vpy --top $(1) \
     --src-path $$(SRCDIR) --inc-path $$(INCDIR) --py-path $$(LIBDIR) --synth-top $(1) \
     --out-dir $$(TOPDIR_$(1)) \
     --synth-dir $$(TOPDIR_$(1))/synth --verif-dir $$(TOPDIR_$(1))/verif \
@@ -383,7 +384,7 @@ help:
 	@echo "  clean    - cleangen + cleansim"
 	@echo ""
 	@echo "Generation-time parameters go in EXTRA_FLAGS_<top>:"
-	@echo "  make intg EXTRA_FLAGS_intg='-p OW=12 -p IW=6 -p ISYM=1'"
+	@echo "  make intg EXTRA_FLAGS_intg='-p OW=12 -p IW=6 -p ISYMM=1'"
 	@echo ""
 	@echo "Variables (current values):"
 	@echo "  TOPS      = $(TOPS)"

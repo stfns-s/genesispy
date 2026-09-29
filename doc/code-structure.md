@@ -45,7 +45,8 @@ never imports frontend.
   by `remap_traceback`.
 - `template/aliases.py` -- the single source of truth for the Genesis2 bare-name alias table
   (`SIMPLE_ALIASES`, `EXPECTED_ALIAS_KEYS`, `alias_dict`, `alias_prelude_source`), consumed by both the
-  emitter prelude and `user_config._include`.
+  emitter prelude and `user_config._include`; `MODULE_GLOBALS_SOURCE` holds the generated module's global
+  imports (`verilog`).
 
 ### Elaboration engine
 
@@ -63,6 +64,11 @@ never imports frontend.
 - `_scalars.py` -- scalar coercion: the permissive rule for `-p` values, the lossless rule for `xml2json`.
 - `output_writer.py` -- flush cache to disk, write `.vlist` / `.depend` / `genesispy_clean.sh`.
 - `reporting.py` -- exception hierarchy and `error()` / `warning()` reporters.
+
+**Template library (`lib/`)** -- imported by generated modules, never by the engine.
+
+- `lib/verilog.py` -- Verilog text from Python values (`lit`, `sext`, `decl`, `port_map`, ...), bound in
+  templates as the bare name `verilog`.
 
 **Standalone tools (`tools/`)** -- none are used by the elaboration core; each backs a `bin/` entry point.
 
@@ -265,7 +271,10 @@ Parameter values resolve in priority order:
 2. **`ConfigHandler` lookup** (JSON / `.cfg` / `--parameter` CLI overrides) -- consulted by `parameter()` only
    when state is not already `OVERRIDDEN`/`FORCED`. This precedence is what stops a generic `Name`-keyed entry
    in a JSON config tree from clobbering an explicit `unique_inst(..., N=2)`.
-3. **Default supplied to `define_param` or `parameter`** -- used only when no source above provides a value.
+3. **`--defaults` entry** (`ConfigHandler.module_default`) -- consulted by `parameter()` when the lookup
+   above finds nothing: the module's own entry (`bname`), then its source template's (`sname`), stamped at
+   `Priority.MODULE_DEFAULT`.
+4. **Default supplied to `define_param` or `parameter`** -- used only when no source above provides a value.
 
 `.cfg` files run in a non-sandboxed Python `exec` (full `__builtins__` exposed, mirroring Perl `do FILE`)
 with `configure`, `get_configuration`, `exists_configuration`, `remove_configuration`, `include`,

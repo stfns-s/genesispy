@@ -4,21 +4,21 @@
 MODS  ?= intg iir spec_mux
 
 FUNCS ?= f_abs f_log2 f_logmult f_negate f_qcvt f_round f_s2sm f_sat f_sh f_shleft \
-         f_shright f_slogmult f_sm2s f_sx f_sym f_trunc f_umod
+         f_shright f_slogmult f_sm2s f_sx f_symm f_trunc f_umod
 
 # One configuration per word: generation parameters joined by ':', or 'default'.
-SWEEP_f_abs      := default IW=2 IW=3 IW=5 IW=16 IW=8:APPROX=1 IW=8:ISYM=1 \
-                    IW=8:APPROX=1:ISYM=1 IW=5:APPROX=1:ISYM=1
-SWEEP_f_negate   := default IW=2 IW=3 IW=5 IW=16 IW=8:APPROX=1 IW=8:ISYM=1 \
-                    IW=8:APPROX=1:ISYM=1 IW=5:APPROX=1:ISYM=1
-SWEEP_f_sym      := default IW=2 IW=3 IW=5 IW=16
+SWEEP_f_abs      := default IW=2 IW=3 IW=5 IW=16 IW=8:APPROX=1 IW=8:ISYMM=1 \
+                    IW=8:APPROX=1:ISYMM=1 IW=5:APPROX=1:ISYMM=1
+SWEEP_f_negate   := default IW=2 IW=3 IW=5 IW=16 IW=8:APPROX=1 IW=8:ISYMM=1 \
+                    IW=8:APPROX=1:ISYMM=1 IW=5:APPROX=1:ISYMM=1
+SWEEP_f_symm     := default IW=2 IW=3 IW=5 IW=16
 SWEEP_f_sx       := default IW=12:OW=13 IW=8:OW=9 IW=2:OW=8 IW=5:OW=6 IW=1:OW=2
-SWEEP_f_sat      := default IW=8:OW=2 IW=8:OW=3 IW=8:OW=7 IW=5:OW=3 IW=8:OW=6:OSYM=1 \
-                    IW=5:OW=3:OSYM=1 IW=16:OW=8 IW=5:OW=8 IW=2:OW=3
-SWEEP_f_trunc    := default IW=8:OW=2 IW=8:OW=3 IW=8:OW=6:OSYM=1 IW=5:OW=2 IW=16:OW=8 \
+SWEEP_f_sat      := default IW=8:OW=2 IW=8:OW=3 IW=8:OW=7 IW=5:OW=3 IW=8:OW=6:OSYMM=1 \
+                    IW=5:OW=3:OSYMM=1 IW=16:OW=8 IW=5:OW=8 IW=2:OW=3
+SWEEP_f_trunc    := default IW=8:OW=2 IW=8:OW=3 IW=8:OW=6:OSYMM=1 IW=5:OW=2 IW=16:OW=8 \
                     IW=4:OW=6 IW=8:OW=8
-SWEEP_f_round    := default IW=8:OW=2 IW=8:OW=3 IW=8:OW=6:OSYM=1 IW=5:OW=2 IW=16:OW=8 \
-                    IW=8:OW=8 IW=8:OW=9 IW=8:OW=8:OSYM=1
+SWEEP_f_round    := default IW=8:OW=2 IW=8:OW=3 IW=8:OW=6:OSYMM=1 IW=5:OW=2 IW=16:OW=8 \
+                    IW=8:OW=8 IW=8:OW=9 IW=8:OW=8:OSYMM=1
 # f_s2sm and f_sm2s give both ports w = min(IW, OW), so a configuration differing only in the
 # wider width repeats one already listed. These vary w itself and SM_PLUS.
 SWEEP_f_s2sm     := default IW=3:OW=3 IW=16:OW=16 IW=5:OW=5 IW=2:OW=2 IW=8:OW=8:SM_PLUS=0 \
@@ -26,16 +26,16 @@ SWEEP_f_s2sm     := default IW=3:OW=3 IW=16:OW=16 IW=5:OW=5 IW=2:OW=2 IW=8:OW=8:
 SWEEP_f_sm2s     := default IW=3:OW=3 IW=16:OW=16 IW=5:OW=5 IW=2:OW=2 IW=8:OW=8:SM_PLUS=0 \
                     IW=8:OW=5:SM_PLUS=0
 SWEEP_f_umod     := default IW=2 IW=3 IW=5
-SWEEP_f_shleft   := default IW=8:CW=1 IW=8:CW=2 IW=8:CW=4:OSYM=1 IW=5:CW=3 IW=5:CW=3:OSYM=1 \
+SWEEP_f_shleft   := default IW=8:CW=1 IW=8:CW=2 IW=8:CW=4:OSYMM=1 IW=5:CW=3 IW=5:CW=3:OSYMM=1 \
                     IW=3:CW=2
-SWEEP_f_shright  := default IW=8:CW=1 IW=8:CW=2 IW=5:CW=3 IW=3:CW=2 IW=8:CW=4:OSYM=1 \
-                    IW=5:CW=3:OSYM=1
+SWEEP_f_shright  := default IW=8:CW=1 IW=8:CW=2 IW=5:CW=3 IW=3:CW=2 IW=8:CW=4:OSYMM=1 \
+                    IW=5:CW=3:OSYMM=1
 SWEEP_f_sh       := default IW=8:CW=1 IW=8:CW=2 IW=8:CW=3 IW=5:CW=3 IW=3:CW=2 IW=16:CW=4
-SWEEP_f_log2     := default IW=2 IW=3 IW=5 IW=16 IW=8:ISYM=1 IW=8:APPROX=0 IW=8:LFRAC=1 \
+SWEEP_f_log2     := default IW=2 IW=3 IW=5 IW=16 IW=8:ISYMM=1 IW=8:APPROX=0 IW=8:LFRAC=1 \
                     IW=8:LFRAC=2 IW=5:LFRAC=2 IW=16:LFRAC=2 IW=8:LFRAC=4
-SWEEP_f_slogmult := default AW=5:BW=5 AW=8:BW=4 AW=4:BW=8 AW=3:BW=3 AW=8:BW=8:ISYM=1 \
+SWEEP_f_slogmult := default AW=5:BW=5 AW=8:BW=4 AW=4:BW=8 AW=3:BW=3 AW=8:BW=8:ISYMM=1 \
                     AW=8:BW=8:ZDET=0 AW=8:BW=8:OAPPROX=1 AW=8:BW=8:IAPPROX=0
-SWEEP_f_logmult  := default AW=5:BW=5 AW=8:BW=4 AW=8:BW=8:ZDET=1 AW=8:BW=8:ISYM=1 \
+SWEEP_f_logmult  := default AW=5:BW=5 AW=8:BW=4 AW=8:BW=8:ZDET=1 AW=8:BW=8:ISYMM=1 \
                     AW=8:BW=8:OSM=1 AW=8:BW=8:SIGN_ONLY=1 AW=8:BW=8:SIGN_ONLY=1:OSM=1 \
                     AW=8:BW=8:OAPPROX=1 \
                     AW=8:BW=8:IAPPROX=0 AW=8:BW=8:ANTILOG=0 AW=8:BW=8:ANTILOG=0:ZDET=1 \
@@ -45,14 +45,14 @@ SWEEP_f_logmult  := default AW=5:BW=5 AW=8:BW=4 AW=8:BW=8:ZDET=1 AW=8:BW=8:ISYM=
 # code needs one bit more than the output width to sit in the signed accumulator.
 SWEEP_f_qcvt     := default Q_IN=Q4.12:Q_OUT=Q2.6:ROUND_MODE=half_even \
                     Q_IN=UQ8.8:Q_OUT=UQ4.4:ROUND_MODE=half_up Q_IN=Q3.5:Q_OUT=Q3.9 \
-                    Q_IN=Q4.4:Q_OUT=UQ4.4 Q_IN=UQ4.4:Q_OUT=Q4.4 Q_IN=Q4.4:Q_OUT=Q4.4:OSYM=1 \
+                    Q_IN=Q4.4:Q_OUT=UQ4.4 Q_IN=UQ4.4:Q_OUT=Q4.4 Q_IN=Q4.4:Q_OUT=Q4.4:OSYMM=1 \
                     Q_IN=Q4.4:Q_OUT=Q2.2:ROUND_MODE=half_up \
                     Q_IN=Q8.8:Q_OUT=Q1.1:ROUND_MODE=half_even \
                     Q_IN=Q-1.5:Q_OUT=Q0.5 Q_IN=Q1.6:Q_OUT=Q-1.5:ROUND_MODE=half_up \
                     Q_IN=Q-2.6:Q_OUT=Q-1.4:ROUND_MODE=half_even Q_IN=UQ0.4:Q_OUT=UQ-1.3 \
-                    Q_IN=Q3.-1:Q_OUT=Q3.0 Q_IN=Q6.-2:Q_OUT=Q4.-2:OSYM=1 Q_IN=Q0.1:Q_OUT=Q0.1 \
+                    Q_IN=Q3.-1:Q_OUT=Q3.0 Q_IN=Q6.-2:Q_OUT=Q4.-2:OSYMM=1 Q_IN=Q0.1:Q_OUT=Q0.1 \
                     Q_IN=Q2.5:Q_OUT=Q7.5 Q_IN=UQ4.4:Q_OUT=UQ5.4 Q_IN=UQ4.4:Q_OUT=UQ6.4 \
-                    Q_IN=UQ4.4:Q_OUT=UQ12.4 Q_IN=UQ4.4:Q_OUT=UQ12.4:OSYM=1 \
+                    Q_IN=UQ4.4:Q_OUT=UQ12.4 \
                     Q_IN=UQ4.4:Q_OUT=UQ12.2:ROUND_MODE=half_up \
                     Q_IN=UQ4.4:Q_OUT=UQ12.2:ROUND_MODE=half_even
 
@@ -64,9 +64,9 @@ SWEEP_f_qcvt     := default Q_IN=Q4.12:Q_OUT=Q2.6:ROUND_MODE=half_even \
 # NEG_APPROX loses three more, an approximate negation never producing the value it folds away.
 SWEEP_intg := default OW=4:IW=2:MW=2 OW=8:IW=4:MW=2 OW=12:IW=6:MW=3 OW=16:IW=8:MW=4 \
               OW=8:IW=4:MW=4:AW=12 OW=8:IW=4:MW=4:LW=2 OW=8:IW=4:MW=4:LW=8 \
-              NEG_APPROX=1 ISYM=1 OW=6:IW=3:MW=2 NEG_APPROX=1:ISYM=1 \
+              NEG_APPROX=1 ISYMM=1 OW=6:IW=3:MW=2 NEG_APPROX=1:ISYMM=1 \
               OW=4:IW=2:MW=2:EXH=1:EXH_MIN=32 OW=4:IW=2:MW=2:AW=5:EXH=1:EXH_MIN=32 \
-              OW=4:IW=2:MW=2:ISYM=1:EXH=1:EXH_MIN=32 \
+              OW=4:IW=2:MW=2:ISYMM=1:EXH=1:EXH_MIN=32 \
               OW=4:IW=2:MW=2:NEG_APPROX=1:EXH=1:EXH_MIN=29
 
 # One entry per rejecting check, in table order. MW >= 2 because lk_mu > mu > 0 needs two
@@ -131,7 +131,7 @@ NEG_f_round := IW=1:OW=2
 NEG_f_umod   := IW=0
 NEG_f_abs    := IW=0
 NEG_f_negate := IW=0
-NEG_f_sym    := IW=0
+NEG_f_symm   := IW=0
 
 # A zero-width output has no sign bit to hold the truncated value. The testbench rejects
 # it first: it derives the reference output range from OW before it includes f_trunc.
@@ -155,7 +155,9 @@ NEG_f_shright := CW=0
 NEG_f_log2     := IW=1 LFRAC=13
 NEG_f_logmult  := AW=1 BW=1
 NEG_f_slogmult := BW=1
-NEG_f_qcvt     := Q_IN=X4.4 ROUND_MODE=nearest Q_OUT=Q0.0 Q_IN=Q2.-2
+# f_qcvt: OSYMM needs a signed output format; with an unsigned one generation stops.
+NEG_f_qcvt     := Q_IN=X4.4 ROUND_MODE=nearest Q_OUT=Q0.0 Q_IN=Q2.-2 \
+                  Q_IN=UQ4.4:Q_OUT=UQ12.4:OSYMM=1
 
 # Configurations known to mismatch. A listed one that MISMATCHES reports XFAIL and does not
 # turn make test red; one that PASSES reports XPASS and does, so settling a finding forces this

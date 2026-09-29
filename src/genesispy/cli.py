@@ -110,6 +110,26 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Command-line parameter override (may be repeated).",
     )
     g_in.add_argument(
+        "--params-global",
+        dest="params_global",
+        action="store_true",
+        help=(
+            "Accept -p NAME=VALUE without an instance path; it applies to every "
+            "instance that reads NAME."
+        ),
+    )
+    g_in.add_argument(
+        "--defaults",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help=(
+            "Per-module parameter defaults: a .py file defining BLOCK_PARAMS, "
+            "or a .json file with the same tree; searched like --cfg. Outranked "
+            "by every other source. May be repeated."
+        ),
+    )
+    g_in.add_argument(
         "-j", "--json-cfg",
         dest="json_cfg",
         default=None,

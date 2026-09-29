@@ -1,10 +1,10 @@
     // golden log table for f_log2, for any testbench whose function under test takes a log
-//; from vexpr import lit
+//; from genesispy.lib.verilog import lit
 //; import math
 //; h         = self.include_params
 //; func_name = h.get('func_name', 'ref_log2')
 //; iwidth    = h.get('iwidth', 8)
-//; isym      = h.get('isym', 0)
+//; isymm     = h.get('isymm', 0)
 //; approx    = h.get('approx', 1)
 //; lfrac     = h.get('lfrac', 0)
 //; # Both this table and the function raise a value to the power 2**lfrac, so generation
@@ -28,7 +28,7 @@
 //; # enddef
 //; def _word(i):
 //;     v   = i - (1 << iwidth) if i >= (1 << (iwidth-1)) else i
-//;     ix  = (min_neg + 1) if (not isym and v == min_neg) else v
+//;     ix  = (min_neg + 1) if (not isymm and v == min_neg) else v
 //;     ix  = (~ix if approx else -ix) if v < 0 else ix
 //;     return ((1 if v < 0 else 0) << (owidth-1)) | _lg(ix & ((1 << (iwidth-1)) - 1))
 //; # enddef

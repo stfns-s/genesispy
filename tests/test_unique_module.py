@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from genesispy import cache
 from genesispy.reporting import ElaborationError, ParameterError
 from genesispy.unique_module import (
+    _COMMENT_LINE_WIDTH,
     UniqueModule,
 )
 
@@ -85,6 +87,58 @@ def test_to_verilog_banner_block_comment() -> None:
     assert " Source class: Top" in out
     assert "   N = 8" in out
     assert lines[-1] == "*/"
+
+
+def _banner_value_lines(text: str, name: str) -> list[str]:
+    """Banner lines carrying ``name``'s value, comment prefix stripped."""
+    lines = text.splitlines()
+    head = next(i for i, ln in enumerate(lines) if ln.startswith(f"//   {name} = "))
+    out = [lines[head][len("// "):]]
+    for ln in lines[head + 1:]:
+        body = ln[len("// "):]
+        if not body.startswith(" " * (len(name) + 5)):
+            break
+        out.append(body)
+    return out
+
+
+def test_to_verilog_banner_wraps_long_values() -> None:
+    """A value too wide for one line wraps with a hanging indent."""
+    mgr = StubManager()
+    value = list(range(40))
+    top = Top(mgr)
+    top.define_param("COEFFS", default=value)
+    top.execute()
+    rows = _banner_value_lines(top._outfile_handle.getvalue(), "COEFFS")
+    assert len(rows) > 1
+
+    indent = len("  COEFFS = ")
+    # Every continuation is indented to the value column, and the value
+    # survives the wrapping.
+    assert all(ln.startswith(" " * indent) for ln in rows[1:])
+    joined = rows[0][indent:] + "".join(ln[indent:] for ln in rows[1:])
+    assert ast.literal_eval(joined) == value
+
+
+@pytest.mark.parametrize("n", range(1, 120))
+def test_to_verilog_banner_respects_comment_line_width(n: int) -> None:
+    """No banner line exceeds the budget, at any wrap point."""
+    mgr = StubManager()
+    top = Top(mgr)
+    top.define_param("COEFFS", default=list(range(n)))
+    top.define_param("TAPS", default={f"key{i}": i * 1000 for i in range(4)})
+    top.execute()
+    for ln in top._outfile_handle.getvalue().splitlines():
+        assert len(ln) <= _COMMENT_LINE_WIDTH, ln
+
+
+def test_to_verilog_banner_leaves_short_values_on_one_line() -> None:
+    """Values that fit are emitted exactly as before."""
+    mgr = StubManager()
+    top = Top(mgr)
+    top.define_param("SMALL", default=[1, 2, 3])
+    top.execute()
+    assert "//   SMALL = [1, 2, 3]" in top._outfile_handle.getvalue()
 
 
 # ---------------------------------------------------------------- params

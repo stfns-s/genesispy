@@ -21,11 +21,17 @@ source of truth; the three sites consume :data:`SIMPLE_ALIASES` via
 ``pyinclude`` and its deprecated spelling ``pinclude`` are bound per-site
 against the namespace the included Python must populate -- ``globals()`` in
 the two source-string sites, the ``ns`` argument in :func:`alias_dict`.
+
+Helper modules such as ``verilog`` are bound as globals of the generated module
+(:data:`MODULE_GLOBALS_SOURCE`) rather than as ``execute()`` locals, so a
+pyinclude'd file sees them from a template body as well.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from genesispy.lib import verilog
 
 
 SIMPLE_ALIASES: tuple[tuple[str, str], ...] = (
@@ -60,15 +66,21 @@ SIMPLE_ALIASES: tuple[tuple[str, str], ...] = (
 
 # Full set of bare-name aliases bound at every prelude site. The
 # StrCallable shortname quartet (mname/iname/bname/sname) and the
-# include/pyinclude/pinclude trio sit alongside SIMPLE_ALIASES; this constant
+# include/pyinclude/pinclude trio sit alongside SIMPLE_ALIASES, and verilog comes from
+# MODULE_GLOBALS_SOURCE; this constant
 # is the single source of truth for tests that assert "every name is bound".
 EXPECTED_ALIAS_KEYS: frozenset[str] = frozenset(
     {alias for alias, _ in SIMPLE_ALIASES}
     | {
         "mname", "iname", "bname", "sname",
         "include", "pyinclude", "pinclude",
+        "verilog",
     }
 )
+
+# Import block for the generated module's globals. Modules only: a global is shared by every
+# instance of the template, so it must not hold anything bound to one instance.
+MODULE_GLOBALS_SOURCE: str = "from genesispy.lib import verilog\n"
 
 
 def alias_prelude_source(indent: str = "        ") -> str:
@@ -180,6 +192,7 @@ def alias_dict(self_obj: Any, ns: dict | None = None) -> dict[str, Any]:
         out["sname"] = None
 
     out["include"] = _uc._include
+    out["verilog"] = verilog
     if ns is None:
         def _needs_ns(_path: str) -> None:
             raise RuntimeError(

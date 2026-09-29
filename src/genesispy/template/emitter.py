@@ -17,7 +17,7 @@ import os
 from typing import Iterable, Optional
 
 from ..reporting import ParseError
-from .aliases import alias_prelude_source
+from .aliases import MODULE_GLOBALS_SOURCE, alias_prelude_source
 from .parser import parse_vpy
 from . import runtime
 
@@ -33,6 +33,7 @@ def _header(vpy_path: str, cls_name: str, output_suffix: str) -> str:
         f"# Auto-generated from {vpy_path} -- DO NOT EDIT\n"
         "from genesispy.template.runtime import UniqueModule, UserMixin, StrCallable\n"
         "from genesispy import user_config as _gpy_user_config\n"
+        f"{MODULE_GLOBALS_SOURCE}"
         "\n"
         "\n"
         f"class {cls_name}(UniqueModule, UserMixin):\n"

@@ -144,9 +144,26 @@ def test_debug_reports_written_files(tmp_path: Path, monkeypatch, capsys) -> Non
 
 
 def test_log_flag_tees_warnings_to_the_file(tmp_path: Path, monkeypatch) -> None:
-    _run(tmp_path, [*_design(tmp_path), "--out-dir", "out", "-p", "NOSUCH=1",
+    _run(tmp_path, [*_design(tmp_path), "--out-dir", "out", "-p", "NOSUCH=1", "--params-global",
                     "--log", "run.log"], monkeypatch)
     assert "override NOSUCH was never used" in (tmp_path / "run.log").read_text()
+
+
+def test_bare_parameter_is_rejected_without_params_global(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    argv = [*_design(tmp_path), "--out-dir", "out", "-p", "N=9"]
+    monkeypatch.chdir(tmp_path)
+    assert Manager(parse_args(argv)).execute() != 0
+    assert "--params-global" in capsys.readouterr().err
+    assert not (tmp_path / "out" / "top.v").exists()
+
+
+def test_params_global_applies_a_bare_parameter(tmp_path: Path, monkeypatch) -> None:
+    leaf_only = ["--input", "leaf.vpy", "--top", "leaf", "--src-path", "src", "--out-dir", "out"]
+    _design(tmp_path)
+    _run(tmp_path, [*leaf_only, "-p", "N=9", "--params-global"], monkeypatch)
+    assert "// N=9" in (tmp_path / "out" / "leaf.v").read_text()
 
 
 def test_path_flag_lists_touched_directories(tmp_path: Path, monkeypatch) -> None:

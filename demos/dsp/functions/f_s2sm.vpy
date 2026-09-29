@@ -1,7 +1,7 @@
     // convert 2's complement to sign,magnitude
     //  The most negative input has no magnitude counterpart, so it folds to MIN+1 first.
     //  Both ports are min(iwidth, owidth) wide: this converts, it does not change width.
-//; from vexpr import lit
+//; from genesispy.lib.verilog import lit
 //; h         = self.include_params
 //; func_name = h.get('func_name', 'f_s2sm')
 //; iwidth    = h.get('iwidth', 8)

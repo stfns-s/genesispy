@@ -1,7 +1,7 @@
-//; from vexpr import decl
+//; from genesispy.lib.verilog import decl
 //; AW        = parameter('AW',        8)   # a input width
 //; BW        = parameter('BW',        8)   # b input width
-//; ISYM      = parameter('ISYM',      0)   # inputs are already symmetric
+//; ISYMM     = parameter('ISYMM',     0)   # inputs are already symmetric
 //; IAPPROX   = parameter('IAPPROX',   1)   # approximate the input negate
 //; OAPPROX   = parameter('OAPPROX',   0)   # approximate the output negate
 //; ALFRAC    = parameter('ALFRAC',    0)   # fractional bits in log2(a)
@@ -10,10 +10,10 @@
 //; ZDET      = parameter('ZDET',      0)   # force zero when either input is zero
 //; OSM       = parameter('OSM',       0)   # sign magnitude output
 //; SIGN_ONLY = parameter('SIGN_ONLY', 0)   # return only the sign of the product
-//; PARAMS = {'awidth': AW, 'bwidth': BW, 'isym': ISYM, 'iapprox': IAPPROX, 'oapprox': OAPPROX}
+//; PARAMS = {'awidth': AW, 'bwidth': BW, 'isymm': ISYMM, 'iapprox': IAPPROX, 'oapprox': OAPPROX}
 //; PARAMS.update({'alfrac': ALFRAC, 'blfrac': BLFRAC, 'antilog': ANTILOG, 'zdet': ZDET})
 //; PARAMS.update({'osm': OSM, 'sign_only': SIGN_ONLY})
-//; CFG    = f"{mname} AW={AW} BW={BW} ISYM={ISYM} IAPPROX={IAPPROX} OAPPROX={OAPPROX}"
+//; CFG    = f"{mname} AW={AW} BW={BW} ISYMM={ISYMM} IAPPROX={IAPPROX} OAPPROX={OAPPROX}"
 //; CFG   += f" ALFRAC={ALFRAC} BLFRAC={BLFRAC} ANTILOG={ANTILOG} ZDET={ZDET} OSM={OSM}"
 //; CFG   += f" SIGN_ONLY={SIGN_ONLY}"
 // unit test for f_logmult
@@ -27,7 +27,7 @@ module `mname`;
 //; ALFRAC_EFF = getattr(self, 'dut')['alfrac']
 //; BLFRAC_EFF = getattr(self, 'dut')['blfrac']
 //; if not SIGN_ONLY:
-//;     refp = {'isym': ISYM, 'approx': IAPPROX}
+//;     refp = {'isymm': ISYMM, 'approx': IAPPROX}
 //;     self.include_params = dict(refp, func_name='ref_log2a', iwidth=AW, lfrac=ALFRAC_EFF)
 //;     include('tb_ref_log2.vpy')
 //;     self.include_params = dict(refp, func_name='ref_log2b', iwidth=BW, lfrac=BLFRAC_EFF)
@@ -170,8 +170,8 @@ module `mname`;
             for (int j = 0; j < `1 << BW`; j++) begin
                 b  = j[`BW-1`:0];
                 bs = longint'(b);
-//; if ISYM:
-                // isym: the caller promises the most negative input never arrives
+//; if ISYMM:
+                // isymm: the caller promises the most negative input never arrives
                 if (as == `MIN_A` || bs == `MIN_B`)
                     tb_skip();
                 else begin
@@ -185,7 +185,7 @@ module `mname`;
                 expp = ref_antilog(as, bs);
                 tb_check(64'(yp), expp, $sformatf("antilog a=%0d b=%0d", as, bs));
 //; # endif
-//; if ISYM:
+//; if ISYMM:
                 end
 //; # endif
             end

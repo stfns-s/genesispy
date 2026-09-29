@@ -1,7 +1,7 @@
     // enforce 2's complement symmetry - i.e. min=-2^(iwidth-1)+1 == -max
-//; from vexpr import lit
+//; from genesispy.lib.verilog import lit
 //; h         = self.include_params
-//; func_name = h.get('func_name', 'f_sym')
+//; func_name = h.get('func_name', 'f_symm')
 //; iwidth    = h.get('iwidth', 8)
 //; lifetime  = h.get('lifetime', 'static')
 //; if iwidth < 1:

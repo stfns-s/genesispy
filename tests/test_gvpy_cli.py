@@ -179,6 +179,31 @@ def test_main_defparam_warning_only_once(tmp_path, capsys):
     assert captured.err.count("--defparam is deprecated") == 1
 
 
+def test_main_defaults_supplies_the_module_entry(tmp_path, capsys):
+    """--defaults entries key on the file stem, gvpy's module name; -p still outranks them."""
+    src = tmp_path / "p.vpy"
+    src.write_text(
+        "module p;\n"
+        "//; A = parameter('A', 0)\n"
+        "//; B = parameter('B', 0)\n"
+        "  // A=`A` B=`B`\n"
+        "endmodule\n"
+    )
+    d = tmp_path / "d.py"
+    d.write_text("BLOCK_PARAMS = {'p': {'A': 3, 'B': 4}}\n")
+    rc = main(["--defaults", str(d), "-p", "B=7", str(src)])
+    assert rc == 0
+    assert "// A=3 B=7" in capsys.readouterr().out
+
+
+def test_main_defaults_bad_file_exits_2(tmp_path, capsys):
+    src = tmp_path / "p.vpy"
+    src.write_text("module p;\nendmodule\n")
+    rc = main(["--defaults", str(tmp_path / "nope.py"), str(src)])
+    assert rc == 2
+    assert "nope.py" in capsys.readouterr().err
+
+
 def test_main_parameter_no_deprecation_warning(tmp_path, capsys):
     """--parameter must not emit the --defparam deprecation."""
     src = tmp_path / "p.vpy"

@@ -20,7 +20,7 @@
 //; #   K. K. Parhi, "Design of multigigabit multiplexer-loop-based decision feedback
 //; #   equalizers," IEEE Trans. VLSI Syst., vol. 13, no. 4, pp. 489-493, Apr. 2005.
 //; import qfmt
-//; from vexpr import decl, idx, lit
+//; from genesispy.lib.verilog import decl, idx, lit
 //;
 //; # parameters
 //; N_SYM     = parameter('N_SYM',     32)     # symbols resolved per clock

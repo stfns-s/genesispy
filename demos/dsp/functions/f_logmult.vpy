@@ -1,12 +1,12 @@
     // signed log multiplier - antilog(log2(a) + log2(b)), approximating a*b
     //  Each log is one high for a power of two and the sum removes only one of the two
     //  offsets, so the result is about 2*a*b, and exactly that on a power-of-two pair.
-//; from vexpr import decl, lit
+//; from genesispy.lib.verilog import decl, lit
 //; h         = self.include_params
 //; func_name = h.get('func_name', 'f_logmult')
 //; awidth    = h.get('awidth', 8)
 //; bwidth    = h.get('bwidth', 8)
-//; isym      = h.get('isym', 0)
+//; isymm     = h.get('isymm', 0)
 //; iapprox   = h.get('iapprox', 1)
 //; oapprox   = h.get('oapprox', 0)
 //; alfrac    = h.get('alfrac', 0)
@@ -21,7 +21,7 @@
 //;     alfrac = 0
 //;     blfrac = 0
 //; # endif
-//; pwidth    = awidth + bwidth - (1 if isym else 0)
+//; pwidth    = awidth + bwidth - (1 if isymm else 0)
 //; a_log     = func_name + '_loga'
 //; b_log     = func_name + '_logb'
 //; alog_func = func_name + '_antilog'
@@ -46,7 +46,7 @@
         end
     endfunction
 //; else:
-//;     logp = {'isym': isym, 'approx': iapprox, 'lifetime': lifetime}
+//;     logp = {'isymm': isymm, 'approx': iapprox, 'lifetime': lifetime}
 //;     self.include_params = dict(logp, func_name=a_log, iwidth=awidth, lfrac=alfrac)
 //;     include('f_log2.vpy')
 //;     self.include_params = dict(logp, func_name=b_log, iwidth=bwidth, lfrac=blfrac)
@@ -62,7 +62,7 @@
 //;     # the antilog of a fractional log is a root, not a shift, so it is only offered
 //;     # for whole-bit logs, and only where the core leaves the result in the log domain
 //;     emit_antilog = not antilog and not alfrac and not blfrac
-//;     negp = {'approx': oapprox, 'isym': 1, 'lifetime': lifetime}
+//;     negp = {'approx': oapprox, 'isymm': 1, 'lifetime': lifetime}
 //;     # only the two's complement output negates the magnitude, so sign magnitude needs
 //;     # neither the negate function nor the magnitude register
 //;     if not osm:
@@ -141,7 +141,7 @@
         end
     endfunction
     // `func_name`(a[`awidth-1`:0], b[`bwidth-1`:0]) lfrac(a:`alfrac`,b:`blfrac`) antilog:`antilog`
-    //   isym:`isym` approx(i:`iapprox`,o:`oapprox`) zdet:`zdet` osm:`osm`
+    //   isymm:`isymm` approx(i:`iapprox`,o:`oapprox`) zdet:`zdet` osm:`osm`
     function `lifetime` `decl(owidth, signed=not osm, pad=False)` `func_name`;
         input signed [`awidth-1`:0] a;
         input signed [`bwidth-1`:0] b;

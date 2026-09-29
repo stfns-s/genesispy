@@ -1,11 +1,11 @@
-//; from vexpr import decl, lit, sext
+//; from genesispy.lib.verilog import decl, lit, sext
 //; import qfmt
 //; h          = self.include_params
 //; func_name  = h.get('func_name', 'f_qcvt')
 //; q_in       = h.get('q_in',  'Q4.4')
 //; q_out      = h.get('q_out', 'Q2.2')
 //; round_mode = h.get('round_mode', 'trunc')
-//; osym       = h.get('osym', 0)
+//; osymm      = h.get('osymm', 0)
 //; lifetime   = h.get('lifetime', 'static')
 //; src_lo     = h.get('src_lo', None)      # lowest source code that arrives; None: f_in.min_code
 //; src_hi     = h.get('src_hi', None)      # highest; None: f_in.max_code
@@ -26,7 +26,7 @@
 //;         f"({f_in.min_code} .. {f_in.max_code})")
 //; # endif
 //; src      = q_or_error(qfmt.Bounds, lo_c, hi_c, f_in.frac, f_in.signed)
-//; rq       = q_or_error(qfmt.requant, src, f_out, round_mode, bool(osym))
+//; rq       = q_or_error(qfmt.requant, src, f_out, round_mode, bool(osymm))
 //; # A clamp end is emitted where a source code can reach it. Without source bounds both
 //; # are emitted, so a caller that gives none gets the output it always got.
 //; sat_lo, sat_hi = rq.sat_lo, rq.sat_hi
@@ -46,7 +46,7 @@
 //;     return f"codes {b.lo} .. {b.hi}, values {float(b.lo_val)} .. {float(b.hi_val)}"
 //; # enddef
 //; clamp = "saturating" if emit_lo or emit_hi else "no clamp"
-//; note  = ", output symmetric" if osym else ""
+//; note  = ", output symmetric" if osymm else ""
     // `func_name`: `q_in` -> `q_out`, round=`round_mode`, `clamp``note`
     //     in:  `rng(src)`
     //     out: `rng(img)`

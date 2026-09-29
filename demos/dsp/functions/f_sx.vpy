@@ -1,5 +1,5 @@
     // sign extend
-//; from vexpr import sext
+//; from genesispy.lib.verilog import sext
 //; h         = self.include_params
 //; func_name = h.get('func_name', 'f_sx')
 //; iwidth    = h.get('iwidth', 8)

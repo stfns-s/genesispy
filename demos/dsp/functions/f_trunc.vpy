@@ -1,12 +1,12 @@
     // drop the low bits of a wider input - optionally maintain output symmetry
     //  The input port is max(iwidth, owidth) wide, so at owidth >= iwidth the port widens
     //  to the output and nothing is dropped; the caller supplies the wider value.
-//; from vexpr import lit
+//; from genesispy.lib.verilog import lit
 //; h         = self.include_params
 //; func_name = h.get('func_name', 'f_trunc')
 //; iwidth    = h.get('iwidth', 8)
 //; owidth    = h.get('owidth', 6)
-//; osym      = h.get('osym', 0)
+//; osymm     = h.get('osymm', 0)
 //; lifetime  = h.get('lifetime', 'static')
 //; tiw       = iwidth if owidth < iwidth else owidth
 //; if owidth < 1:
@@ -22,7 +22,7 @@
         localparam TRUNC_LSB = `tiw-owidth`;
         begin
             `func_name` = TRUNC_OW'(num >>> TRUNC_LSB);
-//; if osym:
+//; if osymm:
             if ( `func_name` == `lit(minn, owidth)` ) `func_name` = `lit(minn+1, owidth)`;
 //; # endif
         end

@@ -1,11 +1,11 @@
-//; from vexpr import lit
+//; from genesispy.lib.verilog import lit
 //; IW  = parameter('IW', 8)   # input width
 //; if IW < 1:
 //;     error(f"{mname}: IW ({IW}) must be >= 1")
 //; # endif
 //; MIN = -(1 << (IW-1))
 //; CFG = f"{mname} IW={IW}"
-//; # The expected values, computed here at generation. f_sym tests the input against the
+//; # The expected values, computed here at generation. f_symm tests the input against the
 //; # most negative code and substitutes; this clamps the value into the symmetric range,
 //; # so the two agree only if both are right.
 //; LO  = MIN + 1
@@ -13,11 +13,11 @@
 //; def _gold(i):
 //;     return min(HI, max(LO, i - (1 << IW) if i >= (1 << (IW-1)) else i))
 //; # enddef
-// unit test for f_sym
+// unit test for f_symm
 module `mname`;
 
 //; self.include_params = {'func_name': 'dut', 'iwidth': IW}
-//; include('f_sym.vpy')
+//; include('f_symm.vpy')
 //; include('tb_util.vpy')
 
     logic signed [`IW-1`:0] x, y;

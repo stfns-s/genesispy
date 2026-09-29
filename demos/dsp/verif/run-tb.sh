@@ -88,15 +88,15 @@ Run it from the demo root, with genesispy on PATH:
 Examples:
 
   # one function in its default configuration
-  verif/run-tb.sh f_sym default verilator
+  verif/run-tb.sh f_symm default verilator
 
   # a chosen width, then the same case under the other simulator
   verif/run-tb.sh f_round IW=8:OW=6 verilator
   verif/run-tb.sh f_round IW=8:OW=6 iverilog
 
   # several options at once
-  verif/run-tb.sh f_negate IW=5:APPROX=1:ISYM=1 iverilog
-  verif/run-tb.sh f_shright IW=8:CW=4:OSYM=1 verilator
+  verif/run-tb.sh f_negate IW=5:APPROX=1:ISYMM=1 iverilog
+  verif/run-tb.sh f_shright IW=8:CW=4:OSYMM=1 verilator
 
   # write the input, output and reference for every case, and plot it in one step
   verif/run-tb.sh f_shright IW=8:CW=2 verilator -plot
@@ -168,8 +168,10 @@ tag="${config//:/_}"
 tag="${tag//=/}"
 base="${REPO}/${BUILDDIR}/${tb}/${tag}/${sim}"
 
+# The settings carry no instance path, so they need --params-global.
 pflags=()
 if [[ "$config" != "default" ]]; then
+    pflags+=(--params-global)
     IFS=':' read -r -a settings <<<"$config"
     for setting in "${settings[@]}"; do
         pflags+=(-p "$setting")

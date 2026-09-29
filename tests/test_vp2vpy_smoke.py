@@ -103,7 +103,7 @@ _BIN = Path(__file__).resolve().parents[1] / "bin"
 
 _ELABORATE = [
     ("regfile", []),
-    ("regfile", ["-p", "FLOP_TYPE=flop"]),
+    ("regfile", ["-p", "FLOP_TYPE=flop", "--params-global"]),
     ("iterative_wallace_tree", []),
     ("many_iterative_wallace_trees", []),
     ("random_logic", []),

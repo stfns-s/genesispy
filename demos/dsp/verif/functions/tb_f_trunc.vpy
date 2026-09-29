@@ -1,6 +1,6 @@
-//; IW   = parameter('IW',   8)   # input width
-//; OW   = parameter('OW',   6)   # output width
-//; OSYM = parameter('OSYM', 0)   # output range excludes the most negative value
+//; IW    = parameter('IW',    8)   # input width
+//; OW    = parameter('OW',    6)   # output width
+//; OSYMM = parameter('OSYMM', 0)   # output range excludes the most negative value
 //; if OW < 1:
 //;     error(f"{mname}: OW ({OW}) must be >= 1")
 //; # endif
@@ -8,11 +8,11 @@
 //; SH   = 1 << (tiw - OW)
 //; MIN = -(1 << (OW-1))
 //; MAX = (1 << (OW-1)) - 1
-//; CFG  = f"{mname} IW={IW} OW={OW} OSYM={OSYM}"
+//; CFG  = f"{mname} IW={IW} OW={OW} OSYMM={OSYMM}"
 // unit test for f_trunc
 module `mname`;
 
-//; self.include_params = {'func_name': 'dut', 'iwidth': IW, 'owidth': OW, 'osym': OSYM}
+//; self.include_params = {'func_name': 'dut', 'iwidth': IW, 'owidth': OW, 'osymm': OSYMM}
 //; include('f_trunc.vpy')
 //; include('tb_util.vpy')
 
@@ -27,7 +27,7 @@ module `mname`;
             xs  = longint'(x);
             y   = dut(x);
             exp = fdiv(xs, `SH`);
-//; if OSYM:
+//; if OSYMM:
             exp = clamp(exp, `MIN+1`, `MAX`);
 //; # endif
             tb_check(64'(y), exp, $sformatf("x=%0d", xs));

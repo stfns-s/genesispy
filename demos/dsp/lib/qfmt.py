@@ -1,14 +1,13 @@
 """Fixed-point format algebra for generation-time width derivation.
 
 A format is (signed, width, frac). A stored code c denotes c / 2**frac, read as two's
-complement when signed. Integer bits are width - frac and may be zero or negative, so
-Q-1.5 (a four-bit signed word with five fractional bits) is a valid format.
+complement when signed. Integer bits are width - frac and may be zero or negative.
 
-The Qm.n strings follow the ARM convention: m + n is the width and m includes the sign
-bit, so a 16-bit signed integer is Q16.0 (Texas Instruments would write Q15.0).
+Qm.n follows the ARM convention: m + n is the width and m includes the sign bit, so a
+16-bit signed integer is Q16.0, not Texas Instruments' Q15.0.
 
 Every range is exact: values are Fractions, never floats. Nothing here emits Verilog or
-imports genesispy, so the module runs under pytest on its own.
+imports genesispy.
 """
 
 from __future__ import annotations
@@ -48,7 +47,6 @@ class Fmt:
         if self.width < 1:
             raise QError(f"{self.to_q()}: a format needs at least one bit")
 
-    # ----------------------------------------------------------------- shape
     @property
     def int_bits(self) -> int:
         return self.width - self.frac
@@ -73,14 +71,12 @@ class Fmt:
     def max_val(self) -> Fraction:
         return self.max_code * self.lsb
 
-    # ------------------------------------------------------------- notation
     def to_q(self) -> str:
         return f"{'' if self.signed else 'U'}Q{self.width - self.frac}.{self.frac}"
 
     def __str__(self) -> str:
         return self.to_q()
 
-    # ----------------------------------------------------------- code/value
     def decode(self, code: int) -> Fraction:
         if not self.min_code <= code <= self.max_code:
             raise QError(f"{self}: code {code} out of range")
@@ -125,6 +121,9 @@ def parse(x: FmtLike) -> Fmt:
         return Fmt(m.group(1) == "", m_bits + n_bits, n_bits)
     if isinstance(x, Sequence) and len(x) == 3:
         signed, width, frac = x
+        # bool() would read the text "False" as True
+        if not isinstance(signed, int) or signed not in (0, 1):
+            raise QError(f"bad format {x!r}: signed must be a bool or 0/1")
         return Fmt(bool(signed), int(width), int(frac))  # type: ignore[call-overload]
     raise QError(f"bad format {x!r} (want Fmt, Q string or (signed, width, frac))")
 
@@ -149,17 +148,14 @@ def from_range(lo: Fraction, hi: Fraction, frac: int, signed: bool | None = None
         width += 1
 
 
-# ---------------------------------------------------------------------- bounds
 @dataclass(frozen=True)
 class Bounds:
     """The reachable codes lo .. hi of a net, at frac fractional bits.
 
     A format is the power-of-two container of a range; a Bounds is the range itself. A
-    derivation that carries Bounds from input to output and calls fmt() only where it
-    declares a net gets the narrowest width at every step. Carrying formats can cost a
-    bit wherever the next step widens the container but not the range: three terms
-    reaching -31 .. 32 sum to -93 .. 96 and fit Q2.6, where add over three Q1.6 gives
-    Q3.6.
+    derivation that carries Bounds from input to output and calls fmt only where it
+    declares a net gets the narrowest width at every step. Carrying formats instead can
+    cost a bit wherever the next step widens the container but not the range.
     """
 
     lo: int
@@ -174,12 +170,12 @@ class Bounds:
             raise QError(f"Bounds: unsigned range cannot hold {self.lo}")
 
     @classmethod
-    def of(cls, fmt: FmtLike, sym: bool = False) -> Bounds:
-        """Every code of fmt; with sym=True, every code but the most negative one."""
+    def of(cls, fmt: FmtLike, symm: bool = False) -> Bounds:
+        """Every code of fmt; with symm=True, every code but the most negative one."""
         f = parse(fmt)
-        if sym and not f.signed:
-            raise QError(f"Bounds.of: sym needs a signed format, got {f}")
-        return cls(-f.max_code if sym else f.min_code, f.max_code, f.frac, f.signed)
+        if symm and not f.signed:
+            raise QError(f"Bounds.of: symm needs a signed format, got {f}")
+        return cls(-f.max_code if symm else f.min_code, f.max_code, f.frac, f.signed)
 
     @property
     def lo_val(self) -> Fraction:
@@ -217,11 +213,17 @@ def badd(bs: Iterable[Bounds]) -> Bounds:
     return Bounds(lo, hi, frac, any(t.signed for t in terms))
 
 
-def _round_consts(shift: int, mode: str) -> tuple[int, int]:
+def round_consts(shift: int, mode: str) -> tuple[int, int]:
     """The constant added before the arithmetic right shift, for a non-negative and for a
-    negative code. Both are zero when no bit is dropped. Adding half - 1 to a negative code
-    carries only when the remainder passes half, leaving an exact tie at the larger
-    magnitude; adding 2**shift - 1 carries on any remainder, which is the ceiling."""
+    negative code; both are zero when no bit is dropped.
+
+    Public so that an emitter or a model outside this file builds the same carry. half_even
+    needs the tie correction _round_code applies afterwards; this pair alone gives half_up.
+
+    Adding half - 1 to a negative code carries only when the remainder passes half, which
+    leaves an exact tie at the larger magnitude; adding 2**shift - 1 carries on any
+    remainder, which is the ceiling.
+    """
     if shift <= 0:
         return 0, 0
     half, full = 1 << (shift - 1), (1 << shift) - 1
@@ -235,44 +237,37 @@ def _round_consts(shift: int, mode: str) -> tuple[int, int]:
 
 
 def _round_code(code: int, shift: int, mode: str) -> int:
-    """code moved by shift fractional bits and rounded as mode says; no clamp. shift > 0
-    drops bits: the constant _round_consts gives for the code's sign is added first, and
-    half_even then steps an exact tie back down to the even result. shift <= 0 appends
-    zeros."""
+    """code moved by shift fractional bits and rounded as mode says; no saturation.
+
+    A positive shift drops bits, a non-positive one appends zeros.
+    """
     if shift <= 0:
         return code << -shift
-    add_c, add_c_neg = _round_consts(shift, mode)
+    add_c, add_c_neg = round_consts(shift, mode)
     acc = (code + (add_c_neg if code < 0 else add_c)) >> shift
     if mode == "half_even" and (code & ((1 << shift) - 1)) == (1 << (shift - 1)) and acc & 1:
         acc -= 1
     return acc
 
 
-# ------------------------------------------------------------------ operations
-def mult(a: FmtLike, b: FmtLike, sym: bool = False, bsym: bool = False) -> Fmt:
+def mult(a: FmtLike, b: FmtLike, symm: bool = False, bsymm: bool = False) -> Fmt:
     """Product format, signed if either operand is.
 
-    With sym=True the result holds every product except those where a takes its most
-    negative code, and bsym=True does the same for b. The named operand must be signed,
-    and the caller owns the precondition (f_sym enforces it in RTL). How much either
-    saves depends on whether dropping that corner moves the required range across a
-    power-of-two boundary, which from_range decides case by case:
-    mult("Q3.0", "UQ3.0", sym=True) saves nothing, mult("Q2.0", "UQ2.0", sym=True) saves
-    one bit, mult("Q1.0", "UQ2.0", sym=True) saves two. Neither flag is ever wider.
+    With symm=True the result holds every product except those where a takes its most
+    negative code, and bsymm=True does the same for b. The named operand must be signed,
+    and the caller owns the precondition; f_symm enforces it in RTL. Either flag saves
+    between zero and two bits, never widens, and the two are not redundant: excluding
+    both minima can cross a power-of-two boundary that excluding either one alone does
+    not.
 
-    The two are not redundant: excluding both minima can cross a further boundary that
-    excluding either one alone does not. mult("Q2.0", "Q2.0") is 4 bits, 3 with either
-    flag, and 2 with both.
-
-    This is bmult over Bounds.of, materialized. A derivation with more than one step
-    should carry the Bounds instead: see the Bounds docstring.
+    A derivation with more than one step should carry Bounds instead.
     """
     fa, fb = parse(a), parse(b)
-    if sym and not fa.signed:
-        raise QError(f"mult: sym needs a signed first operand, got {fa}")
-    if bsym and not fb.signed:
-        raise QError(f"mult: bsym needs a signed second operand, got {fb}")
-    return bmult(Bounds.of(fa, sym), Bounds.of(fb, bsym)).fmt()
+    if symm and not fa.signed:
+        raise QError(f"mult: symm needs a signed first operand, got {fa}")
+    if bsymm and not fb.signed:
+        raise QError(f"mult: bsymm needs a signed second operand, got {fb}")
+    return bmult(Bounds.of(fa, symm), Bounds.of(fb, bsymm)).fmt()
 
 
 def add(fmts: Iterable[FmtLike]) -> Fmt:
@@ -300,23 +295,23 @@ def envelope(fmts: Iterable[FmtLike]) -> Fmt:
     return from_range(lo, hi, fs[0].frac, any(f.signed for f in fs))
 
 
-# -------------------------------------------------------------------- requant
 @dataclass(frozen=True)
 class Requant:
     """What a src -> dst conversion does, in integer terms the RTL can use directly.
 
     shift > 0 drops that many lsbs (with rounding), shift < 0 appends zeros. The rounding
     itself is a carry into the kept bits, which the emitter builds from mode and shift;
-    nothing here is a constant the RTL adds. min_code/max_code are the dst clamp bounds.
-    src_bounds is the set of source codes the conversion is asked about: the whole of src,
-    or the narrower Bounds a caller gave requant() in its place, and an emitter reads it to
-    tell whether a negative code can arrive at all.
+    nothing here is a constant the RTL adds. min_code/max_code are the dst saturation bounds.
+    src is the container the source net is declared at: the container of the Bounds a caller
+    gave requant(), or the wider one its container argument named. src_bounds is the set of
+    source codes the conversion is asked about: the whole of src, or the narrower Bounds, and
+    an emitter reads it to tell whether a negative code can arrive at all.
     """
 
     src: Fmt
     dst: Fmt
     mode: str
-    osym: bool
+    osymm: bool
     shift: int
     min_code: int
     max_code: int
@@ -324,18 +319,18 @@ class Requant:
 
     @property
     def lossless(self) -> bool:
-        """No bit is ever dropped and no value is ever clamped."""
+        """No bit is ever dropped and no value is ever saturated."""
         return self.shift <= 0 and not self.sat_reachable
 
     @property
     def sat_lo(self) -> bool:
-        """The lowest code in src_bounds lands below the dst clamp."""
-        return self.apply(self.src_bounds.lo, clamp=False) < self.min_code
+        """The lowest code in src_bounds lands below the dst saturation bound."""
+        return self.apply(self.src_bounds.lo, saturate=False) < self.min_code
 
     @property
     def sat_hi(self) -> bool:
-        """The highest code in src_bounds lands above the dst clamp."""
-        return self.apply(self.src_bounds.hi, clamp=False) > self.max_code
+        """The highest code in src_bounds lands above the dst saturation bound."""
+        return self.apply(self.src_bounds.hi, saturate=False) > self.max_code
 
     @property
     def sat_reachable(self) -> bool:
@@ -343,19 +338,30 @@ class Requant:
         return self.sat_lo or self.sat_hi
 
     def image(self, b: Bounds | None = None) -> Bounds:
-        """Bounds the conversion produces from b, clamped into dst; b defaults to
-        src_bounds. Every mode is non-decreasing in its input code, so the image of a
-        code interval is the interval between the images of its ends."""
+        """Bounds the conversion produces from b, saturated into dst; b defaults to
+        src_bounds.
+
+        Every mode is non-decreasing in its input code, so the image of a code interval
+        is the interval between the images of its ends.
+        """
         if b is None:
             b = self.src_bounds
         if b.frac != self.src.frac:
             raise QError(f"image: bounds at {b.frac} fractional bits do not match src {self.src}")
+        if b.lo < self.src.min_code or b.hi > self.src.max_code:
+            raise QError(f"image: codes {b.lo} .. {b.hi} exceed src {self.src}")
         return Bounds(self.apply(b.lo), self.apply(b.hi), self.dst.frac, self.dst.signed)
 
-    def apply(self, code: int, clamp: bool = True) -> int:
-        """The conversion on one src code, as the emitted RTL computes it."""
+    def apply(self, code: int, saturate: bool = True) -> int:
+        """The conversion on one src code, as the emitted RTL computes it.
+
+        saturate=False returns the rounded value before the bounds are applied, which is
+        what sat_lo and sat_hi compare against. This is not requant's saturate: that one
+        forbids a conversion that could saturate, this one asks what a code would have
+        been without the bounds.
+        """
         acc = _round_code(code, self.shift, self.mode)
-        if clamp:
+        if saturate:
             acc = max(self.min_code, min(self.max_code, acc))
         return acc
 
@@ -364,17 +370,24 @@ def requant(
     src: FmtLike | Bounds,
     dst: FmtLike | int,
     mode: str = "trunc",
-    osym: bool = False,
+    osymm: bool = False,
     saturate: bool = True,
+    container: FmtLike | None = None,
 ) -> Requant:
-    """Describe the conversion from src to dst. With saturate=False, a conversion whose
-    clamp can trigger is an error rather than a silent range loss. src may be a Bounds,
-    in which case the source format is its container and the clamp is judged over the
-    codes it names rather than over the whole format. dst may be an int, the target
-    frac: src must then be a Bounds, and the target format is the container of its
-    image at that frac, so the clamp is unreachable by construction; osym is rejected
-    there. That is how a
-    derivation names a product format it has no other reason to choose."""
+    """Describe the conversion from src to dst.
+
+    With saturate=False, a conversion whose saturation can trigger is an error rather than a
+    silent range loss. That is a check on the configuration, not a switch on the
+    arithmetic: Requant.apply takes a saturate of its own, which drops the bounds from
+    one code's conversion. src may be a Bounds, in which case the source format is its
+    container and the saturation is judged over the codes it names rather than over the whole
+    format. container overrides that source format, for a net a caller declares wider than
+    its bounds reach; it needs a Bounds src, and must be at the same frac and hold every code
+    the bounds name. dst may be an int, the target frac: src must then be a Bounds, the target
+    format is the container of its image at that frac so the saturation is unreachable by
+    construction, and osymm is rejected. That is how a derivation names a product format
+    it has no other reason to choose.
+    """
     if mode not in ROUND_MODES:
         raise QError(f"bad round mode {mode!r} (want {', '.join(ROUND_MODES)})")
     if isinstance(src, Bounds):
@@ -382,26 +395,40 @@ def requant(
     else:
         fs = parse(src)
         sb = Bounds.of(fs)
+    if container is not None:
+        if not isinstance(src, Bounds):
+            raise QError(f"requant: container ({parse(container)}) needs a Bounds source, got {fs}")
+        fc = parse(container)
+        if fc.frac != sb.frac:
+            raise QError(
+                f"requant: container {fc} is not at the {sb.frac} fractional bits of "
+                f"codes {sb.lo} .. {sb.hi}"
+            )
+        if fc.min_code > sb.lo or sb.hi > fc.max_code:
+            raise QError(f"requant: container {fc} does not hold codes {sb.lo} .. {sb.hi}")
+        fs = fc
     if isinstance(dst, bool):
         raise QError(f"requant: bad target {dst!r} (want a format or a frac)")
     if isinstance(dst, int):
         if not isinstance(src, Bounds):
             raise QError(f"requant: a frac target ({dst}) needs a Bounds source, got {fs}")
-        if osym:
-            raise QError(f"requant: osym is not supported with a frac target ({dst})")
+        if osymm:
+            raise QError(f"requant: osymm is not supported with a frac target ({dst})")
         img_shift = sb.frac - dst
         fd = Bounds(
             _round_code(sb.lo, img_shift, mode), _round_code(sb.hi, img_shift, mode), dst, sb.signed
         ).fmt()
     else:
         fd = parse(dst)
+        if osymm and not fd.signed:
+            raise QError(f"requant: osymm needs a signed target, got {fd}")
     shift = fs.frac - fd.frac
-    min_code = -fd.max_code if (fd.signed and osym) else fd.min_code
+    min_code = -fd.max_code if (fd.signed and osymm) else fd.min_code
     rq = Requant(
         src=fs,
         dst=fd,
         mode=mode,
-        osym=bool(osym),
+        osymm=bool(osymm),
         shift=shift,
         min_code=min_code,
         max_code=fd.max_code,

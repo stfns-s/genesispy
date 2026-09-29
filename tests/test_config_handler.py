@@ -71,7 +71,7 @@ def test_parse_cmdln_param_rejects_type_suffix():
 
 
 def test_cmdln_population_from_manager():
-    m = _make_manager(parameter=["WIDTH=8", "DEBUG=true"])
+    m = _make_manager(parameter=["WIDTH=8", "DEBUG=true"], params_global=True)
     ch = ConfigHandler(m)
     assert ch.get_cmdln_param_val("WIDTH") == 8
     assert ch.get_cmdln_param_val("DEBUG") is True
@@ -146,7 +146,7 @@ def test_scoped_cmdln_lookup_exact_match():
 
 def test_scoped_cmdln_wins_over_flat_for_matching_path():
     m = _make_manager(
-        parameter=["x=1", "top.a.x=99"]
+        parameter=["x=1", "top.a.x=99"], params_global=True
     )
     ch = ConfigHandler(m)
     # Matching path: scoped wins.
@@ -168,10 +168,28 @@ def test_duplicate_scoped_cmdln_raises():
     assert "Duplicate" in ei.value.msg
 
 
+def test_bare_cmdln_needs_params_global():
+    from genesispy.reporting import ParameterError
+
+    with pytest.raises(ParameterError) as ei:
+        ConfigHandler(_make_manager(parameter=["top.a.x=1", "W=9"]))
+    assert "'W=9'" in ei.value.msg and "--params-global" in ei.value.msg
+
+
+def test_bare_cmdln_with_params_global_applies_everywhere():
+    ch = ConfigHandler(_make_manager(parameter=["W=9"], params_global=True))
+    assert ch.get_configuration("W", instance_path=("top", "a")) == 9
+
+
+def test_scoped_cmdln_needs_no_flag():
+    ch = ConfigHandler(_make_manager(parameter=["top.a.W=9"]))
+    assert ch.get_configuration("W", instance_path=("top", "a")) == 9
+
+
 def test_duplicate_flat_cmdln_raises():
     from genesispy.reporting import ParameterError
 
-    m = _make_manager(parameter=["WIDTH=8", "WIDTH=16"])
+    m = _make_manager(parameter=["WIDTH=8", "WIDTH=16"], params_global=True)
     with pytest.raises(ParameterError) as ei:
         ConfigHandler(m)
     assert ei.value.code == "parameter_error"
@@ -270,7 +288,7 @@ def test_cmdln_overrides_json_overrides_cfg(tmp_path):
     cfg_path = tmp_path / "c.cfg"
     cfg_path.write_text("configure('top.X', 2)\n")
 
-    ch = ConfigHandler(_make_manager(parameter=["X=99"]))
+    ch = ConfigHandler(_make_manager(parameter=["X=99"], params_global=True))
     ch.read_json(str(json_path))
     ch.read_cfg(str(cfg_path))
     assert ch.get_configuration("top.X") == 99
@@ -316,7 +334,7 @@ def test_print_configuration_non_empty(tmp_path):
     cfg_path = tmp_path / "c.cfg"
     cfg_path.write_text("configure('top.WIDTH', 8)\n")
 
-    ch = ConfigHandler(_make_manager(parameter=["DEBUG=true"]))
+    ch = ConfigHandler(_make_manager(parameter=["DEBUG=true"], params_global=True))
     ch.read_cfg(str(cfg_path))
     s = ch.print_configuration()
     assert isinstance(s, str)
@@ -344,6 +362,7 @@ def test_manager_does_not_re_ingest_parameter_overrides(tmp_path):
         "--top", "dummy",
         "--parameter", "WIDTH=8",
         "--parameter", "top.foo.X=2",
+        "--params-global",
     ])
     m = Manager(args)
     m._ensure_cfg_handler()

@@ -31,10 +31,10 @@ from genesispy import reporting
 from genesispy.cli_common import _add_deprecated_alias, _comment_arg, _output_comment_arg
 from genesispy.config_handler import ConfigHandler
 from genesispy.manager import find_file, resolve_cfg_path
-from genesispy.reporting import GenesisPyError, ParameterError
+from genesispy.reporting import ConfigError, GenesisPyError, ParameterError
 from genesispy.extensions import build_extension_map, parse_extension_spec
 from genesispy.template import emitter
-from genesispy.template.aliases import alias_prelude_source
+from genesispy.template.aliases import MODULE_GLOBALS_SOURCE, alias_prelude_source
 from genesispy.template.parser import parse_vpy
 from genesispy.unique_module import UniqueModule
 
@@ -66,6 +66,8 @@ class _GvpyManager:
         # that gvpy's narrower argparse doesn't define.
         if not hasattr(args, "unq_style"):
             args.unq_style = None
+        # gvpy's -p is flat by design, so a bare NAME=VALUE is always accepted.
+        args.params_global = True
         self.args = args
         self.top: str | None = args.mname
         self.debug = 0
@@ -208,7 +210,8 @@ def _build_class_from_vpy(
         "from genesispy.template.runtime import UniqueModule, UserMixin, StrCallable\n"
         "from genesispy.gvpy_cli import pp\n"
         "from genesispy import user_config as _gpy_user_config\n"
-        f"class {name}(UniqueModule, UserMixin):\n"
+        + MODULE_GLOBALS_SOURCE
+        + f"class {name}(UniqueModule, UserMixin):\n"
         f"    _OUTPUT_SUFFIX = {out_suffix!r}\n"
         "    def execute(self):\n"
         "        super().execute()\n"
@@ -343,6 +346,13 @@ def main(argv: list[str] | None = None) -> int:
         metavar="NAME=VALUE",
         help="Set a flat parameter (consulted by parameter()).",
     )
+    parser.add_argument(
+        "--defaults",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="Per-module parameter defaults (.py BLOCK_PARAMS or .json); may be repeated.",
+    )
     _add_deprecated_alias(
         parser, "--defparam", "-p/--parameter", dest="parameter",
         kind="append", prog=PROG, metavar="NAME=VALUE",
@@ -425,12 +435,12 @@ def main(argv: list[str] | None = None) -> int:
         if d not in sys.path:
             sys.path.insert(0, d)
 
-    # ConfigHandler validates --parameter specs and raises ParameterError
-    # for any malformed entry; catch and re-emit with the gvpy prefix.
+    # ConfigHandler validates --parameter specs and loads --defaults, raising
+    # ParameterError / ConfigError; catch and re-emit with the gvpy prefix.
     cache.clear_all()
     try:
         mgr = _GvpyManager(args, incdirs, libdirs)
-    except ParameterError as exc:
+    except (ParameterError, ConfigError) as exc:
         reporting.error(f"{PROG}: {exc}", fatal=False)
         return 2
     # ConfigHandler.__init__ has already ingested args.parameter into

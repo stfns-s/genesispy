@@ -113,10 +113,12 @@ genesispy --input top.vpy --top top
 The run produces `genesis_verif/top.v`, plus `top.vlist` and
 `top.depend` under `genesis_synth/` (the lists always go to the output
 directory, whichever cone the module lands in). Override the parameter
-from the command line:
+from the command line, either for the instance at a path or, with
+`--params-global`, for every instance that reads it:
 
 ```sh
-genesispy --input top.vpy --top top -p W=16
+genesispy --input top.vpy --top top -p top.W=16
+genesispy --input top.vpy --top top --params-global -p W=16
 ```
 
 ### Editor support
@@ -228,11 +230,12 @@ A parameter's value is determined in the following order (lowest to
 highest):
 
 1. **In-source default** -- the second argument to `parameter('NAME', default)` in the `.vpy` file. Used when nothing else fires.
-2. **`.cfg` Python configs** (`--cfg`) -- call `configure(name, value)`. Beats the in-source default.
-3. **JSON config** (`--json-cfg`) -- per-instance overrides read from the node whose instance path matches (see 6.3). Beats `.cfg`. Legacy XML configs convert via `genesispy-xml2json`.
-4. **CLI `--parameter NAME=VALUE`** (or `-p`, same in gvpy now) -- beats everything passed in files.
-5. **Parent's `unique_inst(...)` kwargs** (also `unique_inst_param`, `ununique_inst`) -- beats CLI. When the parent writes `unique_inst('wallace', 'wallace_2', N=2)`, the child sees `N=2` before its body runs, regardless of any config or CLI value.
-6. **`parameter('X', val, force=True)`** -- writes at FORCED priority and locks against further override; subsequent parent kwargs, configs, and CLI re-applies are ignored. Mirrors Perl's `force` flag (UniqueModule.pm:1981).
+2. **Per-module defaults** (`--defaults`) -- the module's entry in a defaults file (see 6.5). Beats the in-source default and nothing else.
+3. **`.cfg` Python configs** (`--cfg`) -- call `configure(name, value)`. Beats the defaults.
+4. **JSON config** (`--json-cfg`) -- per-instance overrides read from the node whose instance path matches (see 6.3). Beats `.cfg`. Legacy XML configs convert via `genesispy-xml2json`.
+5. **CLI `--parameter PATH.NAME=VALUE`** (or `-p`) -- beats everything passed in files. A bare `NAME=VALUE` needs `--params-global` in genesispy; gvpy always accepts it.
+6. **Parent's `unique_inst(...)` kwargs** (also `unique_inst_param`, `ununique_inst`) -- beats CLI. When the parent writes `unique_inst('wallace', 'wallace_2', N=2)`, the child sees `N=2` before its body runs, regardless of any config or CLI value.
+7. **`parameter('X', val, force=True)`** -- writes at FORCED priority and locks against further override; subsequent parent kwargs, configs, and CLI re-applies are ignored. Mirrors Perl's `force` flag (UniqueModule.pm:1981).
 
 Parameters lock once the body has run, as in Genesis2
 (`UniqueModule.pm:833, 1246, 314-326`): `parameter`, `define_param`,
@@ -248,7 +251,9 @@ declared/used`).
 The ordering above matches Perl Genesis2's
 (`UniqueModule.pm:64-73`: `DECLARATION=1 < EXTERNAL_CONFIG=2 <
 EXTERNAL_XML=3 < CMD_LINE=4 < INHERITANCE=5 < IMMUTABLE=6`); only the
-numeric spacing differs (genesispy spaces by 10). In both engines, no
+numeric spacing differs (genesispy spaces by 10), and the `--defaults` tier
+(`MODULE_DEFAULT=7`, between the declaration and `.cfg`) has no Genesis2
+counterpart. In both engines, no
 external-config tier (`.cfg`, JSON, CLI) can beat a parent
 `unique_inst` kwarg -- the only override is a child-side write at
 `IMMUTABLE` (`force_param` in Perl, `force=True` in genesispy).
@@ -274,8 +279,10 @@ takes this form only: `configure`, `get_configuration`,
 `exists_configuration` and `remove_configuration` reject a name without
 a dot, and `get_configuration` on a name nothing set is a `ConfigError`,
 as in Genesis2 (ConfigHandler.pm:1349-1356, 1512). A bare
-`-p NAME=VALUE` on the command line is a genesispy extension: it applies
-to any instance whose body reads `parameter('NAME', ...)`.
+`-p NAME=VALUE` on the command line is a genesispy extension, enabled by
+`--params-global`: it applies to any instance whose body reads
+`parameter('NAME', ...)`. Without the flag a bare `-p` is an error, as in
+Genesis2 (ConfigHandler.pm:363-366).
 
 A JSON config is a tree of instance nodes. The root `HierarchyTop` node
 names the top; each node carries its own `Parameters` and its children
@@ -333,6 +340,39 @@ bypass dedup and don't roundtrip to JSON.
 
 Range is checked at register-time and on every subsequent
 `override_param` / `force_param`.
+
+### 6.5 Per-module defaults (`--defaults`)
+
+`--defaults FILE` gives each module a set of parameter defaults, looked up by module name. The
+file is a `.py` script defining a `BLOCK_PARAMS` dict, or a `.json` file holding the same tree as
+its top-level object; the flag is repeatable and searches `--cfg-path` like `--cfg`.
+
+```python
+# design-defaults.py
+BLOCK_PARAMS = {
+    "ffe": {"N_TAP": 16, "COEF_W": 7},
+    "lms": {
+        "MU_W": 4,
+        "lms_errc_ffe": {"ERR_W": 6},   # a child entry: grouping only
+    },
+}
+```
+
+- Every top-level value is an entry and must be a dict. Inside an entry, a dict value is a child
+  entry, not a parameter: it groups entries in the file and passes nothing to its parent or from
+  it. An entry name may sit at any depth, once across all files; a repeated name, a non-dict
+  entry, a missing file, another extension or a `.py` without `BLOCK_PARAMS` is a `ConfigError`.
+- `parameter('N', default)` consults the defaults only when no `.cfg`, JSON, `--parameter`,
+  parent keyword or force has set `N`. It reads the module's own entry (its `bname`: the template
+  name, or for `generate_w_name` the emitted name) and then the source template's (`sname`),
+  parameter by parameter. So an entry for `dotp` serves every name generated from `dotp`, and an
+  entry under the generated name overrides it key by key.
+- Values keep their Python (or JSON) types; there is no string coercion. A parameter whose value
+  is itself a dict cannot be given here, since a dict is read as a child entry.
+- An entry no module reads, and a key of a read entry that no `parameter()` takes, are reported
+  after elaboration: `warning: default ghost was never used (--defaults d.py)`,
+  `warning: default ffe.N_TAPS was never used (--defaults d.py)`. The run still exits 0.
+- `--param-footer` names the source `module defaults (--defaults)`.
 
 ## 7. Syntax
 
@@ -527,6 +567,8 @@ work in plain-Verilog lines via the template parser.
 - **`pyinclude(path)`** -- exec a plain `.py` file into the *calling code's own* namespace, so the names it defines stay reachable as bare names for the rest of that module (see section 11.3). Resolves `path` against `--py-path`, then `--inc-path`.
   - *Example:* `//; pyinclude('helpers.py')`
 - **`pinclude(path)`** -- deprecated spelling of `pyinclude`; emits a one-time warning to stderr.
+- **`verilog`** -- the module `genesispy.lib.verilog`: literals, sign extension, declarations, port lists and other Verilog text built from Python values (see section 11.7). Bound as a global of the generated module, so a `pyinclude`'d file sees it too.
+  - *Example:* `` assign y = x + `verilog.lit(-3, 8)`; ``
 
 ## 8. Examples
 
@@ -697,8 +739,9 @@ The `dsp` demo is the largest example in the tree: a
 fixed-point DSP function library pulled in with `include()`
 (`functions/f_*.vpy`), three synthesizable tops
 (`modules/iir.vpy`, `modules/intg.vpy`, `modules/spec_mux.vpy`), a
-Python helper library reached through
-`--py-path`, and one testbench per function and per module. The
+fixed-point format library reached through `--py-path`, the
+`verilog` helpers of section 11.7, and one testbench per function and
+per module. The
 templates emit SystemVerilog, so it drives `-sv` alongside
 `--src-path`, `--inc-path`, `--py-path`, `--synth-top` and `--vf-out`.
 
@@ -762,7 +805,9 @@ from `--help`; section 9.5 lists them.
 - `-j`, `--json-cfg FILE` -- input JSON configuration file. Legacy XML: convert with `genesispy-xml2json` first.
 - `--cfg FILE` (alias `--py-cfg`) -- input Python config script (uses `configure(name, value)`). Repeatable.
 - `--cfg-path DIR` -- search directory for `--cfg`/`--json-cfg` and for `include(...)` calls inside `.cfg` files. Repeatable.
-- `-p`, `--parameter NAME=VALUE` (or `PATH.NAME=VALUE`) -- command-line parameter override. Plain `NAME=VALUE` applies to any instance whose body calls `parameter('NAME', ...)`. Dotted form (e.g. `top.child2.x=2`) applies only to the instance at that exact full path; rightmost dot separates path from name. Repeatable.
+- `-p`, `--parameter PATH.NAME=VALUE` (or `NAME=VALUE`) -- command-line parameter override. The dotted form (e.g. `top.child2.x=2`) applies only to the instance at that exact full path; the rightmost dot separates path from name. Plain `NAME=VALUE` requires `--params-global` and applies to any instance whose body calls `parameter('NAME', ...)`. Repeatable.
+- `--params-global` -- accept `-p NAME=VALUE` without an instance path. Without it such a `-p` is an error, as in Genesis2.
+- `--defaults FILE` -- per-module parameter defaults: a `.py` file defining `BLOCK_PARAMS`, or a `.json` file with the same tree (section 6.5). Outranked by every other source. Searched like `--cfg`. Repeatable.
 - `--no-module-cache` -- disable the unique-module dedup cache (forces fresh modules).
 - `--unq-style numeric|param` -- module uniquification style (default: `numeric`). Controls `generate(...)` dispatch.
 
@@ -776,7 +821,7 @@ from `--help`; section 9.5 lists them.
 - `-sv`, `--system-verilog` -- shorthand for `--extension .vpy=.sv`. Errors out if combined with a conflicting `--extension .vpy=...` entry.
 - `--source-comment PREFIX` -- line-comment prefix of the source/target language (default: `//`). Sets the directive sentinel (`<comment>;` replaces `//;` in genesis flavour) and is used as the default for `--output-comment`. j2 mode is unaffected. (`--comment` is a deprecated alias; emits a one-time warning.)
 - `--output-comment PREFIX | OPEN,CLOSE` -- style for comments emitted into the output (banner and `--stdout` separator). A bare prefix (e.g. `#`) emits line comments; a comma-separated pair (e.g. `/*,*/`) emits a wrapping block. Defaults to `--source-comment`.
-- `--param-footer` -- append a comment block after each generated module listing every resolved parameter with its value and the configuration source it came from. Off by default; without it the output is unchanged. Unlike the module banner, which is written before the template body runs, this block is written after, so it also shows parameters the body resolves with `parameter()`. Sources are named from the priority ladder, highest wins: `forced (force_param)` > `parent instantiation` (a parent's `unique_inst` keyword argument) > `command line (--parameter)` > `config file (--json-cfg)` > `config script (--cfg / configure)` > `declaration default`. Note that a parent's `unique_inst` keyword argument outranks `--parameter`. Uses the `--output-comment` style. Modules with no parameters get no block. Under module deduplication one emitted file can back several instances, and the block reports the elaboration that produced the file.
+- `--param-footer` -- append a comment block after each generated module listing every resolved parameter with its value and the configuration source it came from. Off by default; without it the output is unchanged. Unlike the module banner, which is written before the template body runs, this block is written after, so it also shows parameters the body resolves with `parameter()`. Sources are named from the priority ladder, highest wins: `forced (force_param)` > `parent instantiation` (a parent's `unique_inst` keyword argument) > `command line (--parameter)` > `config file (--json-cfg)` > `config script (--cfg / configure)` > `module defaults (--defaults)` > `declaration default`. Note that a parent's `unique_inst` keyword argument outranks `--parameter`. Uses the `--output-comment` style. Modules with no parameters get no block. Under module deduplication one emitted file can back several instances, and the block reports the elaboration that produced the file.
 - `--stdout` -- write generated Verilog to stdout instead of `genesis_synth`/`genesis_verif`. Skips `.vlist`/`.depend`/clean script and removes the raw dir on exit. Overrides `--gen-raw`: no raw `.v` siblings are written and the raw dir is removed regardless.
 - `--product FILE` -- write Genesis2-style product file lists. `--product FILE.ext` produces three files: `FILE.ext` (all modules), `FILE.synth.ext` (synth-cone), `FILE.verif.ext` (verif-cone). Suppresses the default `<top>.vlist`/`<top>.vlist.verif`.
 - `--json-out FILE` -- write a `HierarchyTop` snapshot of the elaborated module tree (port of Perl `-hierarchy`). Emits three files in `dirname(FILE)`: `FILE` (full: every parameter, declared defaults included, with force-pinned ones under `ImmutableParameters`), `<stem>-small<ext>` (no `ImmutableParameters`), `<stem>-tiny<ext>` (only params with priority `>= EXTERNAL_PARAM_FILE`). Values are written under `Val`; `--json-cfg` reads that spelling too, so a snapshot can be fed back in. A deduplicated instance is recorded as `CloneOf` with no parameters of its own, so a fed-back snapshot sets values only on the instances that were elaborated.
@@ -836,6 +881,7 @@ Usage: `gvpy [options] FILE [FILE ...]` (output goes to stdout).
 - `--py-path DIR[,DIR...]` -- comma-separated dirs to add to `sys.path`, searched first by `pyinclude()`. Repeatable.
 - `--inc-path DIR[,DIR...]` -- comma-separated dirs for `include()`/`pyinclude()` search. Repeatable.
 - `-p`, `--parameter NAME=VALUE` -- set a flat parameter consulted by `parameter()`. Repeatable. (`--defparam` is a deprecated hidden alias; emits a one-time warning.)
+- `--defaults FILE` -- per-module parameter defaults, as in genesispy (section 6.5); the module name is the file stem or `--mname`. Repeatable. gvpy does not report unused entries.
 - `--source-comment PREFIX` -- line-comment prefix of the source/target language (default: `//`). Sets the directive sentinel (`<comment>;` replaces `//;`) and is used as the default for `--output-comment`. (`--comment` is a deprecated alias; emits a one-time warning.)
 - `--output-comment PREFIX | OPEN,CLOSE` -- style for comments emitted into the output (banner and stdout separator). A bare prefix (e.g. `#`) emits line comments; a comma-separated pair (e.g. `/*,*/`) emits a wrapping block. Defaults to `--source-comment`.
 - `--param-footer` -- append a resolved-parameter provenance comment block after the generated module (section 9). Off by default.
@@ -1085,6 +1131,65 @@ Note that `.cfg` files do **not** receive the bare-name `.vpy` API
 elaboration at config-load time. Use `configure(...)` to set values,
 not `parameter(...)`.
 
+### 11.7 Verilog text helpers: `genesispy.lib.verilog`
+
+`genesispy.lib.verilog` turns generation-time Python values into the Verilog that denotes them, so
+a template does not spell the notation out by hand. It computes no width or format; the caller
+supplies both. Inside a `.vpy` body, an `include()`'d snippet and a `pyinclude`'d file it is bound
+as the bare name `verilog`; anywhere else, including a `.cfg` file, import it:
+
+```python
+//; y_lo = verilog.lit(-3, 8)                      # bare name, no import
+//; from genesispy.lib.verilog import decl, lit    # or import what you call often
+```
+
+A local of your own named `verilog` shadows the bound module in that scope.
+
+| Call                                              | Returns                                                         |
+|---------------------------------------------------|-----------------------------------------------------------------|
+| `lit(value, width, signed=True)`                  | a sized decimal literal: `8'sd5`, `-8'sd5`, `8'd5`              |
+| `sext(term, from_w, to_w, msb=None, signed=True)` | `term` widened by its sign bit, or by zeros when `signed=False` |
+| `pad_low(term, n)`                                | `term` with `n` zero bits appended below its lsb                |
+| `decl(what, signed=None, pad=True, col=())`       | the type part of a declaration: `signed [3:-6]`                 |
+| `port_map(ports, indent=8)`                       | `.port (net)` lines with the parentheses in one column          |
+| `idx(base, i, n, min_width=1)`                    | a zero-padded name from a family of `n`                         |
+| `wrap_sum(head, expr, width=100)`                 | the lines of `head` plus a `' + '` sum, broken after a `+`      |
+| `parenthesize(terms, op=" + ", leaf=2)`           | one expression, grouped into a balanced tree                    |
+
+```python
+lit(5, 8)                          -> "8'sd5"
+lit(-5, 8)                         -> "-8'sd5"
+lit(5, 8, signed=False)            -> "8'd5"
+sext("x", 8, 11)                   -> "{ { 3 {x[7]} }, x }"
+sext("x", 8, 11, signed=False)     -> "{ { 3 {1'b0} }, x }"
+pad_low("x", 3)                    -> "{ x, { 3 {1'b0} } }"
+decl(8, signed=True)               -> "signed [7:0]"
+decl(8, signed=False)              -> "       [7:0]"
+decl(8, signed=False, pad=False)   -> "[7:0]"
+port_map([("clk", "clk"), ("din", "x")])
+                                   -> "        .clk (clk),\n        .din (x)"
+idx("coef", 3, 12)                 -> "coef03"
+parenthesize(["a", "b", "c", "d"]) -> "(a + b) + (c + d)"
+```
+
+- `lit` writes a negative value as the negation of its magnitude, since Verilog has no sign inside
+  a sized literal. For the most negative value of a width that is correct only in a
+  self-determined context of that width -- a comparison with, or an assignment to, a
+  `width`-bit operand; in a wider context the literal sign-extends before the negation.
+- `decl` takes a width in bits, or any object with `int_bits`, `frac` and `signed` -- a fixed-point
+  format -- whose range then carries the binary point: `[int_bits-1:-frac]`. `col` lists the other
+  members of a column of declarations; both bounds are right-justified to the widest of them.
+  `sext`'s `msb` exists for the same ranges, whose sign bit is at `int_bits-1`.
+- `idx` takes the padding width from the family size `n`, not from `i`, so every member of a
+  family has one width and a parent that connects by name builds the same string.
+- `parenthesize` changes no value: every term is at the assigned width, and two's-complement
+  addition is associative modulo that width. The grouping only steers synthesis away from a
+  ripple chain.
+
+Every function raises `VerilogError`, a subclass of `ValueError`, on a value it cannot write: a
+literal that does not fit its width, a width below one bit, a `sext` that does not widen, a port
+connected twice, an index outside its family.
+
 ## 12. Migrating from Genesis2
 
 Superficial differences (file extensions, `//;` body language, CLI
@@ -1096,6 +1201,7 @@ flag style) are listed below. For behaviour-affecting incompatibilities
 - **File extension** -- `.vp` -> `.vpy`, `.svp` -> `.svpy`. Configurable via the repeatable `--extension EXT_IN=EXT_OUT` flag (e.g. `--extension .tvpy=.tv` to register a custom pair, or `--extension .vpy=.sv` to redirect the default).
 - **`--suffix` removed** -- replaced by `--extension`. `-sv`/`--system-verilog` is preserved as a shorthand for `--extension .vpy=.sv`.
 - **`--comment` -> `--source-comment`** -- `--comment PREFIX` is a deprecated alias for `--source-comment PREFIX`; it is retained and emits a one-time stderr warning. New flag `--output-comment PREFIX | OPEN,CLOSE` controls the style for comments emitted into the output (banner and `--stdout` separator); defaults to `--source-comment`. Genesis2 has no equivalent to `--output-comment`.
+- **`--defaults`** -- genesispy-only; per-module parameter defaults below every other source (section 6.5). Genesis2 has no equivalent.
 - **`--param-footer`** -- genesispy-only; appends a resolved-parameter provenance block after each generated module. Off by default, so migrated designs emit unchanged output. Genesis2 has no equivalent.
 - **Config input** -- XML support removed from the core CLI; convert legacy XML once with `genesispy-xml2json in.xml out.json` and pass `--json-cfg out.json`. The reverse helper `genesispy-json2xml` is provided for symmetry. The converter types an XML value only when that is lossless (`<Val>8</Val>` becomes `8`, `1.5` becomes `1.5`, `true`/`false` become booleans); `010`, `1e3`, `+5` and any other text stay strings, as XML::Simple handed them to Perl. The JSON loader never coerces: a string leaf reaches the template as typed. A JSON `null` round-trips through `genesispy-json2xml` as an empty element, which reads back as `""`.
 - **`ImmutableParameters` (input config)** -- ignored by both engines. Genesis2 `ConfigHandler.pm:875-919` reads only `{Parameters}` from input XML; `{ImmutableParameters}` is touched only by the writeback path (`ConfigHandler.pm:677, 724`). genesispy reads only a node's `Parameters` in `config_handler.py:_find_param`. The tag is writeback-only metadata in both engines. To actually pin past a parent's `unique_inst` kwarg, use `force_param` (Genesis2) / `parameter(..., force=True)` (genesispy); both write at `IMMUTABLE`.
@@ -1121,7 +1227,7 @@ flag style) are listed below. For behaviour-affecting incompatibilities
 - **`sname`** -- mirrors Perl `get_source_name` (UniqueModule.pm:377): returns the source template name (`_synonym_for` set by `Manager.synonym_class` on a synonym-derived class, else the base module name == `bname`).
 - **`--json-out`** (Perl `-hierarchy`) -- same three-file output and same `HierarchyTop` schema, but emitted as JSON (use `genesispy-json2xml` for XML). Sibling filenames diverge from Perl: Perl emits `<f>`/`small_<f>`/`tiny_<f>`; genesispy splits `<f>` into `<stem><ext>` and emits `<stem><ext>`/`<stem>-small<ext>`/`<stem>-tiny<ext>`. `ImmutableParameters` holds force-pinned parameters (Perl fills it by inheritance recursion instead). The `tiny` variant filters by `priority >= EXTERNAL_PARAM_FILE`; genesispy cannot replicate Perl's `inherit_param`-aware priority assignment, so the `tiny` set may be a strict superset of Perl's (params Perl tags as inherited may appear as user-overrides in genesispy).
 - **Names** -- `get_module_name()` returns the unique (emitted) module name and `get_base_name()` the template name, as in Genesis2. Parameter names must match `\w+` in both engines; a synonym target that names an existing template is refused in both.
-- **Command-line overrides** -- a bare `-p W=9` is accepted and applies to every instance that reads `W`, where Genesis2 requires `path.name`; an override that no instance reads is a warning after elaboration, where Genesis2's `Finalize` dies. The `.cfg` API requires `path.name` and `get_configuration` on an unset name is fatal, as in Genesis2.
+- **Command-line overrides** -- with `--params-global`, a bare `-p W=9` is accepted and applies to every instance that reads `W`; without the flag it is an error, as in Genesis2, which always requires `path.name`; an override that no instance reads is a warning after elaboration, where Genesis2's `Finalize` dies. The `.cfg` API requires `path.name` and `get_configuration` on an unset name is fatal, as in Genesis2.
 
 - **No inputs** -- `genesispy -t top` with no `--input` / `--input-list` / `--gen-only` / `--clean` exits 1 with `no input files`, as Genesis2 does (Manager.pm:400).
 

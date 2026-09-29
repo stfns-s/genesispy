@@ -38,6 +38,30 @@ STATE_OVERRIDDEN = "OVERRIDDEN"
 # Value-column cap for the --param-footer table, in characters.
 _PARAM_FOOTER_VALUE_WIDTH = 32
 
+# Total width budget for an emitted comment line, comment prefix included.
+_COMMENT_LINE_WIDTH = 100
+
+
+def _value_lines(value: Any, indent: int, width: int) -> List[str]:
+    """Render ``value`` across as many lines as ``width`` needs.
+
+    The first line is bare (it follows a caller-supplied ``NAME = ``
+    prefix); continuations carry ``indent`` spaces so they hang under the
+    value column. ``width`` is the budget for the whole line, indent
+    included. A value that fits comes back as one line identical to its
+    ``repr``, so short parameters render exactly as they did before
+    wrapping existed.
+
+    Two shapes pprint will not produce: a long string is never split (no
+    non-lying way to break one), and ``compact`` fill applies to sequences
+    only, so an oversized dict still renders one key per line.
+    """
+    text = pprint.pformat(
+        value, width=max(width - indent, 20), compact=True, sort_dicts=True
+    )
+    head, *rest = text.splitlines()
+    return [head] + [" " * indent + ln for ln in rest]
+
 
 def _subtree_tag(subtree_sig) -> str:
     # subtree_sig is a sorted tuple of hashable triples; repr-then-sha256
@@ -344,6 +368,12 @@ class UniqueModule:
             )
             # prio is None only when no source defines the name; an explicit
             # JSON null arrives as (None, EXTERNAL_PARAM_FILE) and applies.
+            if prio is None:
+                # The module's own entry first; for a generate_w_name module
+                # that is the emitted name, then the source template's.
+                found, v = cfg.module_default((self._module_name, self.sname), name)
+                if found:
+                    prio = int(Priority.MODULE_DEFAULT)
             if prio is not None:
                 self._params[name]["value"] = v
                 self._params[name]["state"] = STATE_OVERRIDDEN
@@ -1406,6 +1436,12 @@ class UniqueModule:
             self._outfile_handle = io.StringIO()
         self._outfile_handle.write(text + "\n")
 
+    def _comment_budget(self) -> int:
+        """Width left for a comment block's payload after its prefix."""
+        style = getattr(self._manager, "output_comment", "//")
+        prefix = 1 if isinstance(style, tuple) else len(style) + 1
+        return _COMMENT_LINE_WIDTH - prefix
+
     def _emit_comment_block(self, lines: List[str]) -> None:
         """Emit ``lines`` as one comment block in ``manager.output_comment`` style.
 
@@ -1455,15 +1491,22 @@ class UniqueModule:
         vals = {n: repr(self._params[n]["value"]) for n in names}
         name_w = max(len(n) for n in names)
         # Cap the value column: one long repr (a list or dict parameter) would
-        # otherwise pad every other row out to its width. Values past the cap
-        # run long rather than being truncated -- a truncated value would lie.
+        # otherwise pad every other row out to its width.
         val_w = min(max(len(v) for v in vals.values()), _PARAM_FOOTER_VALUE_WIDTH)
+        prov = {n: _param_provenance(self._params[n]) for n in names}
+        indent = len(f"  {'':<{name_w}} : ")
+        # Reserve the provenance column off the whole table, not per row, so
+        # every value wraps at the same margin.
+        suffix_w = max(len(p) for p in prov.values()) + len("  <- ")
+        budget = self._comment_budget() - suffix_w
         lines = ["Genesis-Py resolved parameter provenance"]
-        lines += [
-            f"  {n:<{name_w}} : {vals[n]:<{val_w}}  <- "
-            f"{_param_provenance(self._params[n])}"
-            for n in names
-        ]
+        for n in names:
+            rows = _value_lines(self._params[n]["value"], indent, budget)
+            rows[0] = f"  {n:<{name_w}} : {rows[0]}"
+            # Provenance trails the last row, so a wrapped value keeps the
+            # whole table in one provenance column.
+            rows[-1] = f"{rows[-1]:<{indent + val_w}}  <- {prov[n]}"
+            lines += rows
         self._emit_comment_block(lines)
 
     def to_verilog(self, infile: Optional[str] = None) -> None:
@@ -1479,9 +1522,13 @@ class UniqueModule:
         if infile is not None:
             lines.append(f"Source file: {infile}")
         if self._params:
+            budget = self._comment_budget()
             lines.append("Parameters:")
             for k in sorted(self._params):
-                lines.append(f"  {k} = {self._params[k]['value']!r}")
+                prefix = f"  {k} = "
+                value = _value_lines(self._params[k]["value"], len(prefix), budget)
+                lines.append(prefix + value[0])
+                lines += value[1:]
         self._emit_comment_block(lines)
 
     def _execute_child(self, child: "UniqueModule") -> None:

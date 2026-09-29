@@ -3,15 +3,15 @@
 //;     error(f"{mname}: IW ({IW}) must be >= 1")
 //; # endif
 //; APPROX = parameter('APPROX', 0)   # negate as ~x, one LSB cheap
-//; ISYM   = parameter('ISYM',   0)   # caller promises the most negative value never arrives
+//; ISYMM  = parameter('ISYMM',  0)   # caller promises the most negative value never arrives
 //; MIN    = -(1 << (IW-1))
 //; MAX    =  (1 << (IW-1)) - 1
-//; IND    = "    " if ISYM else ""   # the ISYM skip wraps the body in a block
-//; CFG    = f"{mname} IW={IW} APPROX={APPROX} ISYM={ISYM}"
+//; IND    = "    " if ISYMM else ""  # the ISYMM skip wraps the body in a block
+//; CFG    = f"{mname} IW={IW} APPROX={APPROX} ISYMM={ISYMM}"
 // unit test for f_negate
 module `mname`;
 
-//; self.include_params = {'func_name': 'dut', 'iwidth': IW, 'approx': APPROX, 'isym': ISYM}
+//; self.include_params = {'func_name': 'dut', 'iwidth': IW, 'approx': APPROX, 'isymm': ISYMM}
 //; include('f_negate.vpy')
 //; include('tb_util.vpy')
 
@@ -31,8 +31,8 @@ module `mname`;
         for (int i = 0; i < `1 << IW`; i++) begin
             x  = i[`IW-1`:0];
             xs = longint'(x);
-//; if ISYM:
-            // isym: the caller promises the most negative input never arrives
+//; if ISYMM:
+            // isymm: the caller promises the most negative input never arrives
             if (xs == `MIN`)
                 tb_skip();
             else begin
@@ -41,7 +41,7 @@ module `mname`;
             `IND`exp = ref_negate(xs);
             `IND`tb_check(64'(y), exp, $sformatf("x=%0d", xs));
             `IND`tb_data_row($sformatf("%0d,%0d,%0d", xs, y, exp));
-//; if ISYM:
+//; if ISYMM:
             end
 //; # endif
         end

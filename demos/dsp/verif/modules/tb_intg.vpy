@@ -1,11 +1,11 @@
-//; from vexpr import lit
+//; from genesispy.lib.verilog import lit
 //; OW   = parameter('OW', 8)    # output width
 //; IW   = parameter('IW', 4)    # input width
 //; MW   = parameter('MW', 4)    # mu width
 //; dut  = unique_inst('intg', 'dut', OW=OW, IW=IW, MW=MW)
 //; AW   = dut.get_param('AW')
 //; LW   = dut.get_param('LW')
-//; ISYM = dut.get_param('ISYM')
+//; ISYMM = dut.get_param('ISYMM')
 //; NAPX = dut.get_param('NEG_APPROX')
 //; DBG  = dut.get_param('DEBUG')
 //; IMIN = -(1 << (IW-1))                    # most negative input
@@ -43,7 +43,7 @@
 //; N_LIM = 1 << (OW-1)                      # lim is a magnitude, never negative
 //; N_LD  = 1 << OW
 //; N_F   = 16                               # lk_en, ld, en, neg
-//; N_IN  = (1 << IW) - 1 if ISYM else (1 << IW)  # ISYM bars the most negative input
+//; N_IN  = (1 << IW) - 1 if ISYMM else (1 << IW)  # ISYMM bars the most negative input
 //; NVEC  = N_IN * N_PAIR * N_LIM * N_LD * N_F
 //; NSTATE = 1 << AW
 //; if EXH and NVEC > 2000000:
@@ -57,7 +57,7 @@
 //; AMIN = -((1 << (OW-1)) - 1) * ASCL
 //; ACAP =  (1 << (AW-1)) - 1                # largest value AW bits hold
 //; AFLR = -(1 << (AW-1))
-//; CFG  = f"{mname} OW={OW} IW={IW} MW={MW} AW={AW} LW={LW} ISYM={ISYM}"
+//; CFG  = f"{mname} OW={OW} IW={IW} MW={MW} AW={AW} LW={LW} ISYMM={ISYMM}"
 //; CFG += f" NEG_APPROX={NAPX} DEBUG={DBG} EXH={EXH} EXH_MIN={EXH_MIN}"
 //; CFG += f" NRAND={NRAND} SEED={SEED}"
 // unit test for intg. The reference is written from the intended behaviour, not from the
@@ -94,18 +94,18 @@ module `mname`;
         else                         ref_sym = x;
     endfunction
 
-    // negate. isym says the caller promises x is never the most negative value; without
+    // negate. isymm says the caller promises x is never the most negative value; without
     // that promise the most negative input saturates rather than wrapping. The
     // approximate form drops the +1 and so lands one below the true negation.
     function longint signed ref_negate(input longint signed x, input integer w,
-                                       input logic isym);
+                                       input logic isymm);
         longint signed mn;
         begin
             mn = -(64'sd1 << (w-1));
 //; if NAPX:
             ref_negate = -x - 1;
 //; else:
-            if (!isym && x == mn) ref_negate = -(mn + 1);
+            if (!isymm && x == mn) ref_negate = -(mn + 1);
             else                  ref_negate = -x;
 //; # endif
         end
@@ -121,7 +121,7 @@ module `mname`;
                   input logic lke, ldb, enb, negb);
         longint signed insym, v, fb, ifb, top, ilkfb, sum, nxt, onxt;
         begin
-//; if ISYM:
+//; if ISYMM:
             insym = i;
 //; else:
             insym = ref_sym(i, `IW`);
@@ -297,8 +297,8 @@ module `mname`;
 //;     # endfor
                 default: begin vmu = `MU_LO`; vlk = `LK_LO`; end
             endcase
-//;     if ISYM:
-            // step over the most negative pattern: ISYM promises it is never driven
+//;     if ISYMM:
+            // step over the most negative pattern: ISYMM promises it is never driven
             if (vin >= `1 << (IW-1)`) vin = vin + 1;
 //;     # endif
             in     = vin[`IW-1`:0];
@@ -325,7 +325,7 @@ module `mname`;
         seed = `SEED`;
         for (int k = 0; k < `NRAND`; k++) begin
             rnd    = $random(seed); in     = rnd[`IW-1`:0];
-//; if ISYM:
+//; if ISYMM:
             if (in == `IMIN`) in = `IMIN + 1`;
 //; # endif
             // mu in 1..MU_MAX-1, then lk_mu above it

@@ -223,10 +223,33 @@ class Manager:
 # value (configure() accepts any integer) and appends the raw number.
 # Consumed by UniqueModule.emit_param_footer for --param-footer.
 PRIORITY_LABELS: dict[int, str]
+# Priority ladder: DECLARATION=5 < MODULE_DEFAULT=7 (--defaults) <
+# EXTERNAL_CONFIG=10 < EXTERNAL_PARAM_FILE=20 < CMD_LINE=30 <
+# INHERITANCE=40 < IMMUTABLE=50.
+class Priority(IntEnum): ...
 def priority_label(priority: int | None) -> str: ...
 
 class ConfigHandler:
+    # Ingests manager.args.parameter (-p); a spec without an instance path
+    # raises ParameterError unless manager.args.params_global is true
+    # (--params-global; gvpy's _GvpyManager always sets it). Then loads every
+    # manager.args.defaults
+    # file through read_defaults, each resolved with manager._resolve_cfg_path
+    # (as --cfg is) and named in messages as given on the command line.
     def __init__(self, manager: "Manager") -> None: ...
+    # Load a --defaults tree: a .py file's BLOCK_PARAMS dict or a .json
+    # file's top-level object. Every top-level value is an entry and must be
+    # a dict; inside an entry a dict value is a child entry, which only
+    # groups (no inheritance, and not a value of its parent). An entry name
+    # may sit at any depth, once across all files. ConfigError on a missing
+    # file, another extension, a .py without BLOCK_PARAMS, a non-dict entry
+    # or a repeated name; `shown` is the name those messages use.
+    def read_defaults(self, path: str, shown: str | None = None) -> None: ...
+    # (True, value) from the first of `names` whose entry holds `name`, else
+    # (False, None); every entry consulted counts as read for report_unused.
+    # UniqueModule.parameter passes (bname, sname) when no other source has
+    # the name, and stamps a hit at Priority.MODULE_DEFAULT.
+    def module_default(self, names: Iterable[str | None], name: str) -> tuple[bool, object]: ...
     # read_json validates the HierarchyTop shape (ConfigError names the
     # offending node) and deep-merges into the in-memory database. Repeated
     # reads accumulate (matching dicts merge, matching lists concatenate).
@@ -259,7 +282,7 @@ class ConfigHandler:
     # and the tuple is the path. Scoped overrides (`--parameter
     # top.child.x=2`, `configure("top.child.x", v)`) match by exact-path
     # equality, JSON Parameters are read from the node at that path only,
-    # and a bare `--parameter NAME=VALUE` applies at every path. A scoped
+    # and a bare `--parameter NAME=VALUE` (--params-global) applies at every path. A scoped
     # CMD_LINE match wins outright. Every source that names the parameter
     # is marked consumed for report_unused. get_configuration raises
     # ConfigError when no source defines the parameter (ConfigHandler.pm:1512).
@@ -297,10 +320,12 @@ class ConfigHandler:
     # same name) consumed. Applied by UniqueModule._resolve_params before
     # the child elaborates.
     def scoped_overrides_for(self, instance_path: tuple[str, ...]) -> dict[str, object]: ...
-    # One message per command-line / .cfg override no lookup consumed.
-    # Manager.gen_verilog emits each through reporting.warning after
-    # elaboration (Perl Finalize dies instead). JSON parameters are not
-    # checked, as in Perl.
+    # One message per command-line / .cfg override no lookup consumed, then
+    # "default ENTRY was never used (--defaults FILE)" per entry no module
+    # read and "default ENTRY.KEY was never used (--defaults FILE)" per key of
+    # a read entry no parameter() took. Manager.gen_verilog emits each
+    # through reporting.warning after elaboration (Perl Finalize dies
+    # instead). JSON parameters are not checked, as in Perl.
     def report_unused(self) -> list[str]: ...
 
     # Variant returning ``(value, priority)`` so callers can stamp the
@@ -333,6 +358,22 @@ class UniqueModule:
     # STATE_OVERRIDDEN: str (module-level)
     # STATE_FORCED: str     (module-level)
 
+    # Comment-emission width, module-level. _COMMENT_LINE_WIDTH is the total
+    # budget for an emitted comment line, prefix included;
+    # _PARAM_FOOTER_VALUE_WIDTH caps the --param-footer value column so one
+    # wide value cannot pad every other row out to its width.
+    # _COMMENT_LINE_WIDTH: int        (module-level)
+    # _PARAM_FOOTER_VALUE_WIDTH: int  (module-level)
+
+    # Render `value` across as many lines as `width` allows: the first line
+    # bare (it follows the caller's "NAME = " prefix), continuations indented
+    # by `indent` so they hang under the value column. `width` covers the
+    # whole line, indent included. A value that fits returns one line equal to
+    # its repr. pprint fills sequences but not dicts, so an oversized dict
+    # still renders one key per line, and a long string never splits.
+    # def _value_lines(value: Any, indent: int, width: int) -> list[str]
+    #     (module-level)
+
     # construction
     def __init__(self, manager: "Manager") -> None: ...
     @classmethod
@@ -350,7 +391,10 @@ class UniqueModule:
     # name would collide with the `-p PATH.NAME` grammar.
     def define_param(self, name: str, default=None, doc: str | None = None,
                      type: str | None = None, **flags) -> None: ...
-    # parameter(): Perl-compat kwargs (UniqueModule.pm:1981) -- force/doc
+    # parameter(): a value already OVERRIDDEN/FORCED stays; otherwise
+    # ConfigHandler.get_configuration_with_priority, then
+    # ConfigHandler.module_default((bname, sname), name), then the default.
+    # Perl-compat kwargs (UniqueModule.pm:1981) -- force/doc
     # plus min/max/step XOR list (range guard) plus opt store-only.
     # Range checked at register-time AND on every subsequent override.
     #
@@ -521,6 +565,9 @@ class UniqueModule:
     # emission
     def emit(self, text: str) -> None: ...
     def instantiate(self, **ports: object) -> str: ...
+    # Banner: generated/source names, source file, then one "  NAME = value"
+    # row per parameter. A value too wide for the line budget wraps through
+    # _value_lines.
     def to_verilog(self, infile: str | None = None) -> None: ...
     # Emit `lines` as one comment block in manager.output_comment style. A str
     # style prefixes every line; an (open, close) tuple puts the delimiters on
@@ -528,6 +575,10 @@ class UniqueModule:
     # comments for structural diffing and keys on whole-line delimiters.
     # Shared by to_verilog and emit_param_footer.
     def _emit_comment_block(self, lines: list[str]) -> None: ...
+    # Width left for a comment block's payload after its prefix:
+    # _COMMENT_LINE_WIDTH (100) minus len(style)+1 for a str style, minus 1
+    # for the (open, close) tuple style.
+    def _comment_budget(self) -> int: ...
     # Append the --param-footer provenance block. No-op unless
     # manager.param_footer is set and self._params is non-empty. Called from
     # template/emitter.CLASS_BODY_TAIL after the user body and before the
@@ -535,7 +586,10 @@ class UniqueModule:
     # unlike the to_verilog banner, written before the body runs. Rows read
     # "NAME : value <- source"; the separator is ':' not '=' because
     # tests/_parity_normalize.parse_header scans for "// NAME = value" rows
-    # with an unbounded window on files that have no `module` keyword.
+    # with an unbounded window on files that have no `module` keyword. A wide
+    # value wraps through _value_lines and the source label trails the last
+    # of its lines; the provenance column is reserved off the budget for the
+    # whole table so every row wraps at the same margin.
     def emit_param_footer(self) -> None: ...
     # Runs child.execute() with user_config.context bound to the child, so
     # include() and other bare-name helpers inside a sub-instance body resolve
@@ -689,9 +743,16 @@ emitter's generated prelude, `user_config._include`'s exec namespace and the gvp
 SIMPLE_ALIASES: tuple[tuple[str, str], ...]
 
 # Every name a .vpy body may rely on: SIMPLE_ALIASES keys plus
-# mname/iname/bname/sname, include, pyinclude, pinclude. This is the complete
-# set, and the one user-guide section 7.3 enumerates.
+# mname/iname/bname/sname, include, pyinclude, pinclude, verilog. This is the
+# complete set, and the one user-guide section 7.3 enumerates.
 EXPECTED_ALIAS_KEYS: frozenset[str]
+
+# Import lines placed in the generated module's globals, after the runtime
+# imports, by template/emitter._header and the gvpy class factory:
+# "from genesispy.lib import verilog\n". Globals rather than execute() locals,
+# so a pyinclude'd file sees them from a template body too. Modules only: a
+# global is shared by every instance of the template.
+MODULE_GLOBALS_SOURCE: str
 
 # Render the local-binding prelude injected at the top of every generated
 # execute() by template/emitter._header. `indent` is the leading whitespace
@@ -703,7 +764,8 @@ def alias_prelude_source(indent: str = "        ") -> str: ...
 # Build the equivalent name -> callable mapping for an exec namespace, bound
 # to `self_obj`. Used by user_config._include. `ns` is the namespace
 # pyinclude/pinclude populate -- normally the same dict the caller merges the
-# result into; omitting it binds both to a stub raising RuntimeError.
+# result into; omitting it binds both to a stub raising RuntimeError. Also
+# binds verilog, the module MODULE_GLOBALS_SOURCE imports.
 def alias_dict(self_obj: Any, ns: dict | None = None) -> dict[str, Any]: ...
 ```
 
@@ -995,6 +1057,54 @@ is active -- add overrides on ``_JournaledDict`` if that changes.
 def sha256_param_signature(module_name: str,
                            params: dict[str, object]) -> str:
     """Canonical-JSON SHA-256 hex digest, stable across Python runs."""
+```
+
+## genesispy.lib.verilog
+
+Verilog text from generation-time values. No genesispy imports; computes no width or format.
+Bound in templates as the bare name `verilog` (see `genesispy.template.aliases`); user-facing
+reference in user-guide section 11.7.
+
+```python
+# Raised by every function below on a value it cannot write.
+class VerilogError(ValueError): ...
+
+# Sized decimal literal: "8'sd5", "-8'sd5", "8'd5". A negative value is the
+# negation of its magnitude, so the most negative value of `width` is right only
+# in a self-determined context of that width. Raises if value does not fit.
+def lit(value: int, width: int, signed: bool = True) -> str: ...
+
+# "{ { n {term[msb]} }, term }", or zero fill when not signed. msb defaults to
+# from_w - 1. Raises unless to_w > from_w >= 1.
+def sext(term: str, from_w: int, to_w: int, msb: int | None = None,
+         signed: bool = True) -> str: ...
+
+# "{ term, { n {1'b0} } }"; term unchanged for n == 0. Raises for n < 0.
+def pad_low(term: str, n: int) -> str: ...
+
+# Signedness keyword plus range. `what` is a width, or any object with
+# int_bits/frac/signed (range [int_bits-1:-frac], signed from the object unless
+# given). pad blanks the unsigned form to the width of "signed"; col lists the
+# other members of a column, and both bounds right-justify to the widest.
+# Raises for a width with signed=None, or a width below 1.
+def decl(what: object, signed: bool | None = None, pad: bool = True,
+         col: Iterable[object] = ()) -> str: ...
+
+# ".port (net)" lines joined by ",\n", parentheses in one column, no trailing
+# newline or ");". Raises on an empty list or a port listed twice.
+def port_map(ports: Sequence[tuple[str, str]], indent: int = 8) -> str: ...
+
+# base + i zero-padded to the digits of n - 1, at least min_width. Raises for
+# n < 1, i outside 0 .. n-1, or min_width < 1.
+def idx(base: str, i: int, n: int, min_width: int = 1) -> str: ...
+
+# head + an " + "-joined sum, broken after a "+" so no line passes `width`
+# where avoidable; continuation lines align under the first term.
+def wrap_sum(head: str, expr: str, width: int = 100) -> list[str]: ...
+
+# terms joined by op, bisected into a balanced parenthesised tree down to
+# groups of `leaf`. Raises on no terms or leaf < 1.
+def parenthesize(terms: list[str], op: str = " + ", leaf: int = 2) -> str: ...
 ```
 
 ## genesispy.tools.jinja2j2

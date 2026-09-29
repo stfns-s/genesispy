@@ -6,7 +6,7 @@
 //; # That is what look-ahead composition has to reproduce exactly, whatever LOOKAHEAD is, so the
 //; # check is the direct chain against the composed one rather than a tolerance.
 //; import textwrap
-//; from vexpr import idx, lit
+//; from genesispy.lib.verilog import idx, lit
 //;
 //; # Only what a sweep set is forwarded, so a default here cannot drift from the module's.
 //; N_SYM     = parameter('N_SYM',     None)
@@ -104,6 +104,7 @@ module `mname`;
     // the gather reads, and never touches spec itself, so the module and the reference read
     // the same numbers by different routes.
     logic [`TBL_W-1`:0] tbl [0:`N_SYM-1`];
+    int unsigned        rnd, seed;
 
     task apply;
         begin
@@ -149,7 +150,6 @@ module `mname`;
     logic [`NCHUNK * CHUNK_W - 1`:0] res_pad, exp_pad;
     logic [`SYM_W-1`:0]   y;
     int                   k, nblk;
-    int unsigned          rnd, seed;
 //; if EXH:
     int                   vv, ti;   // the exhaustive sweep's table-set digits
 //; # endif

@@ -164,8 +164,8 @@ list, because the CLI coerces scalars only and a list-valued `-p` would arrive a
 keeps two round-trip functions in every build, so one leaf is always included twice under different names;
 the set collapses to one when `WIDTH` is 3. `EXTRA_FLAGS` is a full override, not an append, so reaching
 the two diagnostic paths means repeating the include path:
-`make gen EXTRA_FLAGS='--inc-path genesis_src -p WIDTH=1'` hits the `warning()`, `-p WIDTH=0` the
-`error()`, which writes no file.
+`make gen EXTRA_FLAGS='--inc-path genesis_src --params-global -p WIDTH=1'` hits the `warning()`,
+`-p WIDTH=0` the `error()`, which writes no file.
 
 `top` self-checks under `` `ifdef SIMULATION ``: every code of every width through the round trip, and the
 directly included encoder against a table computed at elaboration time. Leaves resolve via
@@ -203,7 +203,7 @@ instance of that template.
 is sized for, in both directions, and checks the result clamps at the bounds `lib/fixed.py`
 computed. `make sim` prints `pyinclude_examples: all vectors PASS`. The leaf rejects a `TERM_W`
 outside 2..24 and any parameter pair whose accumulator would exceed `ACC_W_MAX`, so
-`make gen EXTRA_FLAGS='--inc-path genesis_src --py-path lib -p TERM_W=40'` reaches the first
+`make gen EXTRA_FLAGS='--inc-path genesis_src --py-path lib --params-global -p TERM_W=40'` reaches the first
 `error()`. Entry: `genesis_src/top.vpy`.
 
 ### `gvpy`
@@ -216,9 +216,10 @@ backtick expressions, control flow (`for` / `if`), and `pp()`. Run via `bin/gvpy
 
 A fixed-point DSP library, and the widest exercise of the tool in this tree: 17 arithmetic functions pulled in with
 `include()` (`functions/f_*.vpy`), three synthesizable tops (`modules/iir.vpy`, `modules/intg.vpy`,
-`modules/spec_mux.vpy`), a Python helper library reached through `--py-path` (`lib/qfmt.py`, `lib/vexpr.py`), and
-one testbench per function and per module run over a sweep of configurations. The templates emit SystemVerilog, so
-both generator call sites pass `-sv` and the output is `.sv` -- the only demo that covers that path.
+`modules/spec_mux.vpy`), a fixed-point format library reached through `--py-path` (`lib/qfmt.py`), the
+`genesispy.lib.verilog` text helpers, and one testbench per function and per module run over a sweep of
+configurations. The templates emit SystemVerilog, so both generator call sites pass `-sv` and the output is `.sv`
+-- the only demo that covers that path.
 
 The `Makefile` is its own -- `genesispy.mk` is not included, there is no `genesis_src/` and no j2 twin. Its targets are
 `gen`, `pylint`, `vlint`, `lint`, `sim`, `pytest`, `test`, `test-extra`, `test-smoke`, `plot` and `clean`; everything

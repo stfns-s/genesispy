@@ -22,7 +22,6 @@ def narrower(f: Fmt) -> Fmt | None:
     return Fmt(f.signed, f.width - 1, f.frac) if f.width > 1 else None
 
 
-# -------------------------------------------------------------------- notation
 @pytest.mark.parametrize("f", FMTS, ids=str)
 def test_q_string_round_trips(f):
     assert qfmt.parse(f.to_q()) == f
@@ -51,6 +50,17 @@ def test_parse_rejects(text):
         qfmt.parse(text)
 
 
+@pytest.mark.parametrize("signed, expect", [(True, True), (False, False), (1, True), (0, False)])
+def test_parse_tuple_sign(signed, expect):
+    assert qfmt.parse((signed, 8, 0)) == Fmt(expect, 8, 0)
+
+
+@pytest.mark.parametrize("signed", ["False", "0", 2, -1, 1.0, None])
+def test_parse_tuple_rejects_sign(signed):
+    with pytest.raises(QError, match="signed must be a bool or 0/1"):
+        qfmt.parse((signed, 8, 0))
+
+
 def test_width_below_one_rejected():
     with pytest.raises(QError):
         Fmt(True, 0, 0)
@@ -66,7 +76,6 @@ def test_clog2_rejects_zero():
         qfmt.clog2(0)
 
 
-# ------------------------------------------------------------------ code/value
 @pytest.mark.parametrize("f", FMTS, ids=str)
 def test_encode_decode_every_code(f):
     for c in f.codes():
@@ -123,7 +132,6 @@ def test_with_frac_preserves_range():
         f.with_frac(2)
 
 
-# ------------------------------------------------------------------------ mult
 @pytest.mark.parametrize("a", SMALL, ids=str)
 def test_mult_holds_every_product(a):
     for b in SMALL:
@@ -160,9 +168,9 @@ def test_mult_width_is_sum_of_widths(a):
 
 
 @pytest.mark.parametrize("a", [f for f in SMALL if f.signed], ids=str)
-def test_mult_sym_holds_all_but_the_excluded_corner(a):
+def test_mult_symm_holds_all_but_the_excluded_corner(a):
     for b in SMALL:
-        p = qfmt.mult(a, b, sym=True)
+        p = qfmt.mult(a, b, symm=True)
         assert p.width <= qfmt.mult(a, b).width
         for ca, cb in product(a.codes(), b.codes()):
             if ca != a.min_code:
@@ -171,51 +179,50 @@ def test_mult_sym_holds_all_but_the_excluded_corner(a):
             assert any(not p.contains(a.decode(a.min_code) * b.decode(cb)) for cb in b.codes())
 
 
-def test_mult_sym_saves_one_bit_for_signed_operands():
+def test_mult_symm_saves_one_bit_for_signed_operands():
     for a, b in product(FMTS, FMTS):
         if a.signed and b.signed and a.width >= 2:
-            assert qfmt.mult(a, b, sym=True).width == a.width + b.width - 1
+            assert qfmt.mult(a, b, symm=True).width == a.width + b.width - 1
 
 
-def test_mult_sym_needs_signed_first_operand():
+def test_mult_symm_needs_signed_first_operand():
     with pytest.raises(QError):
-        qfmt.mult("UQ4.4", "Q4.4", sym=True)
+        qfmt.mult("UQ4.4", "Q4.4", symm=True)
     assert qfmt.mult("UQ4.4", "Q4.4") == qfmt.mult("Q4.4", "UQ4.4")
 
 
 @pytest.mark.parametrize("a", [f for f in SMALL if f.signed], ids=str)
-def test_mult_bsym_mirrors_sym_on_the_other_operand(a):
+def test_mult_bsymm_mirrors_symm_on_the_other_operand(a):
     for b in SMALL:
         if b.signed:
-            assert qfmt.mult(a, b, bsym=True) == qfmt.mult(b, a, sym=True)
+            assert qfmt.mult(a, b, bsymm=True) == qfmt.mult(b, a, symm=True)
 
 
 @pytest.mark.parametrize("a", [f for f in SMALL if f.signed], ids=str)
-def test_mult_both_sym_holds_all_but_the_two_excluded_corners(a):
+def test_mult_both_symm_holds_all_but_the_two_excluded_corners(a):
     for b in SMALL:
         if not b.signed:
             continue
-        p = qfmt.mult(a, b, sym=True, bsym=True)
-        assert p.width <= qfmt.mult(a, b, sym=True).width
-        assert p.width <= qfmt.mult(a, b, bsym=True).width
+        p = qfmt.mult(a, b, symm=True, bsymm=True)
+        assert p.width <= qfmt.mult(a, b, symm=True).width
+        assert p.width <= qfmt.mult(a, b, bsymm=True).width
         for ca, cb in product(a.codes(), b.codes()):
             if ca != a.min_code and cb != b.min_code:
                 assert p.contains(a.decode(ca) * b.decode(cb))
 
 
-def test_mult_both_sym_can_beat_either_flag_alone():
+def test_mult_both_symm_can_beat_either_flag_alone():
     assert qfmt.mult("Q2.0", "Q2.0").width == 4
-    assert qfmt.mult("Q2.0", "Q2.0", sym=True).width == 3
-    assert qfmt.mult("Q2.0", "Q2.0", bsym=True).width == 3
-    assert qfmt.mult("Q2.0", "Q2.0", sym=True, bsym=True).width == 2
+    assert qfmt.mult("Q2.0", "Q2.0", symm=True).width == 3
+    assert qfmt.mult("Q2.0", "Q2.0", bsymm=True).width == 3
+    assert qfmt.mult("Q2.0", "Q2.0", symm=True, bsymm=True).width == 2
 
 
-def test_mult_bsym_needs_signed_second_operand():
+def test_mult_bsymm_needs_signed_second_operand():
     with pytest.raises(QError):
-        qfmt.mult("Q4.4", "UQ4.4", bsym=True)
+        qfmt.mult("Q4.4", "UQ4.4", bsymm=True)
 
 
-# ------------------------------------------------------------------- sum/align
 @pytest.mark.parametrize("a", SMALL, ids=str)
 def test_add_holds_every_pair_sum(a):
     for b in SMALL:
@@ -261,7 +268,7 @@ def test_align_preserves_ranges_and_reports_shifts():
     aligned, shifts = qfmt.align(fs)
     assert shifts == [0, 1, 4]
     assert {f.frac for f in aligned} == {6}
-    for f, g in zip(fs, aligned):
+    for f, g in zip(fs, aligned, strict=True):
         assert g.min_val == f.min_val
         assert all(g.contains(f.decode(c)) for c in f.codes())
     assert qfmt.add(aligned).width == 12
@@ -278,7 +285,6 @@ def test_envelope_covers_every_input():
         assert n is None or not all(n.contains(v) for v in vals)
 
 
-# ---------------------------------------------------------------------- bounds
 @pytest.mark.parametrize("f", FMTS, ids=str)
 def test_bounds_of_names_the_format_and_round_trips(f):
     b = Bounds.of(f)
@@ -286,10 +292,10 @@ def test_bounds_of_names_the_format_and_round_trips(f):
     assert (b.lo_val, b.hi_val) == (f.min_val, f.max_val)
     assert b.fmt() == f
     if f.signed:
-        assert Bounds.of(f, sym=True) == Bounds(-f.max_code, f.max_code, f.frac, True)
+        assert Bounds.of(f, symm=True) == Bounds(-f.max_code, f.max_code, f.frac, True)
     else:
         with pytest.raises(QError):
-            Bounds.of(f, sym=True)
+            Bounds.of(f, symm=True)
 
 
 def test_bounds_rejects_empty_range_and_negative_unsigned():
@@ -331,8 +337,7 @@ def test_badd_rejects_misaligned_and_empty():
         badd([])
 
 
-# --------------------------------------------------------------------- requant
-def ref_requant(v: Fraction, dst: Fmt, mode: str, osym: bool) -> int:
+def ref_requant(v: Fraction, dst: Fmt, mode: str, osymm: bool) -> int:
     q = v / dst.lsb
     if mode == "trunc":
         c = floor(q)
@@ -348,7 +353,7 @@ def ref_requant(v: Fraction, dst: Fmt, mode: str, osym: bool) -> int:
         c = round(q)  # Fraction.__round__ is half-to-even
     else:
         raise AssertionError(f"ref_requant does not model {mode!r}")
-    lo = -dst.max_code if (dst.signed and osym) else dst.min_code
+    lo = -dst.max_code if (dst.signed and osymm) else dst.min_code
     return max(lo, min(dst.max_code, c))
 
 
@@ -356,24 +361,28 @@ REQ_SRC = [f for f in FMTS if f.width <= 5]
 REQ_DST = [f for f in FMTS if f.frac in (-2, 0, 3, 6)]
 
 
-@pytest.mark.parametrize("osym", [False, True])
+@pytest.mark.parametrize("osymm", [False, True])
 @pytest.mark.parametrize("mode", qfmt.ROUND_MODES)
-def test_requant_matches_fraction_reference(mode, osym):
+def test_requant_matches_fraction_reference(mode, osymm):
     for src, dst in product(REQ_SRC, REQ_DST):
-        rq = qfmt.requant(src, dst, mode, osym)
+        if osymm and not dst.signed:
+            continue
+        rq = qfmt.requant(src, dst, mode, osymm)
         for c in src.codes():
-            assert rq.apply(c) == ref_requant(src.decode(c), dst, mode, osym), (src, dst, c)
+            assert rq.apply(c) == ref_requant(src.decode(c), dst, mode, osymm), (src, dst, c)
 
 
-@pytest.mark.parametrize("osym", [False, True])
+@pytest.mark.parametrize("osymm", [False, True])
 @pytest.mark.parametrize("mode", qfmt.ROUND_MODES)
-def test_image_is_the_range_of_apply_over_the_bounds(mode, osym):
+def test_image_is_the_range_of_apply_over_the_bounds(mode, osymm):
     for src, dst in product(REQ_SRC, REQ_DST):
-        for sym in (False, True):
-            if sym and not src.signed:
+        if osymm and not dst.signed:
+            continue
+        for symm in (False, True):
+            if symm and not src.signed:
                 continue
-            b = Bounds.of(src, sym)
-            rq = qfmt.requant(b, dst, mode, osym)
+            b = Bounds.of(src, symm)
+            rq = qfmt.requant(b, dst, mode, osymm)
             assert rq.src_bounds == b
             codes = range(b.lo, b.hi + 1)
             seen = [rq.apply(c) for c in codes]
@@ -384,14 +393,14 @@ def test_image_is_the_range_of_apply_over_the_bounds(mode, osym):
                 dst.frac,
                 dst.signed,
             )
-            clamped = any(rq.apply(c, clamp=False) != rq.apply(c) for c in codes)
-            assert rq.sat_reachable == clamped, (src, dst, sym)
+            saturated = any(rq.apply(c, saturate=False) != rq.apply(c) for c in codes)
+            assert rq.sat_reachable == saturated, (src, dst, symm)
 
 
-def test_requant_from_bounds_judges_the_clamp_over_the_bounds():
+def test_requant_from_bounds_judges_the_saturation_over_the_bounds():
     # Q1.5 x Q1.6, both symmetric, requantized half_up to six fractional bits: the bounds
     # fit Q1.6, the mult format (their container) does not.
-    p = bmult(Bounds.of("Q1.5", sym=True), Bounds.of("Q1.6", sym=True))
+    p = bmult(Bounds.of("Q1.5", symm=True), Bounds.of("Q1.6", symm=True))
     assert (p.lo, p.hi, p.frac) == (-1953, 1953, 11)
     rq = qfmt.requant(p, "Q1.6", "half_up", saturate=False)
     assert rq.image() == Bounds(-61, 61, 6)
@@ -400,9 +409,54 @@ def test_requant_from_bounds_judges_the_clamp_over_the_bounds():
         qfmt.requant(p.fmt(), "Q1.6", "half_up", saturate=False)
 
 
+def test_requant_container_widens_src_without_moving_the_bounds():
+    # a net declared wider than its bounds reach: the container is the source width, the
+    # bounds still decide the saturation
+    b = Bounds(-61, 61, 6)
+    wide = qfmt.parse("Q3.6")
+    rq = qfmt.requant(b, "Q1.6", "half_up", saturate=False, container=wide)
+    assert rq.src == wide
+    assert qfmt.requant(b, "Q1.6", "half_up").src == qfmt.parse("Q1.6")
+    assert rq.src_bounds == b
+    assert not rq.sat_reachable
+    assert rq.image() == Bounds(-61, 61, 6)
+    with pytest.raises(QError):
+        rq.image(Bounds(0, 1, 3))
+    with pytest.raises(QError):
+        qfmt.requant(wide, "Q1.6", "half_up", saturate=False)
+
+
+def test_requant_rejects_a_container_at_another_frac():
+    with pytest.raises(QError):
+        qfmt.requant(Bounds(-61, 61, 6), "Q1.6", container="Q3.5")
+
+
+def test_requant_rejects_a_container_that_misses_a_reachable_code():
+    with pytest.raises(QError):
+        qfmt.requant(Bounds(-61, 61, 6), "Q1.6", container="Q0.6")
+    with pytest.raises(QError):
+        qfmt.requant(Bounds(-61, 61, 6), "Q1.6", container="UQ2.6")
+
+
+def test_requant_rejects_a_container_with_a_format_source():
+    with pytest.raises(QError):
+        qfmt.requant("Q1.6", "Q1.6", container="Q3.6")
+
+
 def test_image_rejects_bounds_at_another_frac():
     with pytest.raises(QError):
         qfmt.requant("Q4.4", "Q2.2").image(Bounds(0, 1, 3))
+
+
+@pytest.mark.parametrize("lo, hi", [(-10000, 10000), (-129, 0), (0, 128)])
+def test_image_rejects_bounds_outside_src(lo, hi):
+    with pytest.raises(QError, match="exceed src"):
+        qfmt.requant("Q4.4", "Q4.2").image(Bounds(lo, hi, 4))
+
+
+def test_image_accepts_the_whole_src_range():
+    rq = qfmt.requant("Q4.4", "Q4.2")
+    assert rq.image(Bounds(-128, 127, 4)) == rq.image()
 
 
 def test_requant_reports_loss():
@@ -413,13 +467,13 @@ def test_requant_reports_loss():
     assert qfmt.requant("Q4.4", "Q4.2", "half_away").sat_reachable
     assert not qfmt.requant("Q4.4", "Q4.2", "to_zero").sat_reachable
     assert qfmt.requant("Q4.4", "Q2.4").sat_reachable
-    assert qfmt.requant("Q4.4", "Q4.4", osym=True).sat_reachable
+    assert qfmt.requant("Q4.4", "Q4.4", osymm=True).sat_reachable
 
 
-def test_requant_reports_which_clamp_end_is_reachable():
+def test_requant_reports_which_saturation_end_is_reachable():
     top = qfmt.requant("Q4.4", "Q4.2", "half_up")
     assert (top.sat_lo, top.sat_hi) == (False, True)
-    low = qfmt.requant("Q4.4", "Q4.4", osym=True)
+    low = qfmt.requant("Q4.4", "Q4.4", osymm=True)
     assert (low.sat_lo, low.sat_hi) == (True, False)
     both = qfmt.requant("Q4.4", "Q2.4")
     assert (both.sat_lo, both.sat_hi) == (True, True)
@@ -438,18 +492,23 @@ def test_requant_rejects_bad_mode():
         qfmt.requant("Q4.4", "Q2.2", "nearest")
 
 
-def test_requant_rejects_osym_with_a_frac_target():
+def test_requant_rejects_osymm_with_a_frac_target():
     with pytest.raises(QError):
-        qfmt.requant(qfmt.Bounds(-4, 3, 0), 0, osym=True)
+        qfmt.requant(qfmt.Bounds(-4, 3, 0), 0, osymm=True)
+
+
+def test_requant_rejects_osymm_with_an_unsigned_target():
+    with pytest.raises(QError):
+        qfmt.requant("UQ8.8", "UQ4.4", osymm=True)
 
 
 def test_requant_reports_the_shape_f_qcvt_emits():
-    """f_qcvt reads shift, the clamp bounds and src_bounds; the rounding itself it builds
+    """f_qcvt reads shift, the saturation bounds and src_bounds; the rounding itself it builds
     from mode and shift, so there is no constant here for it to pick up."""
     rq = qfmt.requant("Q4.12", "Q2.6", "half_even")
     assert (rq.shift, rq.mode) == (6, "half_even")
     assert (rq.min_code, rq.max_code) == (-128, 127)
-    rq = qfmt.requant("Q4.4", "Q4.4", osym=True)
+    rq = qfmt.requant("Q4.4", "Q4.4", osymm=True)
     assert (rq.min_code, rq.max_code) == (-127, 127)
     rq = qfmt.requant("Q3.5", "Q3.9")
     assert rq.shift == -4
@@ -459,9 +518,8 @@ def test_requant_reports_the_shape_f_qcvt_emits():
     assert qfmt.requant("Q4.12", "Q2.6", "half_away").src_bounds.lo < 0
 
 
-# -------------------------------------------------------- reference design check
-def test_ffe_slice_widths_from_ff_txt():
-    """The partial-sum widths derived in ff.txt section 3, from formats alone."""
+def test_fir_partial_sum_widths():
+    """Partial-sum widths of a 60-tap FIR in four groups, from formats alone."""
     sample = qfmt.parse("Q1.6")
     coef_w = [4, 6, 7, 8, 9, 10, 9, 9, 8, 8, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5] + [5] * 40
     groups = [
@@ -472,7 +530,7 @@ def test_ffe_slice_widths_from_ff_txt():
     ]
     coefs = [Fmt(True, w, 5) for w in coef_w]
     assert [c.to_q() for c in coefs[:6]] == ["Q-1.5", "Q1.5", "Q2.5", "Q3.5", "Q4.5", "Q5.5"]
-    pp = [qfmt.requant(qfmt.mult(c, sample, sym=True), Fmt(True, c.width + 4, 9)) for c in coefs]
+    pp = [qfmt.requant(qfmt.mult(c, sample, symm=True), Fmt(True, c.width + 4, 9)) for c in coefs]
     assert all(r.shift == 2 for r in pp)
     ps = [qfmt.add([pp[i].dst for i in g]) for g in groups]
     assert [p.width for p in ps] == [15, 15, 14, 14]
@@ -480,7 +538,6 @@ def test_ffe_slice_widths_from_ff_txt():
     assert (out.width, out.to_q()) == (17, "Q8.9")
 
 
-# ---------------------------------------------------------- requant to a frac
 BOUNDS = [
     Bounds(lo, hi, frac, signed)
     for signed in (True, False)
@@ -491,21 +548,22 @@ BOUNDS = [
 
 
 @pytest.mark.parametrize("mode", qfmt.ROUND_MODES)
-def test_frac_target_is_the_unclamped_image_over_every_code(mode):
+def test_frac_target_is_the_unsaturated_image_over_every_code(mode):
     for b in BOUNDS:
         for frac in range(-2, 5):
             rq = qfmt.requant(b, frac, mode)
-            # a 16-bit target cannot clamp any of these codes, so apply() is the bare rounding
+            # a 16-bit target cannot saturate any of these codes, so apply() is the bare
+            # rounding
             wide = qfmt.requant(b, Fmt(b.signed, 16, frac), mode)
-            imgs = [wide.apply(c, clamp=False) for c in range(b.lo, b.hi + 1)]
+            imgs = [wide.apply(c, saturate=False) for c in range(b.lo, b.hi + 1)]
             got = rq.image()
             assert (got.lo, got.hi, got.frac, got.signed) == (min(imgs), max(imgs), frac, b.signed)
             assert rq.dst == got.fmt()
             assert not rq.sat_reachable
 
 
-def test_frac_target_names_the_product_format_dotp_declares():
-    p = bmult(Bounds.of("Q1.5", sym=True), Bounds.of("Q1.6", sym=True))
+def test_frac_target_names_the_tap_product_format():
+    p = bmult(Bounds.of("Q1.5", symm=True), Bounds.of("Q1.6", symm=True))
     assert qfmt.requant(p, 6, "half_up").image() == Bounds(-61, 61, 6)
     assert qfmt.requant(p, 6, "trunc").image() == Bounds(-62, 61, 6)
     assert qfmt.requant(p, 6, "half_up").dst == qfmt.parse("Q1.6")
@@ -520,3 +578,33 @@ def test_frac_target_needs_a_bounds_source():
 def test_frac_target_rejects_a_bad_mode():
     with pytest.raises(QError):
         qfmt.requant(Bounds(0, 1, 0), 0, "nearest")
+
+
+def _shift_ref(code: int, shift: int, mode: str) -> int:
+    """The rounded code, from the rule each mode names rather than from a constant."""
+    q = Fraction(code, 1 << shift)
+    if mode == "trunc":
+        return floor(q)
+    if mode == "half_up":
+        return floor(q + Fraction(1, 2))
+    if mode == "half_even":
+        return round(q)
+    if mode == "half_away":
+        c = floor(abs(q) + Fraction(1, 2))
+        return -c if q < 0 else c
+    return int(q)  # to_zero; Fraction.__trunc__ rounds toward zero
+
+
+@pytest.mark.parametrize("shift", [-3, 0, 1, 2, 3, 5])
+@pytest.mark.parametrize("mode", qfmt.ROUND_MODES)
+def test_round_consts_are_the_carry_the_shift_needs(shift, mode):
+    """The documented contract: add the constant, shift, and half_even alone still needs the
+    tie correction. Every code across two shifts' worth of remainders is walked."""
+    add_c, add_c_neg = qfmt.round_consts(shift, mode)
+    if shift <= 0:
+        assert (add_c, add_c_neg) == (0, 0)
+        return
+    for code in range(-4 << shift, 4 << shift):
+        got = (code + (add_c_neg if code < 0 else add_c)) >> shift
+        want = _shift_ref(code, shift, "half_up" if mode == "half_even" else mode)
+        assert got == want, (code, shift, mode)

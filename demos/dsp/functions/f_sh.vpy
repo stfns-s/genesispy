@@ -2,7 +2,7 @@
     //  out = in * (4 + frac) / 4 * 2**sh, floored, where sh < 0 shifts right.
     //  A left shift saturates; a right shift cannot leave the range. The most negative
     //  output is always folded to MIN+1, so the result is symmetric whatever sh was.
-//; from vexpr import lit, sext
+//; from genesispy.lib.verilog import lit, sext
 //; h         = self.include_params
 //; func_name = h.get('func_name', 'f_sh')
 //; iwidth    = h.get('iwidth', 8)

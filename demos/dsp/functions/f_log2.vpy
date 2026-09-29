@@ -1,12 +1,12 @@
     // integer log2 - returns { sign, floor(log2(abs x)) + 1 }, one more than the exponent
     //  for a power of two. With lfrac set the value carries that many fractional bits,
     //  floor(2**lfrac * log2(2*m)), m being the magnitude's top lfrac+1 significant bits.
-//; from vexpr import lit
+//; from genesispy.lib.verilog import lit
 //; import math
 //; h         = self.include_params
 //; func_name = h.get('func_name', 'f_log2')
 //; iwidth    = h.get('iwidth', 8)
-//; isym      = h.get('isym', 0)
+//; isymm     = h.get('isymm', 0)
 //; approx    = h.get('approx', 1)
 //; lfrac     = h.get('lfrac', 0)
 //; lifetime  = h.get('lifetime', 'static')
@@ -18,19 +18,19 @@
 //; lscale    = 1 << lfrac
 //; sym_func  = func_name + '_sym'
 //; neg_func  = func_name + '_neg'
-//; if not isym:
+//; if not isymm:
 //;     self.include_params = {'func_name': sym_func, 'iwidth': iwidth, 'lifetime': lifetime}
-//;     include('f_sym.vpy')
+//;     include('f_symm.vpy')
 //; # endif
-//; self.include_params = {'func_name': neg_func, 'iwidth': iwidth, 'approx': approx, 'isym': 1, 'lifetime': lifetime}
+//; self.include_params = {'func_name': neg_func, 'iwidth': iwidth, 'approx': approx, 'isymm': 1, 'lifetime': lifetime}
 //; include('f_negate.vpy')
-    // `func_name`(x[`in_msb`:0]) -> { sign, log2(abs x)[`log_msb-1`:0] } isym:`isym` lfrac:`lfrac` approx:`approx`
+    // `func_name`(x[`in_msb`:0]) -> { sign, log2(abs x)[`log_msb-1`:0] } isymm:`isymm` lfrac:`lfrac` approx:`approx`
     function `lifetime` [`log_msb`:0] `func_name`;
         input signed [`in_msb`:0] x;
         reg   signed [`in_msb`:0] ix;
         reg                       sign;
         begin
-//; if isym:
+//; if isymm:
             ix   = x;
 //; else:
             ix   = `sym_func`(x);

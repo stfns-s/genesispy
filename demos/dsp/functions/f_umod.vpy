@@ -1,5 +1,5 @@
     // unsigned modulo - a % b, and 0 when b is 0
-//; from vexpr import lit
+//; from genesispy.lib.verilog import lit
 //; h         = self.include_params
 //; func_name = h.get('func_name', 'f_umod')
 //; iwidth    = h.get('iwidth', 8)

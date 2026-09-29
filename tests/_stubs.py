@@ -76,6 +76,9 @@ class StubConfigHandler:
     def report_unused(self) -> list:
         return []
 
+    def module_default(self, names: Any, name: str) -> tuple:
+        return (False, None)
+
 
 class StubManager:
     """Bare attribute container mirroring the public Manager surface."""
@@ -127,10 +130,14 @@ class StubManager:
         return None
 
 
-def args_namespace(parameter=None, unq_style: Optional[str] = None) -> types.SimpleNamespace:
+def args_namespace(
+    parameter=None, unq_style: Optional[str] = None, params_global: bool = False
+) -> types.SimpleNamespace:
     """Return a ``SimpleNamespace(args=SimpleNamespace(...))`` shim suitable
     as the ``manager`` argument to :class:`genesispy.config_handler.ConfigHandler`."""
-    args = types.SimpleNamespace(parameter=list(parameter or []), unq_style=unq_style)
+    args = types.SimpleNamespace(
+        parameter=list(parameter or []), unq_style=unq_style, params_global=params_global
+    )
     return types.SimpleNamespace(args=args)
 
 

@@ -1,10 +1,10 @@
     // round - optional produce symmetric output
-//; from vexpr import lit
+//; from genesispy.lib.verilog import lit
 //; h         = self.include_params
 //; func_name = h.get('func_name', 'f_round')
 //; iwidth    = h.get('iwidth', 8)
 //; owidth    = h.get('owidth', 6)
-//; osym      = h.get('osym', 0)
+//; osymm     = h.get('osymm', 0)
 //; lifetime  = h.get('lifetime', 'static')
 //; ow        = owidth if owidth < iwidth else iwidth - 1
 //; if ow < 1:
@@ -37,7 +37,7 @@
                 2'b11:  `func_name` = num_r_p1[ROUND_OW:1];
             endcase
 
-//; if osym:
+//; if osymm:
             if ( `func_name` == `lit(rminn, ow)` ) `func_name` = `lit(rminn+1, ow)`;
 //; # endif
         end

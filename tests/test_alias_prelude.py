@@ -16,6 +16,7 @@ import pytest
 
 from genesispy.template.aliases import (
     EXPECTED_ALIAS_KEYS as EXPECTED_KEYS,
+    MODULE_GLOBALS_SOURCE,
     SIMPLE_ALIASES,
     alias_dict,
     alias_prelude_source,
@@ -69,6 +70,15 @@ def test_alias_dict_include_resolves_to_user_config_include():
     assert d["include"] is user_config._include
 
 
+def test_alias_dict_verilog_is_the_module_globals_one():
+    """An include()'d snippet gets the module the generated module's globals import."""
+    from genesispy.lib import verilog
+
+    ns: dict = {}
+    exec(MODULE_GLOBALS_SOURCE, ns)
+    assert alias_dict(_fake_self())["verilog"] is verilog is ns["verilog"]
+
+
 def test_alias_prelude_source_parses_as_python():
     src = "def execute(self):\n" + alias_prelude_source(indent="    ")
     src += "    pass\n"
@@ -82,9 +92,16 @@ def test_alias_prelude_source_uses_caller_indent():
             assert line.startswith("        "), line
 
 
+def _module_global_names() -> set[str]:
+    ns: dict = {}
+    exec(MODULE_GLOBALS_SOURCE, ns)
+    return set(ns) - {"__builtins__"}
+
+
 def test_alias_prelude_source_binds_all_expected_names():
+    """Every expected name is an execute() local or a generated-module global."""
     src = alias_prelude_source(indent="")
-    bound = set()
+    bound = _module_global_names()
     for line in src.splitlines():
         m = re.match(r"\s*(?:def\s+(\w+)\s*\(|(\w+)\s*=)", line)
         if m:
@@ -113,7 +130,8 @@ def test_emitter_header_binds_every_table_alias():
             assert "def synonym(*_args):" in src
             continue
         assert (name, f"self.{attr}") in actual, (name, attr)
-    bound = {lhs for lhs, _ in actual}
+    bound = {lhs for lhs, _ in actual} | _module_global_names()
+    assert "from genesispy.lib import verilog" in src
     assert set(EXPECTED_KEYS) - {"synonym", "include", "pyinclude", "pinclude"} <= bound
 
 

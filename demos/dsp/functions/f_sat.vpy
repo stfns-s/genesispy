@@ -1,10 +1,10 @@
     // reduce width and saturate if needed
-//; from vexpr import lit
+//; from genesispy.lib.verilog import lit
 //; h         = self.include_params
 //; func_name = h.get('func_name', 'f_sat')
 //; iwidth    = h.get('iwidth', 8)
 //; owidth    = h.get('owidth', 6)
-//; osym      = h.get('osym', 0)
+//; osymm     = h.get('osymm', 0)
 //; lifetime  = h.get('lifetime', 'static')
 //; ow        = owidth if iwidth >= owidth else iwidth - 1
 //; if iwidth == ow:
@@ -22,12 +22,12 @@
         begin
             oflow = x[`iwidth-1`] == 1'b0 && x[`iwidth-2`:`ow-1`] != {`iwidth-ow` {1'b0}};
             uflow = x[`iwidth-1`] == 1'b1 && x[`iwidth-2`:`ow-1`] != {`iwidth-ow` {1'b1}};
-//; if osym:
+//; if osymm:
             uflow = uflow | x[`iwidth-1`] & ( x[`ow-1`:0] == `lit(ominn, ow)` );
 //; # endif
 
             case ( { oflow, uflow } ) // synthesis parallel_case full_case
-//; if osym:
+//; if osymm:
                 2'b01:   `func_name` = `lit(ominn+1, ow)`;
 //; else:
                 2'b01:   `func_name` = `lit(ominn, ow)`;

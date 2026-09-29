@@ -68,10 +68,12 @@ inheritance recursion (`ConfigHandler.pm:683-708`).
 
 ## 5. Command-line overrides: bare names, unused overrides warn
 
-**Where:** `config_handler.py:_parse_cmdln_param`, `report_unused`
+**Where:** `config_handler.py:_init_cmdln_from_manager`, `report_unused`
 
-- A bare `-p W=9` is accepted and applies to every instance whose body reads `W`; Genesis2
-  requires `path.name` (`ConfigHandler.pm:364`). The dotted form works in both engines.
+- With `--params-global`, a bare `-p W=9` is accepted and applies to every instance whose body
+  reads `W`. Without the flag a bare `-p` is an error, as in Genesis2, which always requires
+  `path.name` (`ConfigHandler.pm:363-366`). gvpy accepts a bare `-p` without the flag. The
+  dotted form works in both engines.
 - A command-line or `.cfg` override that no instance reads is reported after elaboration as
   `warning: override NAME was never used` and the run exits 0; Genesis2's `Finalize` dies
   (`ConfigHandler.pm:436-442`). JSON parameters are not checked in either engine.

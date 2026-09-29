@@ -1,11 +1,11 @@
     // shift right - with more accuracy than power of 2
     //  out = in/2^sh*( 1 + frac*0.25 ), truncated once, saturating
-//; from vexpr import lit, sext
+//; from genesispy.lib.verilog import lit, sext
 //; h         = self.include_params
 //; func_name = h.get('func_name', 'f_shright')
 //; iwidth    = h.get('iwidth', 8)
 //; cwidth    = h.get('cwidth', 4)
-//; osym      = h.get('osym', 0)
+//; osymm     = h.get('osymm', 0)
 //; lifetime  = h.get('lifetime', 'static')
 //; if cwidth < 1:
 //;     error(f"{func_name}: cwidth ({cwidth}) must be >= 1")
@@ -39,13 +39,13 @@
             // the gain reaches 1.75 at sh=0, so the result can leave the output range
             ovf = ~in[`iwidth-1`] &  (|scaled[`isw-1`:`iwidth-1`]);
             udf =  in[`iwidth-1`] & ~(&scaled[`isw-1`:`iwidth-1`]);
-//; if osym:
+//; if osymm:
             udf =  udf | in[`iwidth-1`] & ( scaled[`iwidth-1`:0] == `lit(shr_minn, iwidth)` );
 //; # endif
 
             case ( {ovf, udf} ) // synthesis parallel_case full_case
                 2'b10:   `func_name` = `lit(shr_max, iwidth)`;
-//; if osym:
+//; if osymm:
                 2'b01:   `func_name` = `lit(shr_minn+1, iwidth)`;
 //; else:
                 2'b01:   `func_name` = `lit(shr_minn, iwidth)`;

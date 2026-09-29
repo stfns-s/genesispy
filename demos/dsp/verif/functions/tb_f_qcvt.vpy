@@ -1,10 +1,10 @@
-//; from vexpr import decl, lit
+//; from genesispy.lib.verilog import decl, lit
 //; from fractions import Fraction
 //; import qfmt
 //; Q_IN       = parameter('Q_IN',       'Q4.4')    # input Q format
 //; Q_OUT      = parameter('Q_OUT',      'Q2.2')    # output Q format
 //; ROUND_MODE = parameter('ROUND_MODE', 'trunc')   # trunc, half_up or half_even
-//; OSYM       = parameter('OSYM',       0)         # output uses a symmetric range
+//; OSYMM      = parameter('OSYMM',      0)         # output uses a symmetric range
 //; # only the notation comes from the library; the reference arithmetic below is the
 //; # testbench's own, so the check stays independent of what the function derives
 //; def parse_q(s):
@@ -18,8 +18,8 @@
 //; S_IN,  IW, N_IN  = F_IN.signed,  F_IN.width,  F_IN.frac
 //; S_OUT, OW, N_OUT = F_OUT.signed, F_OUT.width, F_OUT.frac
 //; OMAX  = (1 << (OW-1)) - 1 if S_OUT else (1 << OW) - 1
-//; OMIN  = -((1 << (OW-1)) - 1) if (S_OUT and OSYM) else (-(1 << (OW-1)) if S_OUT else 0)
-//; CFG   = f"{mname} Q_IN={Q_IN} Q_OUT={Q_OUT} ROUND_MODE={ROUND_MODE} OSYM={OSYM}"
+//; OMIN  = -((1 << (OW-1)) - 1) if (S_OUT and OSYMM) else (-(1 << (OW-1)) if S_OUT else 0)
+//; CFG   = f"{mname} Q_IN={Q_IN} Q_OUT={Q_OUT} ROUND_MODE={ROUND_MODE} OSYMM={OSYMM}"
 //; # The expected values, computed here at generation. f_qcvt shifts, with a rounding
 //; # constant added first and a tie mask to correct half_even; this holds the exact value
 //; # as a Fraction and rounds it, so the two agree only if both are right. A Fraction power
@@ -38,7 +38,7 @@
 // unit test for f_qcvt
 module `mname`;
 
-//; self.include_params = {'func_name': 'dut', 'q_in': Q_IN, 'q_out': Q_OUT, 'round_mode': ROUND_MODE, 'osym': OSYM}
+//; self.include_params = {'func_name': 'dut', 'q_in': Q_IN, 'q_out': Q_OUT, 'round_mode': ROUND_MODE, 'osymm': OSYMM}
 //; include('f_qcvt.vpy')
 //; include('tb_util.vpy')
 

@@ -4,7 +4,7 @@
 //; AW         = parameter('AW',         IW+(1<<MW)) # accumulator width
 //; LW         = parameter('LW',         OW>>1)      # leak feedback width
 //; NEG_APPROX = parameter('NEG_APPROX', 0)          # approximate negations (i.e. ~x instead of ~x+1)
-//; ISYM       = parameter('ISYM',       0)          # input is symmetric 2's complement
+//; ISYMM      = parameter('ISYMM',      0)          # input is symmetric 2's complement
 //; DEBUG      = parameter('DEBUG',      0)          # reserved; no debug logic at present
 //; if AW < OW:
 //;     error(f"{mname}: AW ({AW}) must be >= OW ({OW})")
@@ -48,15 +48,15 @@ module `mname` #(
         input  wire                 reset
     );
 
-//; if not ISYM:
+//; if not ISYMM:
 //;     self.include_params = {'func_name': 'f_i_sym', 'iwidth': IW, 'lifetime': 'automatic'}
-//;     include('f_sym.vpy')
+//;     include('f_symm.vpy')
 //; # endif
 
-//; self.include_params = dict(negp, func_name='f_i_negate', iwidth=IW, isym=1)
+//; self.include_params = dict(negp, func_name='f_i_negate', iwidth=IW, isymm=1)
 //; include('f_negate.vpy')
 
-//; if ISYM:
+//; if ISYMM:
     wire    signed [IW-1:0] insym = in;
 //; else:
     wire    signed [IW-1:0] insym = f_i_sym(in);
@@ -70,7 +70,7 @@ module `mname` #(
 
 // the underflow clamp puts the most negative value in accum's top LW bits, so the leak
 // feedback cannot promise a symmetric input the way the update path can
-//; self.include_params = dict(negp, func_name='f_l_negate', iwidth=LW, isym=0)
+//; self.include_params = dict(negp, func_name='f_l_negate', iwidth=LW, isymm=0)
 //; include('f_negate.vpy')
 
     wire    signed [AW-1:0] lkfb    = lk_en ? { f_l_negate(accum[AW-1:AW-LW]), { AW-LW {1'b0} } } : { AW {1'b0} };

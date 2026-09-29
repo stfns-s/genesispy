@@ -272,7 +272,8 @@ def test_param_footer_end_to_end(tmp_path: Path) -> None:
     """
     _run(
         tmp_path, PF / "pf_top.vpy", "pf_top",
-        ("--input", str(PF / "pf_leaf.vpy"), "-p", "DEPTH=32", "--param-footer"),
+        ("--input", str(PF / "pf_leaf.vpy"), "-p", "DEPTH=32", "--params-global",
+         "--param-footer"),
     )
     text = _pf_leaf_text()
 
@@ -289,6 +290,6 @@ def test_param_footer_absent_by_default(tmp_path: Path) -> None:
     """Without the flag the generated Verilog is unchanged."""
     _run(
         tmp_path, PF / "pf_top.vpy", "pf_top",
-        ("--input", str(PF / "pf_leaf.vpy"), "-p", "DEPTH=32"),
+        ("--input", str(PF / "pf_leaf.vpy"), "-p", "DEPTH=32", "--params-global"),
     )
     assert "resolved parameter provenance" not in _pf_leaf_text()

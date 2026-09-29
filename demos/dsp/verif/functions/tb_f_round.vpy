@@ -1,17 +1,17 @@
-//; IW    = parameter('IW',   8)   # input width
-//; OW    = parameter('OW',   6)   # requested output width
-//; OSYM  = parameter('OSYM', 0)   # output range excludes the most negative value
+//; IW    = parameter('IW',    8)   # input width
+//; OW    = parameter('OW',    6)   # requested output width
+//; OSYMM = parameter('OSYMM', 0)   # output range excludes the most negative value
 // unit test for f_round
 module `mname`;
 
-//; self.include_params = {'func_name': 'dut', 'iwidth': IW, 'owidth': OW, 'osym': OSYM}
+//; self.include_params = {'func_name': 'dut', 'iwidth': IW, 'owidth': OW, 'osymm': OSYMM}
 //; include('f_round.vpy')
 //; include('tb_util.vpy')
 //; # f_round clamps the requested width, so take the width it emitted rather than
 //; # re-deriving the clamp here and risking a rule that drifts from the function's
 //; ow    = getattr(self, 'dut')['owidth']
 //; OWD   = "" if ow == OW else f" (ow={ow})"
-//; CFG   = f"{mname} IW={IW} OW={OW}{OWD} OSYM={OSYM}"
+//; CFG   = f"{mname} IW={IW} OW={OW}{OWD} OSYMM={OSYMM}"
 //; lsb_w = IW - ow
 //; HALF  = 1 << (lsb_w - 1)
 //; DIV   = 1 << lsb_w
@@ -29,7 +29,7 @@ module `mname`;
             xs  = longint'(x);
             y   = dut(x);
             exp = clamp(fdiv(xs + `HALF`, `DIV`), `RMIN`, `RMAX`);
-//; if OSYM:
+//; if OSYMM:
             exp = clamp(exp, `RMIN+1`, `RMAX`);
 //; # endif
             tb_check(64'(y), exp, $sformatf("x=%0d", xs));

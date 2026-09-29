@@ -26,8 +26,8 @@ The rest are the tools the make targets run:
 
 ```text
 functions/          arithmetic functions, pulled in with include()
-lib/                qfmt.py and vexpr.py, imported by the templates; on --py-path
-  tests/            pytest suite for both
+lib/                qfmt.py, imported by the templates; on --py-path
+  tests/            pytest suite for it
 modules/            synthesizable modules, one top each
 verif/
   functions/        tb_f_<name>.vpy, one testbench per function
@@ -66,13 +66,11 @@ is deterministic, so the trees hold the same Verilog either way; what the separa
 no two runs ever write the same file, which is what lets `make -j test test-extra` run both
 simulators over one configuration at once.
 
-`lib/` holds the utility functions the templates import at generation time:
+`lib/qfmt.py` defines fixed-point formats and derives the widths they imply; the templates import
+it at generation time. The Verilog text helpers they use with it (literals, sign extension, zero
+padding, declarations, expression trees) come from genesispy itself, as `genesispy.lib.verilog`.
 
-- `qfmt.py`: defines fixed-point formats and derives the widths they imply.
-- `vexpr.py`: common Verilog expression generation utilities:
-  literals, sign extension, zero padding, declarations, and expression trees.
-
-[lib/README.md](lib/README.md) defines the Q format and documents both modules call by call.
+[lib/README.md](lib/README.md) defines the Q format and documents `qfmt` call by call.
 
 ## Function library
 
@@ -83,20 +81,20 @@ strings.
 
 | File              | Does                                                    | Also accepts              |
 |-------------------|---------------------------------------------------------|---------------------------|
-| `f_abs.vpy`      | absolute value, saturating at the most negative input   | `approx`, `isym`          |
-| `f_negate.vpy`   | two's complement negate                                 | `approx`, `isym`          |
-| `f_sym.vpy`      | map the most negative value to one above it             | --                        |
-| `f_sat.vpy`      | narrow the width, saturating on overflow                | `owidth`, `osym`          |
-| `f_trunc.vpy`    | narrow the width by dropping low bits                   | `owidth`, `osym`          |
-| `f_round.vpy`    | narrow the width, rounding half up, clamped on overflow | `owidth`, `osym`          |
+| `f_abs.vpy`      | absolute value, saturating at the most negative input   | `approx`, `isymm`         |
+| `f_negate.vpy`   | two's complement negate                                 | `approx`, `isymm`         |
+| `f_symm.vpy`     | map the most negative value to one above it             | --                        |
+| `f_sat.vpy`      | narrow the width, saturating on overflow                | `owidth`, `osymm`         |
+| `f_trunc.vpy`    | narrow the width by dropping low bits                   | `owidth`, `osymm`         |
+| `f_round.vpy`    | narrow the width, rounding half up, clamped on overflow | `owidth`, `osymm`         |
 | `f_sx.vpy`       | sign extend to a wider word; errors if not wider        | `owidth`                  |
 | `f_sh.vpy`       | shift either way by a signed count, saturating          | `cwidth`                  |
-| `f_shleft.vpy`   | shift left, saturating                                  | `cwidth`, `osym`          |
-| `f_shright.vpy`  | shift right, saturating                                 | `cwidth`, `osym`          |
+| `f_shleft.vpy`   | shift left, saturating                                  | `cwidth`, `osymm`         |
+| `f_shright.vpy`  | shift right, saturating                                 | `cwidth`, `osymm`         |
 | `f_s2sm.vpy`     | two's complement to sign magnitude                      | `owidth`, `sm_plus`       |
 | `f_sm2s.vpy`     | sign magnitude to two's complement                      | `owidth`, `sm_plus`       |
 | `f_umod.vpy`     | unsigned remainder, by shift and subtract               | --                        |
-| `f_log2.vpy`     | integer log2, as `{ sign, log2(abs x) }`                | `isym`, `approx`, `lfrac` |
+| `f_log2.vpy`     | integer log2, as `{ sign, log2(abs x) }`                | `isymm`, `approx`, `lfrac` |
 | `f_logmult.vpy`  | multiply by adding logs                                 | see below                 |
 | `f_slogmult.vpy` | multiply by shifting, `a * b =~ a << log2(b)`           | see below                 |
 | `f_qcvt.vpy`     | convert between Q formats, rounding and saturating      | see below                 |
@@ -108,7 +106,7 @@ strings.
 | `cwidth`            | `4`           | shift count width in bits                                       |
 | `lifetime`          | `static`      | SystemVerilog function lifetime                                 |
 | `approx`            | `0`/`1`       | negate as `~x` instead of `~x + 1`: one adder for one LSB       |
-| `isym` / `osym`     | `0`           | input / output already symmetric, so no clamp is needed         |
+| `isymm` / `osymm`   | `0`           | input / output already symmetric, so no clamp is needed         |
 | `sm_plus`           | `1`           | in sign magnitude, a set MSB means positive                     |
 | `awidth`/`bwidth`   | `8`           | multiplier operand widths, in place of `iwidth`                 |
 | `lfrac`             | `0`           | fractional bits in the log returned by `f_log2`                 |
@@ -146,7 +144,7 @@ same 100% with the opposite sign.
 | Option              | Default | Meaning                                                                     |
 |---------------------|---------|-----------------------------------------------------------------------------|
 | `awidth` / `bwidth` | `8`     | operand widths                                                              |
-| `isym`              | `0`     | operands already use a symmetric range                                      |
+| `isymm`             | `0`     | operands already use a symmetric range                                      |
 | `iapprox`           | `1`     | approximate the negate that takes the input magnitude                       |
 | `oapprox`           | `0`     | approximate the negate that signs the result                                |
 | `zdet`              | `0`/`1` | force zero when an operand is zero (`1` in `f_slogmult`)                    |
@@ -171,7 +169,7 @@ convention counts it separately and would call the same 16-bit integer `Q15.0` r
 `Q16.0`. A leading `U` makes the format unsigned. `m` may be zero or negative: the sign bit is part
 of the width, not of `m`, so `Q-1.5` is a four-bit signed word holding multiples of 1/32 below 1/4
 in magnitude. The function shifts to align the binary points, rounds by `round_mode`, and saturates
-into the output range; `osym` clamps the low end one above the most negative value. `trunc` rounds
+into the output range; `osymm` clamps the low end one above the most negative value. `trunc` rounds
 toward minus infinity, which is what an arithmetic right shift does; `half_up` rounds a tie up,
 `half_away` a tie away from zero, `half_even` a tie to the even neighbour, and `to_zero` truncates
 toward zero.
@@ -192,9 +190,10 @@ outside `q_in` or with `src_lo` above `src_hi`, and a reachable clamp under `sat
 
 `lib/qfmt.py` is where a template derives a width instead of writing one down: it computes
 fixed-point formats and the widths they imply, from exact ranges rather than from a bound on the
-widths. `lib/vexpr.py` is the other half, writing the Verilog that denotes a generation-time value
-and computing no width of its own. `f_qcvt` gets its shift, rounding constant and clamp bounds from
-`qfmt.requant`; its testbench keeps its own arithmetic, so the two stay independent.
+widths. `genesispy.lib.verilog` is the other half, writing the Verilog that denotes a
+generation-time value and computing no width of its own. `f_qcvt` gets its shift, rounding
+constant and clamp bounds from `qfmt.requant`; its testbench keeps its own arithmetic, so the two
+stay independent.
 
 ## Modules
 
@@ -227,7 +226,7 @@ overflow. `ld` loads `ld_val`, `neg` negates the input, `en` gates updates.
 | `AW`         | `IW+(1<<MW)` | accumulator width                                   |
 | `LW`         | `OW>>1`      | how many top bits the leak feedback is taken from   |
 | `NEG_APPROX` | 0            | use the cheap negate (see `approx` above)           |
-| `ISYM`       | 0            | input is already symmetric, skip the `f_sym` clamp  |
+| `ISYMM`      | 0            | input is already symmetric, skip the `f_symm` clamp |
 | `DEBUG`      | 0            | reserved; no debug logic at present, and nothing is emitted |
 
 `AW` must be greater than or equal to `OW`, `IW` and `LW`; `OW` must be at least 2; `lk_mu` must exceed
@@ -300,18 +299,20 @@ wide history with any look-ahead reaches millions of nets quickly.
 Generation-time options go in `EXTRA_FLAGS_<top>`:
 
 ```sh
-make intg EXTRA_FLAGS_intg='-p OW=12 -p IW=6 -p ISYM=1'
+make intg EXTRA_FLAGS_intg='-p OW=12 -p IW=6 -p ISYMM=1'
 ```
 
-Manually with everything in one directory, the same options are `-p` arguments:
+Manually with everything in one directory, the same options are `-p` arguments. They name no
+instance path, so they need `--params-global`:
 
 ```sh
 genesispy -sv --input modules/intg.vpy --top intg \
-          --inc-path functions --py-path lib --out-dir build/intg -p OW=12 -p IW=6
+          --inc-path functions --py-path lib --out-dir build/intg \
+          --params-global -p OW=12 -p IW=6
 ```
 
-`--py-path lib` is required: the templates import `vexpr` and `qfmt` from there, and without it
-generation stops at `ModuleNotFoundError: No module named 'vexpr'`. Drop `-sv` and the same
+`--py-path lib` is required: the templates import `qfmt` from there, and without it generation
+stops at `ModuleNotFoundError: No module named 'qfmt'`. Drop `-sv` and the same
 Verilog lands in `intg.v`.
 
 This writes `build/intg/intg.sv`, plus `intg.vlist` (file list), `intg.vlist.verif`,

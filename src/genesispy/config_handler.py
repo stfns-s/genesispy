@@ -1,8 +1,10 @@
 """Genesis2 ConfigHandler ported from Perl.
 
-Combines three configuration sources with a priority hierarchy:
+Combines four configuration sources with a priority hierarchy:
 
-* ``.cfg`` Python script configuration (lowest, ``EXTERNAL_CONFIG``)
+* ``--defaults`` per-module defaults (lowest, ``MODULE_DEFAULT``), consulted
+  by ``UniqueModule.parameter`` through :meth:`ConfigHandler.module_default`
+* ``.cfg`` Python script configuration (``EXTERNAL_CONFIG``)
 * JSON parameter file (``EXTERNAL_PARAM_FILE``)
 * command-line ``-parameter NAME=VAL`` overrides (highest)
 
@@ -42,6 +44,7 @@ class Priority(IntEnum):
     """
 
     DECLARATION = 5
+    MODULE_DEFAULT = 7      # values from --defaults, keyed by module name
     EXTERNAL_CONFIG = 10    # values from read_cfg / configure()
     EXTERNAL_PARAM_FILE = 20  # values from read_json
     CMD_LINE = 30           # values from -parameter NAME=VAL
@@ -57,6 +60,7 @@ class Priority(IntEnum):
 PRIORITY_LABELS: dict[int, str] = {
     0:                                 "declaration default",
     int(Priority.DECLARATION):         "declaration default",
+    int(Priority.MODULE_DEFAULT):      "module defaults (--defaults)",
     int(Priority.EXTERNAL_CONFIG):     "config script (--cfg / configure)",
     int(Priority.EXTERNAL_PARAM_FILE): "config file (--json-cfg)",
     int(Priority.CMD_LINE):            "command line (--parameter)",
@@ -109,6 +113,14 @@ def _coerce_with_type(value: Any, type_hint: Optional[str]) -> Any:
     if t == "str":
         return str(value)
     return _coerce_scalar(value)
+
+
+def _default_entries(tree: dict, trail: tuple[str, ...]) -> Iterable[tuple[tuple[str, ...], dict]]:
+    """Every entry under ``tree`` with its key trail, parents before children."""
+    for key, value in tree.items():
+        if isinstance(value, dict):
+            yield (*trail, key), value
+            yield from _default_entries(value, (*trail, key))
 
 
 def _parse_cmdln_param(
@@ -459,8 +471,17 @@ class ConfigHandler:
                 f"Invalid unq_style {self.unq_style!r}; expected 'numeric' or 'param'"
             )
 
+        # --defaults: entry name -> {"params", "where", "file"}; the entries
+        # and (entry, key) pairs a lookup has read, for report_unused().
+        self._defaults: dict[str, dict] = {}
+        self._defaults_read: set[str] = set()
+        self._defaults_taken: set[tuple[str, str]] = set()
+
         # Parse ``manager.args.parameter`` if present (list of NAME=VALUE).
         self._init_cmdln_from_manager()
+        for name in getattr(manager.args, "defaults", None) or []:
+            resolve = getattr(manager, "_resolve_cfg_path", None)
+            self.read_defaults(resolve(name) if resolve else name, shown=name)
 
     # ------------------------------------------------------------------ #
     # Cmd-line parameter ingestion                                       #
@@ -469,8 +490,14 @@ class ConfigHandler:
         params: Optional[Iterable[str]] = self.manager.args.parameter
         if not params:
             return
+        bare_ok = getattr(self.manager.args, "params_global", False)
         for spec in params:
             path, name, val = _parse_cmdln_param(spec)
+            if path is None and not bare_ok:
+                raise reporting.ParameterError(
+                    f"-p {spec!r} has no instance path: write PATH.NAME=VALUE "
+                    "or pass --params-global"
+                )
             entry = {
                 "value": val,
                 "priority": int(Priority.CMD_LINE),
@@ -492,6 +519,68 @@ class ConfigHandler:
                         f"of {dotted!r}"
                     )
                 self._cmdln_scoped_db[key] = entry
+
+    # ------------------------------------------------------------------ #
+    # --defaults: per-module defaults                                    #
+    # ------------------------------------------------------------------ #
+    def read_defaults(self, path: str, shown: Optional[str] = None) -> None:
+        """Load a ``BLOCK_PARAMS`` tree from a ``.py`` file (the dict of that
+        name) or a ``.json`` file (the top-level object).
+
+        Every top-level value is an entry and must be a dict. Inside an
+        entry a dict value is a child entry, which only groups: it holds no
+        value for its parent. An entry name may sit at any depth, once across
+        all files. ``shown`` is the name messages use; default ``path``.
+        Raises ConfigError on a missing file, another extension, a ``.py``
+        without ``BLOCK_PARAMS``, a non-dict entry or a repeated name.
+        """
+        shown = path if shown is None else shown
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in (".py", ".json"):
+            raise reporting.ConfigError(f"--defaults {shown}: not a .py or .json file")
+        if not os.path.isfile(path):
+            raise reporting.ConfigError(f"--defaults file not found: {shown}")
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        if ext == ".json":
+            tree = json.loads(text)
+        else:
+            ns: dict[str, Any] = {"__name__": "__genesispy_defaults__",
+                                  "__file__": os.path.abspath(path)}
+            exec(compile(text, path, "exec"), ns)
+            tree = ns.get("BLOCK_PARAMS")
+        if not isinstance(tree, dict):
+            raise reporting.ConfigError(f"--defaults {shown}: no BLOCK_PARAMS dict")
+        for key, entry in tree.items():
+            if not isinstance(entry, dict):
+                raise reporting.ConfigError(f"--defaults {shown}: entry {key!r} is not a dict")
+        for trail, entry in _default_entries(tree, ()):
+            name, where = trail[-1], ".".join(trail)
+            prior = self._defaults.get(name)
+            if prior is not None:
+                raise reporting.ConfigError(
+                    f"--defaults: {name} at {prior['file']}:{prior['where']} and {shown}:{where}"
+                    if prior["file"] != shown else
+                    f"--defaults {shown}: {name} at {prior['where']} and {where}"
+                )
+            self._defaults[name] = {
+                "params": {k: v for k, v in entry.items() if not isinstance(v, dict)},
+                "where": where,
+                "file": shown,
+            }
+
+    def module_default(self, names: Iterable[Optional[str]], name: str) -> tuple[bool, Any]:
+        """``(True, value)`` from the first of ``names``' entries that holds
+        ``name``, else ``(False, None)``. Every entry consulted counts as read."""
+        for entry_name in dict.fromkeys(n for n in names if n):
+            entry = self._defaults.get(entry_name)
+            if entry is None:
+                continue
+            self._defaults_read.add(entry_name)
+            if name in entry["params"]:
+                self._defaults_taken.add((entry_name, name))
+                return True, entry["params"][name]
+        return False, None
 
     # ------------------------------------------------------------------ #
     # JSON I/O                                                           #
@@ -708,7 +797,9 @@ class ConfigHandler:
     def report_unused(self) -> list[str]:
         """One message per command-line or ``.cfg`` override no lookup
         consumed (Perl ``Finalize``, ConfigHandler.pm:436-442, which dies;
-        genesispy warns). JSON parameters are not checked, as in Perl."""
+        genesispy warns), then per ``--defaults`` entry no module read and per
+        key of a read entry no ``parameter()`` took. JSON parameters are not
+        checked, as in Perl."""
         def dotted(path: tuple[str, ...], name: str) -> str:
             return ".".join((*path, name))
 
@@ -722,7 +813,17 @@ class ConfigHandler:
         for (path, name) in self._cfg_scoped_db:
             if ("cfg_scoped", path, name) not in self._used:
                 found.append((dotted(path, name), "configure()"))
-        return [f"override {spec} was never used ({src})" for spec, src in sorted(found)]
+        msgs = [f"override {spec} was never used ({src})" for spec, src in sorted(found)]
+        for name, entry in sorted(self._defaults.items()):
+            if name not in self._defaults_read:
+                msgs.append(f"default {name} was never used (--defaults {entry['file']})")
+                continue
+            for key in entry["params"]:
+                if (name, key) not in self._defaults_taken:
+                    msgs.append(
+                        f"default {name}.{key} was never used (--defaults {entry['file']})"
+                    )
+        return msgs
 
     # ------------------------------------------------------------------ #
     # configure / get_configuration / exists / remove                    #
