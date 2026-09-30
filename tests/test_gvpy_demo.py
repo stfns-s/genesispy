@@ -6,8 +6,10 @@ is not on PATH (mirrors :mod:`tests.test_demos_make`).
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -112,3 +114,33 @@ def test_make_gen_reruns_on_width_change(demo: Path) -> None:
     assert "parameter WIDTH = 16" in out_w16, (
         f"WIDTH=16 not reflected in output (stale build?): {out_w16[:500]}"
     )
+
+
+def test_width_change_rebuilds_a_product_newer_than_the_stamp(demo: Path) -> None:
+    """make reads the product's mtime before any recipe runs. A future mtime
+    forces the tie that coarse timestamps give by chance, so a stamp written
+    by a recipe would leave the product up to date."""
+    assert _run(demo, "gen").returncode == 0
+    future = time.time() + 3600
+    os.utime(demo / "example.out.v", (future, future))
+    r = _run(demo, "gen", "WIDTH=16")
+    assert r.returncode == 0, r.stderr
+    assert "parameter WIDTH = 16" in (demo / "example.out.v").read_text()
+
+
+@pytest.mark.parametrize("args", [("help",), ("-n", "gen"), ("cleansim",)])
+def test_a_non_building_run_leaves_stamp_and_product(demo: Path, args) -> None:
+    assert _run(demo, "gen").returncode == 0
+    stamp = (demo / "example.out.v.flags").read_text()
+    assert _run(demo, *args, "WIDTH=16").returncode == 0
+    assert (demo / "example.out.v").exists()
+    assert (demo / "example.out.v.flags").read_text() == stamp
+
+
+def test_a_quoted_command_line_reaches_steady_state(demo: Path) -> None:
+    r = _run(demo, "gen", 'WIDTH="16"')
+    assert r.returncode == 0, r.stderr
+    assert "gvpy" in r.stdout, r.stdout
+    r = _run(demo, "gen", 'WIDTH="16"')
+    assert r.returncode == 0, r.stderr
+    assert "gvpy" not in r.stdout, r.stdout

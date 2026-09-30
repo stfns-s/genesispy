@@ -13,7 +13,6 @@ VERILATOR_FLAGS ?=
 SLANG_FLAGS     ?=
 
 # Full command lines as variables so the recipe and stamp cannot drift.
-# Note: a double-quote inside WIDTH/DEPTH would break the printf quoting below.
 GEN_CMD    := $(GVPY) --gvpy-strict --mname $(TOP) \
 	    --parameter WIDTH=$(WIDTH) --parameter DEPTH=$(DEPTH) \
 	    $(TOP).vpy
@@ -22,27 +21,39 @@ GEN_CMD_J2 := $(GVPY) --j2 --gvpy-strict --mname $(TOP) \
 	    $(SRC_J2)
 
 # Stamp files record the last command line used; rewritten only when content
-# changes, so mtime advances only on a real parameter change.
+# changes. A changed command line also removes the product, and both happen
+# while make reads this file: make reads a target's mtime before it runs any
+# prerequisite's recipe, so a product removed by a stamp recipe would still
+# count as up to date whenever the new stamp's coarse mtime ties with it.
+# Only goals that build the product do this, and not under make -n.
 FLAGSTAMP    := $(OUT).flags
 FLAGSTAMP_J2 := $(OUT_J2).flags
 
-.PHONY: gen gen-j2 cleangen cleansim clean vlint lint sim help FORCE
+GOALS   := $(or $(MAKECMDGOALS),gen)
+DRY_RUN := $(findstring n,$(firstword -$(MAKEFLAGS)))
 
-# Stamp rules precede gen textually; set default goal explicitly.
+# $(call differ,A,B) is non-empty unless the two strings are equal.
+differ = $(subst $(1),,$(2))$(subst $(2),,$(1))
+
+# $(call restamp,STAMP,CMD,PRODUCT,GOALS-THAT-BUILD-IT). $(file) rather than
+# the shell, which would strip quotes and expand $VAR in the stamp it writes.
+restamp = $(if $(DRY_RUN),,$(if $(filter $(4),$(GOALS)),\
+    $(if $(call differ,$(file <$(1)),$(strip $(2))),\
+        $(file >$(1),$(strip $(2)))$(shell rm -f $(3)))))
+
+$(call restamp,$(FLAGSTAMP),$(GEN_CMD),$(OUT),gen lint vlint sim $(OUT))
+$(call restamp,$(FLAGSTAMP_J2),$(GEN_CMD_J2),$(OUT_J2),gen-j2 $(OUT_J2))
+
+# Lets make -n, which writes no stamp, still plan the build.
+$(FLAGSTAMP) $(FLAGSTAMP_J2): ;
+
+.PHONY: gen gen-j2 cleangen cleansim clean vlint lint sim help
+
+# The stamp rule precedes gen textually; set default goal explicitly.
 .DEFAULT_GOAL := gen
 
 # A failed run must not leave a truncated, up-to-date output behind.
 .DELETE_ON_ERROR:
-
-# A changed command line also removes the product: a fresh stamp can receive
-# the same coarse mtime as a product touched a moment earlier.
-$(FLAGSTAMP): FORCE
-	@printf '%s\n' "$(GEN_CMD)" | cmp -s - $@ 2>/dev/null \
-	    || { printf '%s\n' "$(GEN_CMD)" > $@; rm -f $(OUT); }
-
-$(FLAGSTAMP_J2): FORCE
-	@printf '%s\n' "$(GEN_CMD_J2)" | cmp -s - $@ 2>/dev/null \
-	    || { printf '%s\n' "$(GEN_CMD_J2)" > $@; rm -f $(OUT_J2); }
 
 gen: $(OUT)
 

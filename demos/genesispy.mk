@@ -100,10 +100,11 @@ DRY_RUN := $(findstring n,$(firstword -$(MAKEFLAGS)))
 # $(call differ,A,B) is non-empty unless the two strings are equal.
 differ = $(subst $(1),,$(2))$(subst $(2),,$(1))
 
-# $(call restamp,STAMP,CMD,PRODUCT,GOALS-THAT-BUILD-IT)
+# $(call restamp,STAMP,CMD,PRODUCT,GOALS-THAT-BUILD-IT). $(file) rather than
+# the shell, which would strip quotes and expand $VAR in the stamp it writes.
 restamp = $(if $(DRY_RUN),,$(if $(filter $(4),$(GOALS)),\
-    $(if $(call differ,$(shell cat $(1) 2>/dev/null),$(strip $(2))),\
-        $(shell printf '%s\n' "$(strip $(2))" > $(1); rm -f $(3)))))
+    $(if $(call differ,$(file <$(1)),$(strip $(2))),\
+        $(file >$(1),$(strip $(2)))$(shell rm -f $(3)))))
 
 $(call restamp,$(FLAGSTAMP),$(GEN_CMD),$(VLOG_VF),gen pylint lint vlint sim $(VLOG_VF))
 $(call restamp,$(FLAGSTAMP_J2),$(GEN_CMD_J2),$(VLOG_VF_J2),gen-j2 $(VLOG_VF_J2))

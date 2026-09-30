@@ -129,3 +129,13 @@ def test_a_non_building_run_leaves_stamp_and_product(demo: Path, args) -> None:
     assert _make(demo, *args, "EXTRA_FLAGS_intg=--debug 1").returncode == 0
     assert (top / "intg.vf").exists()
     assert (top / "intg.flags").read_text() == stamp
+
+
+def test_a_quoted_command_line_reaches_steady_state(demo: Path) -> None:
+    flag = 'EXTRA_FLAGS_intg=-p "X=a b"'
+    r = _make(demo, "intg", flag)
+    assert r.returncode == 0, f"make intg failed:\n{r.stdout}\n{r.stderr}"
+    assert "genesispy" in r.stdout, r.stdout
+    r = _make(demo, "intg", flag)
+    assert r.returncode == 0, f"make intg failed:\n{r.stdout}\n{r.stderr}"
+    assert "genesispy" not in r.stdout, r.stdout

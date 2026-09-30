@@ -78,8 +78,8 @@ differ = $(subst $(1),,$(2))$(subst $(2),,$(1))
 
 # $(call restamp,STAMP,CMD,PRODUCT,GOALS-THAT-BUILD-IT): as in genesispy.mk.
 restamp = $(if $(DRY_RUN),,$(if $(filter $(4),$(GOALS)),\
-    $(if $(call differ,$(shell cat $(1) 2>/dev/null),$(strip $(2))),\
-        $(shell mkdir -p $(dir $(1)); printf '%s\n' "$(strip $(2))" > $(1); rm -f $(3)))))
+    $(if $(call differ,$(file <$(1)),$(strip $(2))),\
+        $(shell mkdir -p $(dir $(1)))$(file >$(1),$(strip $(2)))$(shell rm -f $(3)))))
 
 gen: $(VLOG_VF)
 

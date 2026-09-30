@@ -350,3 +350,16 @@ def test_a_dry_run_on_a_fresh_tree_writes_nothing(tmp_path: Path) -> None:
     assert "genesispy" in r.stdout, r.stdout
     assert not (dst / "genesis_vlog.vf.flags").exists()
     assert not (dst / "genesis_vlog.vf").exists()
+
+
+# The shell removes quotes and expands $VAR, so a stamp written through it
+# never matches the command line again.
+@pytest.mark.parametrize("flags", [
+    '-p "top.x=a b"', "-p 'top.x=a b'", "-p top.x=$$HOME",
+])
+def test_a_quoted_command_line_reaches_steady_state(tmp_path: Path, flags: str) -> None:
+    dst = _copy_many_wallace(tmp_path)
+    r = _make_gen(dst, f"EXTRA_FLAGS={flags}")
+    assert "genesispy" in r.stdout, r.stdout
+    r = _make_gen(dst, f"EXTRA_FLAGS={flags}")
+    assert "genesispy" not in r.stdout, r.stdout
