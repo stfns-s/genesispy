@@ -11,6 +11,7 @@ Notable changes to genesispy. Versions follow `pyproject.toml`.
   for a forced parameter warns `default ENTRY.KEY is forced`.
 - New `--strict-unused KIND[,KIND...]`: listed unused kinds are errors, exit 3, no output.
 - New `--defaults-entry NAME`: the top reads entry `NAME` before its own.
+- New `--top-name NAME`: emit the `--top` template as NAME, as `generate_w_name` does.
 - `--json-out` nodes carry `TemplateName`; `--json-cfg` ignores it.
 - `genesispy-json2xml` writes a config Genesis2 reads: item wrappers restored, list and dict values
   typed, booleans as `true`/`false`.

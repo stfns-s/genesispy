@@ -376,6 +376,8 @@ BLOCK_PARAMS = {
   template's. Use it to generate alone, under its template name, a module that a parent normally
   generates under another name. Children of the top read only their own entries. A `NAME` no
   `--defaults` file holds is a `ConfigError`.
+- `--top-name NAME` emits the top as `generate_w_name` would, so it reads entry `NAME`, then its
+  template's; `--defaults-entry` is read before both.
 - Values keep their Python (or JSON) types; there is no string coercion. A parameter whose value
   is itself a dict cannot be given here, since a dict is read as a child entry.
 - Every `parameter('N', ...)` call reads the module's entries, whichever source supplies the
@@ -800,6 +802,7 @@ from `--help`; section 9.5 lists them.
 - `--log FILE` -- tee error/warning messages to `FILE` (defaults to `genesispy.log`, lazy-opened on first error/warning so clean runs leave no log artifact). Suppress by pointing at `/dev/null`.
 - `--clean` -- delete generated files and exit: the raw, synth and verif directories, the default lists, and every product the same flags would have written (`--depend`, `--path`, `--product` / `--vf-out` with their side-files, the `--json-out` triple, `--log`). Pass the same output flags as the generating run. `genesispy_clean.sh` removes the same set.
 - `-t`, `--top NAME` -- name of the top module.
+- `--top-name NAME` -- emit the `--top` template as NAME, as a parent's `generate_w_name(TOP, NAME)` would: `mname`, `get_base_name()`, the module declaration, the output files (`NAME.v`, the default `NAME.vlist` and `NAME.depend`), the top's instance name (the root of dotted `-p`, `configure()`, JSON paths and `--synth-top`), `get_top_name()` and the `--defaults` entry. `sname` and `TemplateName` stay the template's. NAME must match `[A-Za-z_]\w*` and not be a Python keyword (exit 2); a NAME that is a template, or that a submodule is also emitted as, is an error. A `--json-out` snapshot of such a run is rooted at NAME, so feed it back with the same `--top-name`.
 - `--synth-top PATH` -- synthesis-top instance: a top-level instance name (e.g. `core`) or dotted instance path (e.g. `top.core`) bounding the synth cone. Instances at or under this path emit to `genesis_synth/`, all others to `genesis_verif/`. When omitted (Genesis2 default), every emitted file goes to `genesis_verif/`.
 
 ### 9.2 Parse phase (`.vpy` -> `.py`)
@@ -1142,7 +1145,7 @@ are also available (mirrors Genesis2 `do FILE` semantics).
 | `remove_configuration(name)` | Delete a previously-`configure`d entry. |
 | `include(path)` | Load another config: a `.json` path goes through `read_json`, anything else through `read_cfg`. |
 | `print_configuration()` | Return the full param database as a string (debug aid; print it yourself). |
-| `get_top_name()` | Name of the `--top` module. |
+| `get_top_name()` | Name of the top module: `--top-name`, else `--top`. |
 | `get_synthtop_path()` | Absolute path to the synth output directory (`--synth-dir`). |
 | `error(msg)` | Raise `GenesisPyError` (fatal). |
 | `warning(msg)` | Write a warning to stderr; return normally. |
@@ -1222,7 +1225,7 @@ flag style) are listed below. For behaviour-affecting incompatibilities
 - **File extension** -- `.vp` -> `.vpy`, `.svp` -> `.svpy`. Configurable via the repeatable `--extension EXT_IN=EXT_OUT` flag (e.g. `--extension .tvpy=.tv` to register a custom pair, or `--extension .vpy=.sv` to redirect the default).
 - **`--suffix` removed** -- replaced by `--extension`. `-sv`/`--system-verilog` is preserved as a shorthand for `--extension .vpy=.sv`.
 - **`--comment` -> `--source-comment`** -- `--comment PREFIX` is a deprecated alias for `--source-comment PREFIX`; it is retained and emits a one-time stderr warning. New flag `--output-comment PREFIX | OPEN,CLOSE` controls the style for comments emitted into the output (banner and `--stdout` separator); defaults to `--source-comment`. Genesis2 has no equivalent to `--output-comment`.
-- **`--defaults`** -- genesispy-only; per-module parameter defaults below every other source (section 6.5). Genesis2 has no equivalent. Same for `--defaults-entry` and `--strict-unused`; the latter also covers the overrides Genesis2's `Finalize` checks, which Genesis2 always treats as fatal.
+- **`--defaults`** -- genesispy-only; per-module parameter defaults below every other source (section 6.5). Genesis2 has no equivalent. Same for `--defaults-entry`, `--top-name` and `--strict-unused`; the latter also covers the overrides Genesis2's `Finalize` checks, which Genesis2 always treats as fatal.
 - **`--param-footer`** -- genesispy-only; appends a resolved-parameter provenance block after each generated module. Off by default, so migrated designs emit unchanged output. Genesis2 has no equivalent.
 - **Config input** -- XML support removed from the core CLI; convert legacy XML once with `genesispy-xml2json in.xml out.json` and pass `--json-cfg out.json`. The reverse helper `genesispy-json2xml` writes XML that Genesis2 reads: it restores the `ParameterItem`, `SubInstanceItem` and `List` wrapper elements, writes a list or dict `Val` as `ArrayType`/`HashType`, and writes booleans as `true`/`false`. The converter types an XML value only when that is lossless (`<Val>8</Val>` becomes `8`, `1.5` becomes `1.5`, `true`/`false` become booleans); `010`, `1e3`, `+5` and any other text stay strings, as XML::Simple handed them to Perl. The JSON loader never coerces: a string leaf reaches the template as typed. A JSON `null` round-trips through `genesispy-json2xml` as an empty element, which reads back as `""`.
 - **`ImmutableParameters` (input config)** -- ignored by both engines. Genesis2 `ConfigHandler.pm:875-919` reads only `{Parameters}` from input XML; `{ImmutableParameters}` is touched only by the writeback path (`ConfigHandler.pm:677, 724`). genesispy reads only a node's `Parameters` in `config_handler.py:_find_param`. The tag is writeback-only metadata in both engines. To actually pin past a parent's `unique_inst` kwarg, use `force_param` (Genesis2) / `parameter(..., force=True)` (genesispy); both write at `IMMUTABLE`.

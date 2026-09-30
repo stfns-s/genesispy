@@ -55,6 +55,9 @@ class Manager:
     # Treat as `ConfigHandler | None` at the type level.
     cfg_handler: "ConfigHandler | None"
     top: str | None
+    # --top-name, else top: the name the top is emitted under (module, files,
+    # instance name). gen_verilog builds the top as synonym_class(top, top_name).
+    top_name: str | None
     debug: int
     src_path: list[str]
     # Resolved template paths: appended by parse_files() (one per --input
@@ -321,7 +324,7 @@ class ConfigHandler:
     # configure, get_configuration, exists_configuration, remove_configuration,
     # include, print_configuration, get_top_name, get_synthtop_path, error,
     # warning (Python extension over Perl, kept for `.vpy`/`.cfg` symmetry).
-    # `get_top_name` and `get_synthtop_path` reach Manager.top and synth_dir
+    # `get_top_name` and `get_synthtop_path` reach Manager.top_name and synth_dir
     # via the active manager context (user_config.context()).
 
     # Read-only shallow copies of the backing override stores. Used by

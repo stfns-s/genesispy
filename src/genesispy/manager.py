@@ -92,6 +92,8 @@ class Manager:
         # ``default=`` for every flag; direct attribute access is safe.
         self.args = args
         self.top = args.top
+        # --top-name: the name the top is emitted under; the template's otherwise.
+        self.top_name = getattr(args, "top_name", None) or args.top
         # synth_top default = None (Perl SynthTop=undef): without --synth-top,
         # every emitted file is tagged 'verif'.  Mirrors Manager.pm:89.
         self.synth_top = args.synth_top
@@ -483,11 +485,16 @@ class Manager:
 
         self._ensure_cfg_handler()
         top_cls = self.load_top_module()
+        if self.top_name != self.top:
+            top_cls = self.synonym_class(self.top, self.top_name)
         top = top_cls(self)
         self._top_inst = top
         with user_config.context(self, top):
             top.execute()
         top._lock_params()
+        if self.top_name != self.top and cache.MODULE_CACHE.get(self.top_name) is not top:
+            error(f"--top-name {self.top_name}: a submodule is also emitted as "
+                  f"{self.top_name!r}", cls=reporting.ElaborationError)
 
         strict = getattr(self.args, "strict_unused", frozenset())
         n_strict = 0

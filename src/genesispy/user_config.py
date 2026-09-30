@@ -245,8 +245,9 @@ def _make_pinclude(ns: dict) -> Any:
 # Misc helpers
 # ---------------------------------------------------------------------------
 def _get_top_name() -> Optional[str]:
-    """Return the name of the top module under elaboration."""
-    return _current_manager().top
+    """Return the name the top module is emitted under (``--top-name``, else ``--top``)."""
+    manager = _current_manager()
+    return getattr(manager, "top_name", None) or manager.top
 
 
 def _get_synthtop_path() -> str:

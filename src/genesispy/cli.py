@@ -7,6 +7,7 @@ POSIX short flags. Departs from Genesis2's Perl single-dash long flags.
 from __future__ import annotations
 
 import argparse
+import keyword
 import os
 import re
 import shlex
@@ -87,6 +88,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="NAME",
         help="Name of the top module.",
+    )
+    g_in.add_argument(
+        "--top-name",
+        dest="top_name",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Emit the --top template as NAME, as generate_w_name(TOP, NAME) "
+            "would: module, files, instance name and --defaults entry."
+        ),
     )
     g_in.add_argument(
         "--synth-top",
@@ -750,6 +761,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         parser.error(f"--strict-unused: unknown kind {bad[0]!r}; "
                      f"expected {', '.join(UNUSED_KINDS)} or all")
     args.strict_unused = frozenset(UNUSED_KINDS) if "all" in kinds else frozenset(kinds)
+    if args.top_name is not None and (
+        not re.fullmatch(r"[A-Za-z_]\w*", args.top_name, re.ASCII)
+        or keyword.iskeyword(args.top_name)
+    ):
+        parser.error(f"--top-name: {args.top_name!r} is not a legal module name")
     if args.raw_dir is not None and args.use_tmp:
         parser.error("--raw-dir is mutually exclusive with --use-tmp/--keep-tmp")
     # -sv is shorthand for '--extension .vpy=.sv'. If the user already passed

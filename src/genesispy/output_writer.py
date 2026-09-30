@@ -130,7 +130,7 @@ def _join_paths(paths: Iterable[str]) -> str:
 
 
 def _top_name(manager) -> str:
-    return manager.top or "top"
+    return getattr(manager, "top_name", None) or manager.top or "top"
 
 
 # --------------------------------------------------------------------------- #
@@ -439,7 +439,7 @@ def dump_to_stdout(manager, stream: TextIO | None = None) -> None:
     keeping it valid in the target language.
     """
     out = stream if stream is not None else sys.stdout
-    top = manager.top
+    top = getattr(manager, "top_name", None) or manager.top
     extra_known = _manager_extra_known(manager)
     style = getattr(manager, "output_comment", "//")
     if isinstance(style, tuple):
