@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -304,3 +305,48 @@ def test_make_gen_reaches_steady_state_after_flag_change(tmp_path: Path) -> None
     assert "genesispy" not in r.stdout, (
         f"genesispy recipe ran again after the flag change had been built\n{r.stdout}"
     )
+
+
+def _make(dst: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    r = subprocess.run(["make", *args], cwd=dst, capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0, f"make {args} failed:\n{r.stdout}\n{r.stderr}"
+    return r
+
+
+@pytest.mark.parametrize("goal, vf, outdir", [
+    ("gen", "genesis_vlog.vf", "genesis_synth"),
+    ("gen-j2", "genesis_vlog.j2.vf", "genesis_synth.j2"),
+])
+def test_flag_change_rebuilds_a_product_newer_than_the_stamp(
+    tmp_path: Path, goal: str, vf: str, outdir: str
+) -> None:
+    """make reads the product's mtime before any recipe runs. A future mtime
+    forces the tie that coarse timestamps give by chance, so a stamp written
+    by a recipe would leave the product up to date."""
+    dst = _copy_many_wallace(tmp_path)
+    _make(dst, goal)
+    future = time.time() + 3600
+    os.utime(dst / vf, (future, future))
+    r = _make(dst, goal, "JSON_CONFIG=config.json")
+    assert "genesispy" in r.stdout, r.stdout
+    assert (dst / vf).exists()
+    wallace = [p for p in (dst / outdir).iterdir() if p.name.startswith("wallace_unq")]
+    assert len(wallace) == 5, sorted(p.name for p in wallace)
+
+
+@pytest.mark.parametrize("args", [("help",), ("-n", "gen"), ("cleansim",)])
+def test_a_non_building_run_leaves_stamp_and_product(tmp_path: Path, args) -> None:
+    dst = _copy_many_wallace(tmp_path)
+    _make(dst, "gen")
+    stamp = (dst / "genesis_vlog.vf.flags").read_text()
+    _make(dst, *args, "JSON_CONFIG=config.json")
+    assert (dst / "genesis_vlog.vf").exists()
+    assert (dst / "genesis_vlog.vf.flags").read_text() == stamp
+
+
+def test_a_dry_run_on_a_fresh_tree_writes_nothing(tmp_path: Path) -> None:
+    dst = _copy_many_wallace(tmp_path)
+    r = _make(dst, "-n", "gen")
+    assert "genesispy" in r.stdout, r.stdout
+    assert not (dst / "genesis_vlog.vf.flags").exists()
+    assert not (dst / "genesis_vlog.vf").exists()

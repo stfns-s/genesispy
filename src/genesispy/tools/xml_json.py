@@ -60,6 +60,18 @@ _PLURAL_COLLAPSE_KEYS = frozenset(
     }
 )
 
+# Genesis2 HierarchyTop keys whose collapsed list json2xml wraps again, and
+# the item tag it wraps each element in.
+_PLURAL_WRAPPERS = {
+    "Parameters": "ParameterItem",
+    "ImmutableParameters": "ParameterItem",
+    "SubInstances": "SubInstanceItem",
+    "Range": "List",
+}
+
+# Keys of a JSON-native value in typed form; a dict without them is a hash.
+_TYPED_KEYS = frozenset({"__ArrayType__", "__HashType__", "__Val__"})
+
 
 # ---------------------------------------------------------------------------
 # Atomic write helpers
@@ -246,8 +258,10 @@ def xml_to_json(xml_path: str, json_path: str) -> None:
 
 def _from_native(value: Any) -> Any:
     """Inverse of :func:`_to_native`. Produces an XML-shape dict suitable
-    for :func:`_write_xml`. Lossy on plural collapse: bare lists round-trip
-    as repeated sibling elements rather than ``<Singular>`` wrappers."""
+    for :func:`_write_xml`. A list under a :data:`_PLURAL_WRAPPERS` key gets
+    its Genesis2 item wrapper back, and a list or dict under ``Val`` (as
+    ``--json-out`` writes it) becomes ``ArrayType``/``HashType``; any other
+    bare list round-trips as repeated sibling elements."""
     if isinstance(value, dict):
         out: dict[str, Any] = {}
         for k, v in value.items():
@@ -262,8 +276,14 @@ def _from_native(value: Any) -> Any:
                 else:
                     items = []
                 out["HashType"] = {"HashItem": items}
+            elif k in ("__Val__", "Val") and isinstance(v, list):
+                out["ArrayType"] = {"ArrayItem": [_array_item(item) for item in v]}
+            elif k in ("__Val__", "Val") and isinstance(v, dict):
+                out["HashType"] = {"HashItem": [_hash_item(hk, hv) for hk, hv in v.items()]}
             elif k == "__Val__":
                 out["Val"] = _from_native(v)
+            elif k in _PLURAL_WRAPPERS and isinstance(v, list):
+                out[k] = {_PLURAL_WRAPPERS[k]: [_from_native(item) for item in v]}
             else:
                 out[k] = _from_native(v)
         return out
@@ -275,8 +295,10 @@ def _from_native(value: Any) -> Any:
 def _array_item(item: Any) -> dict:
     if isinstance(item, list):
         return {"ArrayType": {"ArrayItem": [_array_item(i) for i in item]}}
-    if isinstance(item, dict):
+    if isinstance(item, dict) and _TYPED_KEYS & item.keys():
         return _from_native(item)
+    if isinstance(item, dict):
+        return {"HashType": {"HashItem": [_hash_item(k, v) for k, v in item.items()]}}
     return {"Val": item}
 
 
@@ -293,7 +315,8 @@ def _hash_item(key: Any, value: Any) -> dict:
             return {"Key": key, "HashType": {"HashItem": items}}
         if "__Val__" in value:
             return {"Key": key, "Val": value["__Val__"]}
-        return {"Key": key, **_from_native(value)}
+        items = [_hash_item(k, v) for k, v in value.items()]
+        return {"Key": key, "HashType": {"HashItem": items}}
     return {"Key": key, "Val": value}
 
 
@@ -313,6 +336,8 @@ def _obj_to_element(parent: Any, tag: str, value: Any) -> None:
             _obj_to_element(elem, k, v)
     elif value is None:
         elem.text = ""
+    elif isinstance(value, bool):
+        elem.text = "true" if value else "false"
     else:
         elem.text = "" if value == "" else str(value)
 

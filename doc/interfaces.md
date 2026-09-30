@@ -27,6 +27,9 @@ class ParseError(GenesisPyError):       code = "parse_error"
 class ConfigError(GenesisPyError):      code = "config_error"
 class ParameterError(GenesisPyError):   code = "parameter_error"
 class ElaborationError(GenesisPyError): code = "elaboration_error"
+# Raised by Manager.gen_verilog, already reported, when a --strict-unused
+# kind has unused items; Manager.execute returns 3 for it.
+class UnusedError(GenesisPyError):      code = "unused"
 
 # Severity helpers. Coloring is TTY-gated by colorama (escapes stripped
 # when stderr isn't a tty; NO_COLOR honored). Each helper tees an
@@ -157,6 +160,7 @@ class Manager:
     # (Manager.pm:716); searching inc_path for inputs too is a genesispy
     # relaxation. Records the resolved directory in touched_dirs.
     def find_file(self, name: str, paths: list[str] | None = None) -> str: ...
+    # Exit status: 0 ok, 1 error, 3 UnusedError (--strict-unused).
     def execute(self) -> int: ...
     # Phase gating: --parse-only stops after parse_files(); --gen-only skips
     # parse_files() and instead loads previously generated .py modules from
@@ -168,6 +172,10 @@ class Manager:
     # CLI orchestration entry points (also called directly by tests).
     def parse_files(self) -> None: ...
     def load_top_module(self) -> type: ...
+    # Elaborates, then passes each report_unused() message to
+    # reporting.warning, or to reporting.error when its kind is in
+    # args.strict_unused (a frozenset of UNUSED_KINDS); any error raises
+    # UnusedError before flush_outputs, so nothing is written.
     def gen_verilog(self) -> None: ...
     def flush_outputs(self) -> None: ...
     # Removes everything _clean_targets names: raw/synth/verif dirs, the
@@ -228,6 +236,8 @@ PRIORITY_LABELS: dict[int, str]
 # INHERITANCE=40 < IMMUTABLE=50.
 class Priority(IntEnum): ...
 def priority_label(priority: int | None) -> str: ...
+# report_unused() kinds; --strict-unused accepts these and "all".
+UNUSED_KINDS = ("overrides", "entries", "keys")
 
 class ConfigHandler:
     # Ingests manager.args.parameter (-p); a spec without an instance path
@@ -236,7 +246,12 @@ class ConfigHandler:
     # manager.args.defaults
     # file through read_defaults, each resolved with manager._resolve_cfg_path
     # (as --cfg is) and named in messages as given on the command line.
+    # Sets top_entry from manager.args.defaults_entry (--defaults-entry);
+    # a name no loaded file holds raises ConfigError, and the entry counts
+    # as read.
     def __init__(self, manager: "Manager") -> None: ...
+    # Entry the top module reads before its own; None without the flag.
+    top_entry: str | None
     # Load a --defaults tree: a .py file's BLOCK_PARAMS dict or a .json
     # file's top-level object. Every top-level value is an entry and must be
     # a dict; inside an entry a dict value is a child entry, which only
@@ -246,10 +261,13 @@ class ConfigHandler:
     # or a repeated name; `shown` is the name those messages use.
     def read_defaults(self, path: str, shown: str | None = None) -> None: ...
     # (True, value) from the first of `names` whose entry holds `name`, else
-    # (False, None); every entry consulted counts as read for report_unused.
-    # UniqueModule.parameter passes (bname, sname) when no other source has
-    # the name, and stamps a hit at Priority.MODULE_DEFAULT.
-    def module_default(self, names: Iterable[str | None], name: str) -> tuple[bool, object]: ...
+    # (False, None). Every entry in `names` counts as read for report_unused,
+    # and key `name` in each counts as taken, or as forced when `forced`.
+    # UniqueModule.parameter calls it on every call, whichever source wins,
+    # with (top_entry for the top, bname, sname); it uses the value, at
+    # Priority.MODULE_DEFAULT, only when no other source has the name.
+    def module_default(self, names: Iterable[str | None], name: str, *,
+                       forced: bool = False) -> tuple[bool, object]: ...
     # read_json validates the HierarchyTop shape (ConfigError names the
     # offending node) and deep-merges into the in-memory database. Repeated
     # reads accumulate (matching dicts merge, matching lists concatenate).
@@ -260,12 +278,15 @@ class ConfigHandler:
     # Writes a HierarchyTop snapshot of the elaborated module tree at
     # ``top_inst`` -- port of Perl ConfigHandler.pm::WriteXml /
     # extract_stats. Emits three sibling files in dirname(path):
-    # ``path`` (full: every parameter incl. declared defaults, force-pinned
-    # ones under ImmutableParameters), ``<stem>-small<ext>`` (no
-    # ImmutableParameters), ``<stem>-tiny<ext>`` (priority >=
-    # EXTERNAL_PARAM_FILE only), where ``<stem>``/``<ext>`` come from
-    # splitext(basename(path)). Values are written under ``Val``, which
-    # read_json accepts alongside ``__Val__``. ``top_inst`` is required;
+    # ``path`` (full: every parameter incl. declared defaults, those at
+    # priority >= INHERITANCE under ImmutableParameters, as in Perl),
+    # ``<stem>-small<ext>`` (no ImmutableParameters), ``<stem>-tiny<ext>``
+    # (EXTERNAL_PARAM_FILE <= priority < INHERITANCE only), where ``<stem>``/``<ext>`` come from
+    # splitext(basename(path)). Every node, clone and synonym stubs included,
+    # carries InstanceName, UniqueModuleName, BaseModuleName (emitted class
+    # name) and TemplateName (sname); read_json ignores the name fields.
+    # Values are written under ``Val``, which read_json accepts alongside
+    # ``__Val__``. ``top_inst`` is required;
     # passing None raises GenesisPyError.
     def write_json(self, path: str, top_inst: "UniqueModule" = None) -> None: ...
 
@@ -320,13 +341,15 @@ class ConfigHandler:
     # same name) consumed. Applied by UniqueModule._resolve_params before
     # the child elaborates.
     def scoped_overrides_for(self, instance_path: tuple[str, ...]) -> dict[str, object]: ...
-    # One message per command-line / .cfg override no lookup consumed, then
-    # "default ENTRY was never used (--defaults FILE)" per entry no module
-    # read and "default ENTRY.KEY was never used (--defaults FILE)" per key of
-    # a read entry no parameter() took. Manager.gen_verilog emits each
-    # through reporting.warning after elaboration (Perl Finalize dies
-    # instead). JSON parameters are not checked, as in Perl.
-    def report_unused(self) -> list[str]: ...
+    # (kind, message) pairs: "overrides" per command-line / .cfg override no
+    # lookup consumed; "entries" for "default ENTRY was never used
+    # (--defaults FILE)" per entry no module read; "keys" for "default
+    # ENTRY.KEY was never used (--defaults FILE)" per key of a read entry no
+    # parameter() named, or "... is forced ..." when only force=True
+    # declarations named it. Manager.gen_verilog reports them after
+    # elaboration (Perl Finalize dies instead). JSON parameters are not
+    # checked, as in Perl.
+    def report_unused(self) -> list[tuple[str, str]]: ...
 
     # Variant returning ``(value, priority)`` so callers can stamp the
     # winning source's priority onto a UniqueModule param. Used by
@@ -392,8 +415,10 @@ class UniqueModule:
     def define_param(self, name: str, default=None, doc: str | None = None,
                      type: str | None = None, **flags) -> None: ...
     # parameter(): a value already OVERRIDDEN/FORCED stays; otherwise
-    # ConfigHandler.get_configuration_with_priority, then
-    # ConfigHandler.module_default((bname, sname), name), then the default.
+    # ConfigHandler.get_configuration_with_priority, then the --defaults
+    # value, then the default. ConfigHandler.module_default((top_entry if
+    # top, bname, sname), name) runs on every call, force= included, so the
+    # entries are marked used whichever source wins.
     # Perl-compat kwargs (UniqueModule.pm:1981) -- force/doc
     # plus min/max/step XOR list (range guard) plus opt store-only.
     # Range checked at register-time AND on every subsequent override.

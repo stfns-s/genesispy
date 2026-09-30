@@ -259,8 +259,9 @@ external-config tier (`.cfg`, JSON, CLI) can beat a parent
 `IMMUTABLE` (`force_param` in Perl, `force=True` in genesispy).
 
 Note on `ImmutableParameters`. This JSON/XML tag is *emitted* by
-`--json-out` / `-hierarchy` to mark parameters that were pinned (via
-`force=True` / `force_param`) in the run that produced the file. As an
+`--json-out` / `-hierarchy` to mark parameters that were tied, by a
+parent's `unique_inst` keyword or by `force=True` / `force_param`, in the
+run that produced the file. As an
 *input* tag it is ignored by both engines: Genesis2
 (`ConfigHandler.pm:875-919`) reads only `{Parameters}` and never
 descends into `{ImmutableParameters}`; genesispy
@@ -309,6 +310,10 @@ file of any other shape is rejected with a `ConfigError` naming the
 offending node, and a root `InstanceName` that is not the top's instance
 name is an error at the first lookup.
 
+A node may also carry `UniqueModuleName`, `BaseModuleName`, `TemplateName`,
+`CloneOf` and `SynonymFor`, which `--json-out` writes (section 9); the
+loader ignores them, so a snapshot can be passed to `--json-cfg`.
+
 Every path-addressed value, whichever source it comes from, enters the
 dedup key through `_scoped_subtree_signature`, so sibling instances with
 different values don't collapse onto one cached unique module.
@@ -317,8 +322,8 @@ An override on the command line or in a `.cfg` that no instance reads
 (a misspelled name, a wrong path, or a name a parent's `unique_inst`
 keyword already fixes) is reported after elaboration as
 `warning: override NAME was never used`. The run still exits 0, where
-Genesis2's `Finalize` dies. JSON parameters are not checked in either
-engine.
+Genesis2's `Finalize` dies; `--strict-unused overrides` makes it an error
+(section 6.5). JSON parameters are not checked in either engine.
 
 ### 6.4 Parameter types
 
@@ -362,16 +367,30 @@ BLOCK_PARAMS = {
   entry, not a parameter: it groups entries in the file and passes nothing to its parent or from
   it. An entry name may sit at any depth, once across all files; a repeated name, a non-dict
   entry, a missing file, another extension or a `.py` without `BLOCK_PARAMS` is a `ConfigError`.
-- `parameter('N', default)` consults the defaults only when no `.cfg`, JSON, `--parameter`,
-  parent keyword or force has set `N`. It reads the module's own entry (its `bname`: the template
-  name, or for `generate_w_name` the emitted name) and then the source template's (`sname`),
-  parameter by parameter. So an entry for `dotp` serves every name generated from `dotp`, and an
-  entry under the generated name overrides it key by key.
+- `parameter('N', default)` takes a value from the defaults only when no `.cfg`, JSON,
+  `--parameter`, parent keyword or force has set `N`. It reads the module's own entry (its
+  `bname`: the template name, or for `generate_w_name` the emitted name) and then the source
+  template's (`sname`), parameter by parameter. So an entry for `dotp` serves every name generated
+  from `dotp`, and an entry under the generated name overrides it key by key.
+- `--defaults-entry NAME` makes the top read entry `NAME` before its own entry and its
+  template's. Use it to generate alone, under its template name, a module that a parent normally
+  generates under another name. Children of the top read only their own entries. A `NAME` no
+  `--defaults` file holds is a `ConfigError`.
 - Values keep their Python (or JSON) types; there is no string coercion. A parameter whose value
   is itself a dict cannot be given here, since a dict is read as a child entry.
-- An entry no module reads, and a key of a read entry that no `parameter()` takes, are reported
-  after elaboration: `warning: default ghost was never used (--defaults d.py)`,
-  `warning: default ffe.N_TAPS was never used (--defaults d.py)`. The run still exits 0.
+- Every `parameter('N', ...)` call reads the module's entries, whichever source supplies the
+  value. The entries count as read, and a key `N` in any of them counts as used. A key outranked by
+  another source or by an earlier entry is therefore not reported. An entry no module reads, and
+  a key no `parameter()` names, are reported after elaboration:
+  `warning: default ghost was never used (--defaults d.py)`,
+  `warning: default ffe.N_TAPS was never used (--defaults d.py)`. A key naming a parameter
+  declared with `force=True` can never take effect and is reported as
+  `warning: default ffe.N_TAP is forced (--defaults d.py)`. The run still exits 0.
+- `--strict-unused KIND[,KIND...]` reports the listed kinds as errors: `overrides` (section 6.3),
+  `entries` (an unread entry), `keys` (an unused or forced key), or `all`. The run then exits 3
+  after elaboration, before any output is written; output from an earlier run stays in place.
+  Kinds not listed stay warnings. The kinds are separate because an unread entry is expected when
+  one defaults file serves several tops, while an unused key usually is a misspelling.
 - `--param-footer` names the source `module defaults (--defaults)`.
 
 ## 7. Syntax
@@ -766,7 +785,7 @@ genesispy -i top.vpy -i child.vpy -t top -j config.json
 
 > **Legacy XML configs:** genesispy is JSON-only. Convert once with
 > `genesispy-xml2json in.xml out.json` and pass the `.json`. The reverse
-> helper `genesispy-json2xml` is provided for symmetry. See section 12
+> helper `genesispy-json2xml` writes XML that Genesis2 reads. See section 12
 > (Migrating from Genesis2) for the conversion notes.
 
 `genesispy --help` is authoritative for the current flags; the groupings
@@ -808,6 +827,8 @@ from `--help`; section 9.5 lists them.
 - `-p`, `--parameter PATH.NAME=VALUE` (or `NAME=VALUE`) -- command-line parameter override. The dotted form (e.g. `top.child2.x=2`) applies only to the instance at that exact full path; the rightmost dot separates path from name. Plain `NAME=VALUE` requires `--params-global` and applies to any instance whose body calls `parameter('NAME', ...)`. Repeatable.
 - `--params-global` -- accept `-p NAME=VALUE` without an instance path. Without it such a `-p` is an error, as in Genesis2.
 - `--defaults FILE` -- per-module parameter defaults: a `.py` file defining `BLOCK_PARAMS`, or a `.json` file with the same tree (section 6.5). Outranked by every other source. Searched like `--cfg`. Repeatable.
+- `--defaults-entry NAME` -- the top module reads `--defaults` entry `NAME` before its own (section 6.5). Error if no `--defaults` file holds `NAME`.
+- `--strict-unused KIND[,KIND...]` -- report unused items of these kinds (`overrides`, `entries`, `keys`, `all`) as errors and exit 3 before writing output (section 6.5). Repeatable.
 - `--no-module-cache` -- disable the unique-module dedup cache (forces fresh modules).
 - `--unq-style numeric|param` -- module uniquification style (default: `numeric`). Controls `generate(...)` dispatch.
 
@@ -824,7 +845,7 @@ from `--help`; section 9.5 lists them.
 - `--param-footer` -- append a comment block after each generated module listing every resolved parameter with its value and the configuration source it came from. Off by default; without it the output is unchanged. Unlike the module banner, which is written before the template body runs, this block is written after, so it also shows parameters the body resolves with `parameter()`. Sources are named from the priority ladder, highest wins: `forced (force_param)` > `parent instantiation` (a parent's `unique_inst` keyword argument) > `command line (--parameter)` > `config file (--json-cfg)` > `config script (--cfg / configure)` > `module defaults (--defaults)` > `declaration default`. Note that a parent's `unique_inst` keyword argument outranks `--parameter`. Uses the `--output-comment` style. Modules with no parameters get no block. Under module deduplication one emitted file can back several instances, and the block reports the elaboration that produced the file.
 - `--stdout` -- write generated Verilog to stdout instead of `genesis_synth`/`genesis_verif`. Skips `.vlist`/`.depend`/clean script and removes the raw dir on exit. Overrides `--gen-raw`: no raw `.v` siblings are written and the raw dir is removed regardless.
 - `--product FILE` -- write Genesis2-style product file lists. `--product FILE.ext` produces three files: `FILE.ext` (all modules), `FILE.synth.ext` (synth-cone), `FILE.verif.ext` (verif-cone). Suppresses the default `<top>.vlist`/`<top>.vlist.verif`.
-- `--json-out FILE` -- write a `HierarchyTop` snapshot of the elaborated module tree (port of Perl `-hierarchy`). Emits three files in `dirname(FILE)`: `FILE` (full: every parameter, declared defaults included, with force-pinned ones under `ImmutableParameters`), `<stem>-small<ext>` (no `ImmutableParameters`), `<stem>-tiny<ext>` (only params with priority `>= EXTERNAL_PARAM_FILE`). Values are written under `Val`; `--json-cfg` reads that spelling too, so a snapshot can be fed back in. A deduplicated instance is recorded as `CloneOf` with no parameters of its own, so a fed-back snapshot sets values only on the instances that were elaborated.
+- `--json-out FILE` -- write a `HierarchyTop` snapshot of the elaborated module tree (port of Perl `-hierarchy`). Emits three files in `dirname(FILE)`: `FILE` (full: every parameter, declared defaults included, with those a parent keyword or a force set under `ImmutableParameters`), `<stem>-small<ext>` (no `ImmutableParameters`), `<stem>-tiny<ext>` (only `Parameters` set by `--json-cfg` or `--parameter`). Each node carries `InstanceName`, `UniqueModuleName`, `BaseModuleName` (the emitted name) and `TemplateName` (the source template, which differs from the emitted name under `generate_w_name`). Values are written under `Val`; `--json-cfg` reads that spelling too and ignores the name fields, so a snapshot can be fed back in. A deduplicated instance is recorded as `CloneOf` with no parameters of its own, so a fed-back snapshot sets values only on the instances that were elaborated. Converted with `genesispy-json2xml`, any of the three files is also a Genesis2 `-xml` config that reproduces the run's Verilog, up to unique module names.
 - `--vf-out FILE` -- write a single Verilog file-list product to `FILE` (auto-appends `.vf` if missing). Unlike `--product`, no `.synth`/`.verif` side-files are emitted. Suppresses the default `<top>.vlist`/`<top>.vlist.verif`. Mutually exclusive with `--product`.
 - `--depend FILE` -- override the dependency-list output path (default: `<top>.depend`).
 - `--path FILE` -- write the list of directories touched during elaboration to `FILE`.
@@ -1201,9 +1222,9 @@ flag style) are listed below. For behaviour-affecting incompatibilities
 - **File extension** -- `.vp` -> `.vpy`, `.svp` -> `.svpy`. Configurable via the repeatable `--extension EXT_IN=EXT_OUT` flag (e.g. `--extension .tvpy=.tv` to register a custom pair, or `--extension .vpy=.sv` to redirect the default).
 - **`--suffix` removed** -- replaced by `--extension`. `-sv`/`--system-verilog` is preserved as a shorthand for `--extension .vpy=.sv`.
 - **`--comment` -> `--source-comment`** -- `--comment PREFIX` is a deprecated alias for `--source-comment PREFIX`; it is retained and emits a one-time stderr warning. New flag `--output-comment PREFIX | OPEN,CLOSE` controls the style for comments emitted into the output (banner and `--stdout` separator); defaults to `--source-comment`. Genesis2 has no equivalent to `--output-comment`.
-- **`--defaults`** -- genesispy-only; per-module parameter defaults below every other source (section 6.5). Genesis2 has no equivalent.
+- **`--defaults`** -- genesispy-only; per-module parameter defaults below every other source (section 6.5). Genesis2 has no equivalent. Same for `--defaults-entry` and `--strict-unused`; the latter also covers the overrides Genesis2's `Finalize` checks, which Genesis2 always treats as fatal.
 - **`--param-footer`** -- genesispy-only; appends a resolved-parameter provenance block after each generated module. Off by default, so migrated designs emit unchanged output. Genesis2 has no equivalent.
-- **Config input** -- XML support removed from the core CLI; convert legacy XML once with `genesispy-xml2json in.xml out.json` and pass `--json-cfg out.json`. The reverse helper `genesispy-json2xml` is provided for symmetry. The converter types an XML value only when that is lossless (`<Val>8</Val>` becomes `8`, `1.5` becomes `1.5`, `true`/`false` become booleans); `010`, `1e3`, `+5` and any other text stay strings, as XML::Simple handed them to Perl. The JSON loader never coerces: a string leaf reaches the template as typed. A JSON `null` round-trips through `genesispy-json2xml` as an empty element, which reads back as `""`.
+- **Config input** -- XML support removed from the core CLI; convert legacy XML once with `genesispy-xml2json in.xml out.json` and pass `--json-cfg out.json`. The reverse helper `genesispy-json2xml` writes XML that Genesis2 reads: it restores the `ParameterItem`, `SubInstanceItem` and `List` wrapper elements, writes a list or dict `Val` as `ArrayType`/`HashType`, and writes booleans as `true`/`false`. The converter types an XML value only when that is lossless (`<Val>8</Val>` becomes `8`, `1.5` becomes `1.5`, `true`/`false` become booleans); `010`, `1e3`, `+5` and any other text stay strings, as XML::Simple handed them to Perl. The JSON loader never coerces: a string leaf reaches the template as typed. A JSON `null` round-trips through `genesispy-json2xml` as an empty element, which reads back as `""`.
 - **`ImmutableParameters` (input config)** -- ignored by both engines. Genesis2 `ConfigHandler.pm:875-919` reads only `{Parameters}` from input XML; `{ImmutableParameters}` is touched only by the writeback path (`ConfigHandler.pm:677, 724`). genesispy reads only a node's `Parameters` in `config_handler.py:_find_param`. The tag is writeback-only metadata in both engines. To actually pin past a parent's `unique_inst` kwarg, use `force_param` (Genesis2) / `parameter(..., force=True)` (genesispy); both write at `IMMUTABLE`.
 - **`//;` body language** -- Perl -> Python.
 - **Verilog compiler directives need `` \` `` escaping** -- Genesis2 passes bare `` `timescale ``, `` `default_nettype ``, `` `include ``, `` `uvm_* `` through to the output (Manager.pm:810-820); in genesispy every backtick opens an expression, so a bare directive raises `ParseError`. Write `` \`timescale 1ps/1ps `` to emit a literal backtick. `genesispy-vp2vpy` inserts the escape automatically.
@@ -1225,7 +1246,7 @@ flag style) are listed below. For behaviour-affecting incompatibilities
 - **`ununique_inst` / `generate_base`** -- preserves the bare base name on first call (matches Perl `UnUniquifiedModules`, UniqueModule.pm:1610). A second call for the same base name with the same resolved params and the same scoped-override subtree aliases the first instance under the new instance name. Different resolved params raise `ElaborationError` with both param dicts (the emitted module name is global, so two distinct elaborations can't both keep the bare name). Differing scoped-override subtrees re-elaborate and compare the generated bodies, mirroring Perl's file comparison (UniqueModule.pm:1674): identical bodies alias, divergence raises.
 - **`synonym(...)` arity** -- the bare-name `synonym(...)` in `.vpy` bodies is an arity dispatcher: `synonym(name)` mirrors the current module's outfile under `name` (genesispy instance-level semantics); `synonym(src, trgt)` registers `trgt` as a class-level template synonym of `src` via `Manager.synonym_class` (Perl semantics). Perl supports only the 2-arg form; the 1-arg form is a genesispy extension.
 - **`sname`** -- mirrors Perl `get_source_name` (UniqueModule.pm:377): returns the source template name (`_synonym_for` set by `Manager.synonym_class` on a synonym-derived class, else the base module name == `bname`).
-- **`--json-out`** (Perl `-hierarchy`) -- same three-file output and same `HierarchyTop` schema, but emitted as JSON (use `genesispy-json2xml` for XML). Sibling filenames diverge from Perl: Perl emits `<f>`/`small_<f>`/`tiny_<f>`; genesispy splits `<f>` into `<stem><ext>` and emits `<stem><ext>`/`<stem>-small<ext>`/`<stem>-tiny<ext>`. `ImmutableParameters` holds force-pinned parameters (Perl fills it by inheritance recursion instead). The `tiny` variant filters by `priority >= EXTERNAL_PARAM_FILE`; genesispy cannot replicate Perl's `inherit_param`-aware priority assignment, so the `tiny` set may be a strict superset of Perl's (params Perl tags as inherited may appear as user-overrides in genesispy).
+- **`--json-out`** (Perl `-hierarchy`) -- same three-file output and same `HierarchyTop` schema, but emitted as JSON (use `genesispy-json2xml` for XML). Sibling filenames diverge from Perl: Perl emits `<f>`/`small_<f>`/`tiny_<f>`; genesispy splits `<f>` into `<stem><ext>` and emits `<stem><ext>`/`<stem>-small<ext>`/`<stem>-tiny<ext>`. Each node also carries `TemplateName`, which Genesis2 does not write and ignores in an XML config. As in Perl, `ImmutableParameters` holds the parameters a parent keyword or a force set, and `tiny` holds only parameters set by the JSON config or the command line. Perl also puts a parameter whose value refers to an instance under `ImmutableParameters`, and it leaves out parameters the template never reads; genesispy lists every parameter the template declares.
 - **Names** -- `get_module_name()` returns the unique (emitted) module name and `get_base_name()` the template name, as in Genesis2. Parameter names must match `\w+` in both engines; a synonym target that names an existing template is refused in both.
 - **Command-line overrides** -- with `--params-global`, a bare `-p W=9` is accepted and applies to every instance that reads `W`; without the flag it is an error, as in Genesis2, which always requires `path.name`; an override that no instance reads is a warning after elaboration, where Genesis2's `Finalize` dies. The `.cfg` API requires `path.name` and `get_configuration` on an unset name is fatal, as in Genesis2.
 

@@ -180,3 +180,110 @@ def test_identical_instances_still_share_one_module(tmp_path, monkeypatch):
     d = _write_defaults(tmp_path, {"leaf": {"N": 5}})
     assert _run(tmp_path, [*argv, "--defaults", d], monkeypatch) == 0
     assert len(list((tmp_path / "out").glob("leaf*.v"))) == 1
+
+
+# A key another tier outranks still counts as used; only a key nothing reads warns.
+@pytest.mark.parametrize("extra, top", [
+    ([], _top("//; u = unique_inst('leaf', 'u', N=9)\n")),
+    (["-p", "N=9", "--params-global"], None),
+    (["-p", "top.u.N=9"], None),
+])
+def test_an_outranked_key_counts_as_used(tmp_path, monkeypatch, capsys, extra, top):
+    argv = _design(tmp_path, top)
+    d = _write_defaults(tmp_path, {"leaf": {"N": 5}})
+    assert _run(tmp_path, [*argv, *extra, "--defaults", d], monkeypatch) == 0
+    assert "// N=9 M=2" in _leaf_text(tmp_path)
+    assert "never used" not in capsys.readouterr().err
+
+
+def test_a_key_behind_the_generated_name_entry_counts_as_used(tmp_path, monkeypatch, capsys):
+    argv = _design(tmp_path, _top("//; u = generate_w_name('leaf', 'leaf_fast', 'u')\n"))
+    d = _write_defaults(tmp_path, {"leaf": {"N": 5, "M": 6}, "leaf_fast": {"N": 8}})
+    assert _run(tmp_path, [*argv, "--defaults", d], monkeypatch) == 0
+    assert "never used" not in capsys.readouterr().err
+
+
+def test_a_key_for_a_forced_parameter_is_reported_forced(tmp_path, monkeypatch, capsys):
+    argv = _design(tmp_path, leaf=FORCED_LEAF)
+    d = _write_defaults(tmp_path, {"leaf": {"N": 5}})
+    assert _run(tmp_path, [*argv, "--defaults", d], monkeypatch) == 0
+    err = capsys.readouterr().err
+    assert "default leaf.N is forced (--defaults d.py)" in err
+    assert "never used" not in err
+
+
+UNUSED_KINDS = {
+    "overrides": ({"leaf": {"N": 5}}, ["-p", "top.v.N=1"],
+                  "override top.v.N was never used"),
+    "entries": ({"leaf": {"N": 5}, "ghost": {"N": 1}}, [], "default ghost was never used"),
+    "keys": ({"leaf": {"N": 5, "TYPO": 1}}, [], "default leaf.TYPO was never used"),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(UNUSED_KINDS))
+def test_an_unused_kind_warns_without_strict(tmp_path, monkeypatch, capsys, kind):
+    tree, extra, message = UNUSED_KINDS[kind]
+    argv = _design(tmp_path)
+    d = _write_defaults(tmp_path, tree)
+    assert _run(tmp_path, [*argv, *extra, "--defaults", d], monkeypatch) == 0
+    assert message in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("strict", ["{kind}", "all", "overrides,entries,keys"])
+@pytest.mark.parametrize("kind", sorted(UNUSED_KINDS))
+def test_a_strict_kind_fails_before_output(tmp_path, monkeypatch, capsys, kind, strict):
+    tree, extra, message = UNUSED_KINDS[kind]
+    argv = _design(tmp_path)
+    d = _write_defaults(tmp_path, tree)
+    flags = ["--strict-unused", strict.format(kind=kind)]
+    assert _run(tmp_path, [*argv, *extra, "--defaults", d, *flags], monkeypatch) == 3
+    err = capsys.readouterr().err
+    assert re.search(rf"error:\S* {re.escape(message)}", err), err
+    assert not list(tmp_path.glob("out/*.v"))
+
+
+def test_an_unlisted_kind_stays_a_warning(tmp_path, monkeypatch, capsys):
+    tree, extra, message = UNUSED_KINDS["entries"]
+    argv = _design(tmp_path)
+    d = _write_defaults(tmp_path, tree)
+    assert _run(tmp_path, [*argv, "--defaults", d, "--strict-unused", "keys"], monkeypatch) == 0
+    assert re.search(rf"warning:\S* {re.escape(message)}", capsys.readouterr().err)
+
+
+def test_an_unknown_strict_kind_is_a_usage_error():
+    with pytest.raises(SystemExit) as exc:
+        parse_args(["--strict-unused", "keys,bogus"])
+    assert exc.value.code == 2
+
+
+def _leaf_as_top(tmp_path: Path) -> list[str]:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "leaf.vpy").write_text(LEAF)
+    return ["--input", "leaf.vpy", "--top", "leaf", "--src-path", "src", "--out-dir", "out"]
+
+
+def test_defaults_entry_gives_the_top_a_named_entry(tmp_path, monkeypatch, capsys):
+    argv = _leaf_as_top(tmp_path)
+    d = _write_defaults(tmp_path, {"leaf_fast": {"N": 8}})
+    flags = ["--defaults", d, "--defaults-entry", "leaf_fast"]
+    assert _run(tmp_path, [*argv, *flags], monkeypatch) == 0
+    assert "// N=8 M=2" in _leaf_text(tmp_path)
+    assert "never used" not in capsys.readouterr().err
+
+
+def test_defaults_entry_missing_from_every_file_is_an_error(tmp_path, monkeypatch, capsys):
+    argv = _leaf_as_top(tmp_path)
+    d = _write_defaults(tmp_path, {"leaf": {"N": 8}})
+    flags = ["--defaults", d, "--defaults-entry", "ghost"]
+    assert _run(tmp_path, [*argv, *flags], monkeypatch) == 1
+    assert "--defaults-entry ghost" in capsys.readouterr().err
+
+
+def test_defaults_entry_leaves_the_children_on_their_own_entries(tmp_path, monkeypatch):
+    top = _top("//; T = parameter('T', 0)\n//; u = unique_inst('leaf', 'u')\n// T=`T`\n")
+    argv = _design(tmp_path, top)
+    d = _write_defaults(tmp_path, {"top_alt": {"T": 3, "N": 7}, "leaf": {"N": 5}})
+    flags = ["--defaults", d, "--defaults-entry", "top_alt"]
+    assert _run(tmp_path, [*argv, *flags], monkeypatch) == 0
+    assert "// T=3" in _leaf_text(tmp_path, "top")
+    assert "// N=5 M=2" in _leaf_text(tmp_path)

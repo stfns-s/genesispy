@@ -183,3 +183,34 @@ def test_missing_inputs_raise_file_not_found(tmp_path):
         xml_json.xml_to_json(str(tmp_path / "nope.xml"), str(tmp_path / "o.json"))
     with pytest.raises(FileNotFoundError):
         xml_json.json_to_xml(str(tmp_path / "nope.json"), str(tmp_path / "o.xml"))
+
+
+_WALLACE = _REPO_ROOT / "demos" / "many_iterative_wallace_trees"
+
+
+def test_json2xml_restores_the_genesis2_wrapper_elements(tmp_path):
+    """config.json was converted from config.xml; converting back gives the same tree."""
+    out = tmp_path / "config.xml"
+    xml_json.json_to_xml(str(_WALLACE / "config.json"), str(out))
+    assert xml_json._read_xml(str(out)) == xml_json._read_xml(str(_WALLACE / "config.xml"))
+
+
+@pytest.mark.parametrize(
+    "val, key",
+    [([1, [2, 3]], "__ArrayType__"), ({"a": 1, "b": [2, False]}, "__HashType__"),
+     (True, "__Val__")],
+)
+def test_json2xml_types_a_val_as_genesis2_does(tmp_path, val, key):
+    """A --json-out ``Val`` holding a list, dict or bool reads back as that value."""
+    src = tmp_path / "snap.json"
+    src.write_text(json.dumps({"HierarchyTop": {
+        "InstanceName": "top", "Parameters": [{"Name": "P", "Val": val}]}}))
+    xml = tmp_path / "snap.xml"
+    xml_json.json_to_xml(str(src), str(xml))
+    text = xml.read_text()
+    assert "<ParameterItem>" in text
+    assert "True" not in text and "False" not in text
+    back = tmp_path / "back.json"
+    xml_json.xml_to_json(str(xml), str(back))
+    (param,) = json.loads(back.read_text())["HierarchyTop"]["Parameters"]
+    assert param == {"Name": "P", key: val}

@@ -1,3 +1,3 @@
 """genesispy — Python port of the Genesis2 Chip Generator."""
 
-__version__ = "0.6.2"
+__version__ = "0.6.3"

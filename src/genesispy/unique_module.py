@@ -342,6 +342,19 @@ class UniqueModule:
                 name, min=min, max=max, step=step, list_=list
             )
 
+        # Read the --defaults entries on every call, so a key another source
+        # outranks counts as used: the top's --defaults-entry, then the
+        # module's own entry (for a generate_w_name module the emitted name),
+        # then the source template's.
+        cfg = self._manager.cfg_handler
+        found = False
+        if cfg is not None:
+            top_entry = cfg.top_entry if self._parent is None else None
+            forced = force or self._params.get(name, {}).get("state") == STATE_FORCED
+            found, dflt = cfg.module_default(
+                (top_entry, self._module_name, self.sname), name, forced=forced
+            )
+
         # Forced form: write at FORCED priority and skip cfg lookup
         # (Perl force_param: define_param at IMMUTABLE, UniqueModule.pm:479).
         if force:
@@ -360,7 +373,6 @@ class UniqueModule:
             self._range_check(name, self._params[name]["value"])
             return self._params[name]["value"]
 
-        cfg = self._manager.cfg_handler
         if cfg is not None:
             path = self._instance_path_segments()
             v, prio = cfg.get_configuration_with_priority(
@@ -368,12 +380,8 @@ class UniqueModule:
             )
             # prio is None only when no source defines the name; an explicit
             # JSON null arrives as (None, EXTERNAL_PARAM_FILE) and applies.
-            if prio is None:
-                # The module's own entry first; for a generate_w_name module
-                # that is the emitted name, then the source template's.
-                found, v = cfg.module_default((self._module_name, self.sname), name)
-                if found:
-                    prio = int(Priority.MODULE_DEFAULT)
+            if prio is None and found:
+                v, prio = dflt, int(Priority.MODULE_DEFAULT)
             if prio is not None:
                 self._params[name]["value"] = v
                 self._params[name]["state"] = STATE_OVERRIDDEN

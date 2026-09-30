@@ -68,6 +68,9 @@ PRIORITY_LABELS: dict[int, str] = {
     int(Priority.IMMUTABLE):           "forced (force_param)",
 }
 
+# report_unused() kinds, the values --strict-unused accepts besides "all".
+UNUSED_KINDS = ("overrides", "entries", "keys")
+
 
 def priority_label(priority: Optional[int]) -> str:
     """Return the configuration source that wrote a parameter's ``priority``."""
@@ -476,12 +479,21 @@ class ConfigHandler:
         self._defaults: dict[str, dict] = {}
         self._defaults_read: set[str] = set()
         self._defaults_taken: set[tuple[str, str]] = set()
+        self._defaults_forced: set[tuple[str, str]] = set()
+        # --defaults-entry: the entry the top reads before its own.
+        self.top_entry: Optional[str] = getattr(manager.args, "defaults_entry", None)
 
         # Parse ``manager.args.parameter`` if present (list of NAME=VALUE).
         self._init_cmdln_from_manager()
         for name in getattr(manager.args, "defaults", None) or []:
             resolve = getattr(manager, "_resolve_cfg_path", None)
             self.read_defaults(resolve(name) if resolve else name, shown=name)
+        if self.top_entry is not None:
+            if self.top_entry not in self._defaults:
+                raise reporting.ConfigError(
+                    f"--defaults-entry {self.top_entry}: no --defaults file holds it"
+                )
+            self._defaults_read.add(self.top_entry)
 
     # ------------------------------------------------------------------ #
     # Cmd-line parameter ingestion                                       #
@@ -569,18 +581,25 @@ class ConfigHandler:
                 "file": shown,
             }
 
-    def module_default(self, names: Iterable[Optional[str]], name: str) -> tuple[bool, Any]:
+    def module_default(
+        self, names: Iterable[Optional[str]], name: str, *, forced: bool = False
+    ) -> tuple[bool, Any]:
         """``(True, value)`` from the first of ``names``' entries that holds
-        ``name``, else ``(False, None)``. Every entry consulted counts as read."""
+        ``name``, else ``(False, None)``. Every entry in ``names`` counts as
+        read and every key ``name`` in them as taken, or as forced when
+        ``forced``: an outranked key is not a misspelled one."""
+        found, value = False, None
         for entry_name in dict.fromkeys(n for n in names if n):
             entry = self._defaults.get(entry_name)
             if entry is None:
                 continue
             self._defaults_read.add(entry_name)
             if name in entry["params"]:
-                self._defaults_taken.add((entry_name, name))
-                return True, entry["params"][name]
-        return False, None
+                (self._defaults_forced if forced else self._defaults_taken).add(
+                    (entry_name, name))
+                if not found:
+                    found, value = True, entry["params"][name]
+        return found, value
 
     # ------------------------------------------------------------------ #
     # JSON I/O                                                           #
@@ -794,12 +813,12 @@ class ConfigHandler:
                 self._used.add(("cmdln", name))
         return out
 
-    def report_unused(self) -> list[str]:
-        """One message per command-line or ``.cfg`` override no lookup
-        consumed (Perl ``Finalize``, ConfigHandler.pm:436-442, which dies;
-        genesispy warns), then per ``--defaults`` entry no module read and per
-        key of a read entry no ``parameter()`` took. JSON parameters are not
-        checked, as in Perl."""
+    def report_unused(self) -> list[tuple[str, str]]:
+        """``(kind, message)`` per command-line or ``.cfg`` override no lookup
+        consumed (kind ``overrides``; Perl ``Finalize``, ConfigHandler.pm:436-442,
+        dies), then per ``--defaults`` entry no module read (``entries``) and
+        per key of a read entry no ``parameter()`` took or only a forced one
+        read (``keys``). JSON parameters are not checked, as in Perl."""
         def dotted(path: tuple[str, ...], name: str) -> str:
             return ".".join((*path, name))
 
@@ -813,16 +832,18 @@ class ConfigHandler:
         for (path, name) in self._cfg_scoped_db:
             if ("cfg_scoped", path, name) not in self._used:
                 found.append((dotted(path, name), "configure()"))
-        msgs = [f"override {spec} was never used ({src})" for spec, src in sorted(found)]
+        msgs = [("overrides", f"override {spec} was never used ({src})")
+                for spec, src in sorted(found)]
         for name, entry in sorted(self._defaults.items()):
+            src = f"(--defaults {entry['file']})"
             if name not in self._defaults_read:
-                msgs.append(f"default {name} was never used (--defaults {entry['file']})")
+                msgs.append(("entries", f"default {name} was never used {src}"))
                 continue
             for key in entry["params"]:
-                if (name, key) not in self._defaults_taken:
-                    msgs.append(
-                        f"default {name}.{key} was never used (--defaults {entry['file']})"
-                    )
+                if (name, key) in self._defaults_taken:
+                    continue
+                why = "is forced" if (name, key) in self._defaults_forced else "was never used"
+                msgs.append(("keys", f"default {name}.{key} {why} {src}"))
         return msgs
 
     # ------------------------------------------------------------------ #
@@ -1028,24 +1049,25 @@ def extract_stats(top_inst: Any, *, variant: str = "full") -> dict:
 
     ``variant`` selects the Perl output flavour:
 
-    * ``"full"``  -- every param, declared defaults included: forced
-      (``force=True`` / ``force_param``) ones under ImmutableParameters,
-      the rest under Parameters; the full subinstance tree.
+    * ``"full"``  -- every param, declared defaults included: those tied
+      by a parent keyword or a force (priority >= INHERITANCE) under
+      ImmutableParameters, the rest under Parameters; the full
+      subinstance tree.
     * ``"small"`` -- Parameters and full subinstance tree; the
       ImmutableParameters bucket is dropped.
     * ``"tiny"``  -- only Parameters with priority >= EXTERNAL_PARAM_FILE
-      (JSON, CLI, parent-kwargs, and force-pinned overrides;
-      ``.cfg`` ``configure(...)`` overrides at ``EXTERNAL_CONFIG`` are
-      excluded by design — mirrors Perl
-      ``ConfigHandler.pm::extract_stats``); subinstances with no
-      relevant params and no relevant descendants are pruned.
+      (JSON and command line; ``.cfg`` ``configure(...)`` overrides at
+      ``EXTERNAL_CONFIG`` are excluded by design); subinstances with no
+      relevant params and no relevant descendants are pruned. All three
+      mirror Perl ``ConfigHandler.pm::extract_stats``.
 
     Schema mirrors the Perl ``ConfigHandler.pm::extract_stats`` output
     after ``genesispy-xml2json`` post-processing: the ``HierarchyTop``
     element directly carries the root instance fields (InstanceName,
-    BaseModuleName, UniqueModuleName, Parameters, ImmutableParameters,
-    SubInstances). ``Parameters`` / ``ImmutableParameters`` /
-    ``SubInstances`` are bare lists of dicts (xml2json collapses the
+    BaseModuleName, UniqueModuleName, TemplateName, Parameters,
+    ImmutableParameters, SubInstances). TemplateName (the source template,
+    ``sname``) is genesispy-only; the loader ignores it. ``Parameters`` /
+    ``ImmutableParameters`` / ``SubInstances`` are bare lists of dicts (xml2json collapses the
     ``ParameterItem`` / ``SubInstanceItem`` wrappers; we emit the same
     collapsed form). Clones emit a single ``CloneOf.InstancePath``
     (Perl ConfigHandler.pm:673) with no params or subinstances.
@@ -1067,6 +1089,7 @@ def _stats_entry(inst: Any, variant: str) -> dict:
         "InstanceName": inst.get_instance_name(),
         "UniqueModuleName": inst._unique_module_name,
         "BaseModuleName": type(inst).__name__,
+        "TemplateName": str(inst.sname),
     }
     clone_of = inst._clone_of
     if clone_of is not None:
@@ -1096,23 +1119,24 @@ def _split_params(
 ) -> tuple[list[dict], list[dict]]:
     """Return ``(Parameters, ImmutableParameters)`` item lists.
 
-    Perl splits by recursion (ConfigHandler.pm:683-708); genesispy puts
-    force-pinned params (IMMUTABLE priority) in the second bucket, which
-    only the ``full`` variant emits.
+    As in Perl (ConfigHandler.pm:683-708), a param tied by a parent keyword
+    or a force (priority >= INHERITANCE) goes in the second bucket, which
+    only the ``full`` variant emits; ``tiny`` keeps only first-bucket params
+    at priority >= EXTERNAL_PARAM_FILE.
     """
     live: list[dict] = []
     immut: list[dict] = []
     ext_param = int(Priority.EXTERNAL_PARAM_FILE)
-    immutable = int(Priority.IMMUTABLE)
+    inherited = int(Priority.INHERITANCE)
     for name, p in params.items():
         prio = int(p.get("priority", 0))
-        if variant == "tiny" and prio < ext_param:
+        if variant == "tiny" and not ext_param <= prio < inherited:
             continue
         item: dict[str, Any] = {"Name": name, "Val": p.get("value")}
         doc = p.get("doc")
         if doc:
             item["Doc"] = doc
-        if prio >= immutable and variant != "tiny":
+        if prio >= inherited:
             if variant == "full":
                 immut.append(item)
             continue
@@ -1127,6 +1151,7 @@ def _synonym_stubs(inst: Any) -> list[dict]:
             "InstanceName": syn_name,
             "UniqueModuleName": inst._unique_module_name,
             "BaseModuleName": type(inst).__name__,
+            "TemplateName": str(inst.sname),
             "SynonymFor": _instance_path_dotted(inst),
         })
     return stubs

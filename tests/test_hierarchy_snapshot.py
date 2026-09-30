@@ -6,11 +6,14 @@ import json
 
 import pytest
 
+from genesispy import cache
+from genesispy.cli import parse_args
 from genesispy.config_handler import (
     ConfigHandler,
     Priority,
     extract_stats,
 )
+from genesispy.manager import Manager
 from genesispy.reporting import GenesisPyError
 from genesispy.unique_module import UniqueModule
 
@@ -86,14 +89,15 @@ def test_full_snapshot_shape() -> None:
 
     a = by_name["u_a"]
     a_params = {p["Name"]: p["Val"] for p in a["Parameters"]}
-    # DEPTH is a declared default and stays; DEBUG (INHERITANCE) goes in
-    # Parameters; only the force-pinned PIN lands under ImmutableParameters.
-    assert a_params == {"WIDTH": 8, "DEPTH": 4, "DEBUG": True}
-    assert {p["Name"]: p["Val"] for p in a["ImmutableParameters"]} == {"PIN": 3}
+    # DEPTH is a declared default and stays; as in Perl, the parent-set DEBUG
+    # (INHERITANCE) and the force-pinned PIN land under ImmutableParameters.
+    assert a_params == {"WIDTH": 8, "DEPTH": 4}
+    assert {p["Name"]: p["Val"] for p in a["ImmutableParameters"]} == {"DEBUG": True, "PIN": 3}
 
     # Clone: only CloneOf, no params/subinstances. Path uses dot separator.
     b = by_name["u_b"]
     assert b["CloneOf"] == {"InstancePath": "_Top.u_a"}
+    assert b["TemplateName"] == "_Leaf"
     assert "Parameters" not in b
     assert "SubInstances" not in b
 
@@ -104,7 +108,7 @@ def test_small_drops_immutable_keeps_subtree() -> None:
     children = snap["HierarchyTop"]["SubInstances"]
     a = next(c for c in children if c["InstanceName"] == "u_a")
     assert "ImmutableParameters" not in a
-    assert {p["Name"] for p in a["Parameters"]} == {"WIDTH", "DEPTH", "DEBUG"}
+    assert {p["Name"] for p in a["Parameters"]} == {"WIDTH", "DEPTH"}
 
 
 def test_tiny_keeps_only_user_overrides() -> None:
@@ -113,9 +117,9 @@ def test_tiny_keeps_only_user_overrides() -> None:
     children = snap["HierarchyTop"]["SubInstances"]
     by_name = {c["InstanceName"]: c for c in children}
 
-    # u_a: WIDTH (CMD_LINE) and DEBUG (INHERITANCE) both >= EXTERNAL_PARAM_FILE.
-    # Pre-#81 fix DEBUG was dropped via the immut bucket.
-    assert {p["Name"] for p in by_name["u_a"]["Parameters"]} == {"WIDTH", "DEBUG", "PIN"}
+    # u_a: only WIDTH (CMD_LINE) is in [EXTERNAL_PARAM_FILE, INHERITANCE), as
+    # in Perl; DEBUG (INHERITANCE) and PIN (IMMUTABLE) are tied, not configured.
+    assert {p["Name"] for p in by_name["u_a"]["Parameters"]} == {"WIDTH"}
     assert "ImmutableParameters" not in by_name["u_a"]
 
     # u_c: WIDTH at EXTERNAL_CONFIG (< EXTERNAL_PARAM_FILE) -> empty -> pruned.
@@ -148,6 +152,7 @@ def test_synonym_emitted_as_sibling_stub() -> None:
     assert "Alias" in by_name
     stub = by_name["Alias"]
     assert stub["SynonymFor"] == "_Top.u_a"
+    assert stub["TemplateName"] == "_Leaf"
     assert "Parameters" not in stub
     assert "SubInstances" not in stub
 
@@ -181,7 +186,7 @@ def test_write_json_emits_three_files(tmp_path) -> None:
         c for c in full["HierarchyTop"]["SubInstances"]
         if c["InstanceName"] == "u_a"
     )
-    assert {p["Name"] for p in full_a["ImmutableParameters"]} == {"PIN"}
+    assert {p["Name"] for p in full_a["ImmutableParameters"]} == {"DEBUG", "PIN"}
 
     small_a = next(
         c for c in small["HierarchyTop"]["SubInstances"]
@@ -191,3 +196,43 @@ def test_write_json_emits_three_files(tmp_path) -> None:
 
     tiny_children = tiny["HierarchyTop"]["SubInstances"]
     assert {c["InstanceName"] for c in tiny_children} == {"u_a", "u_b"}
+
+
+# ---------------------------------------------------------------------- #
+# TemplateName through --json-out                                        #
+# ---------------------------------------------------------------------- #
+
+_GEN_TOP = (
+    "//; u = generate_w_name('leaf', 'leaf_fast', 'u')\n"
+    "module `mname` (input clk);\n`u.instantiate()` (.clk(clk));\nendmodule\n"
+)
+_GEN_LEAF = "//; N = parameter('N', 1)\nmodule `mname` (input clk);\n// N=`N`\nendmodule\n"
+
+
+def _run_gen(tmp_path, monkeypatch, *extra: str) -> int:
+    monkeypatch.chdir(tmp_path)
+    cache.clear_all()
+    argv = ["--input", "top.vpy", "--input", "leaf.vpy", "--top", "top", "--src-path", "src",
+            "--out-dir", "out", *extra]
+    return Manager(parse_args(argv)).execute()
+
+
+def test_json_out_records_the_template_of_a_generated_name(tmp_path, monkeypatch) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "top.vpy").write_text(_GEN_TOP)
+    (tmp_path / "src" / "leaf.vpy").write_text(_GEN_LEAF)
+    assert _run_gen(tmp_path, monkeypatch, "--json-out", "hier.json") == 0
+    root = json.loads((tmp_path / "hier.json").read_text())["HierarchyTop"]
+    assert root["TemplateName"] == "top"
+    (u,) = root["SubInstances"]
+    assert u["TemplateName"] == "leaf"
+    assert u["UniqueModuleName"] == "leaf_fast"
+
+    # Fed back as --json-cfg, the snapshot loads and its values apply.
+    for p in u["Parameters"]:
+        if p["Name"] == "N":
+            p["Val"] = 4
+    (tmp_path / "cfg.json").write_text(json.dumps({"HierarchyTop": root}))
+    assert _run_gen(tmp_path, monkeypatch, "--json-cfg", "cfg.json") == 0
+    (leaf_v,) = (tmp_path / "out").glob("leaf_fast*.v")
+    assert "// N=4" in leaf_v.read_text()

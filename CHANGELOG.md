@@ -2,6 +2,32 @@
 
 Notable changes to genesispy. Versions follow `pyproject.toml`.
 
+## 0.6.3
+
+- Incompatible: `--json-out` files parameters as Perl does. A parameter a parent keyword set now
+  goes under `ImmutableParameters` with the forced ones, so it leaves full `Parameters` and the small
+  variant. `tiny` keeps only parameters set by `--json-cfg` or `--parameter`, dropping parent-keyword
+  and forced ones. Fed back with `--json-cfg`, a snapshot gives the same result as before.
+- Incompatible: `ConfigHandler.report_unused` returns `(kind, message)` pairs.
+- `--defaults` keys count as used whenever `parameter()` names them, whichever source supplies the
+  value. A key outranked by a parent keyword, `-p`, `.cfg`, JSON or an earlier entry no longer
+  warns; a key naming a `force=True` parameter now warns `default ENTRY.KEY is forced`.
+- New `--strict-unused KIND[,KIND...]` (`overrides`, `entries`, `keys`, `all`): report those
+  unused items as errors and exit 3 before writing output. User guide section 6.5.
+- New `--defaults-entry NAME`: the top reads `--defaults` entry `NAME` before its own. User guide
+  section 6.5.
+- `--json-out` nodes carry `TemplateName`, the source template; `--json-cfg` ignores it.
+- `genesispy-json2xml` output is now a Genesis2 config: it restores the `ParameterItem`,
+  `SubInstanceItem` and `List` wrappers, writes a list or dict `Val` as `ArrayType`/`HashType`,
+  writes booleans as `true`/`false`, and writes a dict nested in a list or hash as `HashType`. A
+  `--json-out` snapshot converted this way drives Genesis2 to the same Verilog, up to unique module
+  names.
+- `genesispy.mk` and the dsp demo's `Makefile`: a changed command line now always rebuilds. The
+  `.flags` stamp is compared, and the product removed, while make reads the makefile. Before, a
+  stamp recipe removed the product after make had already read its mtime, so a stamp whose coarse
+  mtime tied with the product's left the old build in place, the product deleted, and exit 0. Only
+  goals that build the product do this, and not under `make -n`.
+
 ## 0.6.2
 
 - Incompatible: a bare `-p NAME=VALUE` (no instance path) is an error unless `--params-global` is

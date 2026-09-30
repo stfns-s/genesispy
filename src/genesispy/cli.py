@@ -24,6 +24,7 @@ from genesispy.cli_common import (  # noqa: F401 -- re-exported for callers and 
     _reset_deprecation_warnings,
     _warned_aliases,
 )
+from genesispy.config_handler import UNUSED_KINDS
 from genesispy.extensions import parse_extension_spec
 
 
@@ -127,6 +128,28 @@ def _build_parser() -> argparse.ArgumentParser:
             "Per-module parameter defaults: a .py file defining BLOCK_PARAMS, "
             "or a .json file with the same tree; searched like --cfg. Outranked "
             "by every other source. May be repeated."
+        ),
+    )
+    g_in.add_argument(
+        "--defaults-entry",
+        dest="defaults_entry",
+        default=None,
+        metavar="NAME",
+        help=(
+            "The top module reads --defaults entry NAME before its own; its "
+            "children are unaffected. NAME must be in a --defaults file."
+        ),
+    )
+    g_in.add_argument(
+        "--strict-unused",
+        dest="strict_unused",
+        action="append",
+        default=[],
+        metavar="KIND[,KIND...]",
+        help=(
+            "Report these unused-item kinds as errors and exit 3 before writing "
+            "output: overrides (--parameter, configure()), entries and keys "
+            "(--defaults), or all. May be repeated."
         ),
     )
     g_in.add_argument(
@@ -721,6 +744,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         parser.error("--parse-only and --gen-only are mutually exclusive")
     if args.keep_tmp:
         args.use_tmp = True
+    kinds = {k for spec in args.strict_unused for k in spec.split(",") if k}
+    bad = sorted(kinds - {*UNUSED_KINDS, "all"})
+    if bad:
+        parser.error(f"--strict-unused: unknown kind {bad[0]!r}; "
+                     f"expected {', '.join(UNUSED_KINDS)} or all")
+    args.strict_unused = frozenset(UNUSED_KINDS) if "all" in kinds else frozenset(kinds)
     if args.raw_dir is not None and args.use_tmp:
         parser.error("--raw-dir is mutually exclusive with --use-tmp/--keep-tmp")
     # -sv is shorthand for '--extension .vpy=.sv'. If the user already passed

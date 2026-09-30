@@ -34,13 +34,18 @@ Genesis2 XML configs convert via the standalone helpers:
 
 ```sh
 genesispy-xml2json in.xml out.json
-genesispy-json2xml in.json out.xml   # symmetry; lossy on plural-collapse
+genesispy-json2xml in.json out.xml   # Genesis2-readable; restores the item wrappers
 ```
 
 The helper preserves the explicit `force_list` set (`Parameter`, `ParameterItem`, `SubInstanceItem`,
 `ArrayItem`, `HashItem`, `List`, and siblings) for XML::Simple compatibility. An XML file using a *new* plural
 key not in `force_list` will translate to a scalar dict even when it appears multiple times; adding such a key
 requires editing `tools/xml_json.py:DEFAULT_FORCE_LIST`.
+
+`genesispy-xml2json` drops a wrapper element that is a node's only child. `genesispy-json2xml` restores
+it only for the `HierarchyTop` keys in `tools/xml_json.py:_PLURAL_WRAPPERS` (`Parameters`,
+`ImmutableParameters`, `SubInstances`, `Range`); any other collapsed list comes back as repeated sibling
+elements.
 
 ## 3. Post-elaboration dedup collapses byte-identical uniques
 
@@ -62,9 +67,10 @@ duplicates do not register as a parity failure.
 **Where:** `config_handler.py:write_json`
 
 Perl emits `FILE`, `small_<basename>`, `tiny_<basename>` (underscore prefix). genesispy emits
-`FILE`, `<stem>-small<ext>`, `<stem>-tiny<ext>` (suffix on the stem). Filenames only, with one
-content difference: `ImmutableParameters` holds the force-pinned parameters, where Perl fills it by
-inheritance recursion (`ConfigHandler.pm:683-708`).
+`FILE`, `<stem>-small<ext>`, `<stem>-tiny<ext>` (suffix on the stem). Content differences: genesispy
+lists every parameter the template declares, where Perl leaves out those it never read, and Perl
+also files a parameter whose value refers to an instance under `ImmutableParameters`
+(`ConfigHandler.pm:676-708`). Each node also carries `TemplateName`.
 
 ## 5. Command-line overrides: bare names, unused overrides warn
 

@@ -489,8 +489,18 @@ class Manager:
             top.execute()
         top._lock_params()
 
-        for msg in self.cfg_handler.report_unused():
-            reporting.warning(msg)
+        strict = getattr(self.args, "strict_unused", frozenset())
+        n_strict = 0
+        for kind, msg in self.cfg_handler.report_unused():
+            if kind in strict:
+                reporting.error(msg, fatal=False)
+                n_strict += 1
+            else:
+                reporting.warning(msg)
+        if n_strict:
+            exc = reporting.UnusedError(f"{n_strict} unused item(s) under --strict-unused")
+            exc.reported = True
+            raise exc
         self.flush_outputs()
 
     def flush_outputs(self) -> None:
@@ -600,6 +610,8 @@ class Manager:
             if self.parse_only:
                 return 0
             self.gen_verilog()
+        except reporting.UnusedError:
+            return 3
         except GenesisPyError as exc:
             # reporting.error() already wrote the message to stderr before
             # raising; only report the ones raised directly at a call site.

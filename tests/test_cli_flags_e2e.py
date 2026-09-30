@@ -232,7 +232,7 @@ def test_json_out_tiny_and_full_from_the_cli(tmp_path: Path, monkeypatch) -> Non
     full = json.loads((tmp_path / "h.json").read_text())
     tiny = json.loads((tmp_path / "h-tiny.json").read_text())
     subs = {s["InstanceName"]: s for s in full["HierarchyTop"]["SubInstances"]}
-    assert {p["Name"]: p["Val"] for p in subs["a"]["Parameters"]} == {"N": 4}
+    assert {p["Name"]: p["Val"] for p in subs["a"]["ImmutableParameters"]} == {"N": 4}
     assert "CloneOf" in subs["b"]
     assert tiny["HierarchyTop"]["InstanceName"] == "top"
 

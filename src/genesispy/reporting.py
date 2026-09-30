@@ -146,6 +146,12 @@ class ElaborationError(GenesisPyError):
     code = "elaboration_error"
 
 
+class UnusedError(GenesisPyError):
+    """Raised when a --strict-unused kind has unused items; exit status 3."""
+
+    code = "unused"
+
+
 def error(
     msg: str, *, fatal: bool = True, cls: type = GenesisPyError
 ) -> None:

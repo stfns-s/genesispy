@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -103,3 +104,28 @@ def test_make_clean(demo: Path) -> None:
     r = _make(demo, "clean")
     assert r.returncode == 0, f"make clean failed:\n{r.stdout}\n{r.stderr}"
     assert not (demo / "build").exists()
+
+
+def test_flag_change_rebuilds_a_product_newer_than_the_stamp(demo: Path) -> None:
+    """make reads the product's mtime before any recipe runs. A future mtime
+    forces the tie that coarse timestamps give by chance, so a stamp written
+    by a recipe would leave the product up to date."""
+    r = _make(demo, "intg")
+    assert r.returncode == 0, f"make intg failed:\n{r.stdout}\n{r.stderr}"
+    vf = demo / "build" / "intg" / "default" / "intg.vf"
+    future = time.time() + 3600
+    os.utime(vf, (future, future))
+    r = _make(demo, "intg", "EXTRA_FLAGS_intg=--debug 1")
+    assert r.returncode == 0, f"make intg failed:\n{r.stdout}\n{r.stderr}"
+    assert "genesispy" in r.stdout, r.stdout
+    assert vf.exists()
+
+
+@pytest.mark.parametrize("args", [("help",), ("-n", "intg"), ("cleansim",)])
+def test_a_non_building_run_leaves_stamp_and_product(demo: Path, args) -> None:
+    assert _make(demo, "intg").returncode == 0
+    top = demo / "build" / "intg" / "default"
+    stamp = (top / "intg.flags").read_text()
+    assert _make(demo, *args, "EXTRA_FLAGS_intg=--debug 1").returncode == 0
+    assert (top / "intg.vf").exists()
+    assert (top / "intg.flags").read_text() == stamp

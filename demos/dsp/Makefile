@@ -64,11 +64,22 @@ $(error vlint: unknown VERILINT='$(VERILINT)' (slang|verilator))
 endif
 
 .PHONY: gen pylint vlint lint sim pytest test test-extra test-smoke plot cleangen cleansim clean
-.PHONY: help FORCE
+.PHONY: help
 .DEFAULT_GOAL := gen
 
 # A failed recipe must not leave a partial, up-to-date product behind.
 .DELETE_ON_ERROR:
+
+GOALS   := $(or $(MAKECMDGOALS),gen)
+DRY_RUN := $(findstring n,$(firstword -$(MAKEFLAGS)))
+
+# $(call differ,A,B) is non-empty unless the two strings are equal.
+differ = $(subst $(1),,$(2))$(subst $(2),,$(1))
+
+# $(call restamp,STAMP,CMD,PRODUCT,GOALS-THAT-BUILD-IT): as in genesispy.mk.
+restamp = $(if $(DRY_RUN),,$(if $(filter $(4),$(GOALS)),\
+    $(if $(call differ,$(shell cat $(1) 2>/dev/null),$(strip $(2))),\
+        $(shell mkdir -p $(dir $(1)); printf '%s\n' "$(strip $(2))" > $(1); rm -f $(3)))))
 
 gen: $(VLOG_VF)
 
@@ -90,16 +101,15 @@ GEN_CMD_$(1) := $$(GENESISPY) -sv --params-global --input $(1).vpy --top $(1) \
     --vf-out $$(TOPDIR_$(1))/$(1).vf \
     $$(EXTRA_FLAGS) $$(EXTRA_FLAGS_$(1))
 
-$$(TOPDIR_$(1)):
-	@mkdir -p $$@
-
 # Records the command line, rewritten only when it changes, so a flag or
 # parameter change forces a rebuild and an unchanged one does not. The change
-# also removes the product: a fresh stamp can receive the same coarse mtime as
-# a product touched a moment earlier, and make compares strictly.
-$$(TOPDIR_$(1))/$(1).flags: FORCE | $$(TOPDIR_$(1))
-	@printf '%s\n' "$$(GEN_CMD_$(1))" | cmp -s - $$@ 2>/dev/null || \
-	    { printf '%s\n' "$$(GEN_CMD_$(1))" > $$@; rm -f $$(TOPDIR_$(1))/$(1).vf; }
+# also removes the product. Both happen while make reads this file: make reads
+# a target's mtime before it runs any prerequisite's recipe, so a product
+# removed by a stamp recipe would still count as up to date whenever the new
+# stamp's coarse mtime ties with it. Not under make -n, hence the empty rule.
+$$(call restamp,$$(TOPDIR_$(1))/$(1).flags,$$(GEN_CMD_$(1)),$$(TOPDIR_$(1))/$(1).vf,\
+    gen pylint lint vlint $(1) vlint-$(1) $$(TOPDIR_$(1))/$(1).vf)
+$$(TOPDIR_$(1))/$(1).flags: ;
 
 # genesispy leaves an output file alone when its content is unchanged, and
 # the .vf content never varies, so touch it to mark the build done.

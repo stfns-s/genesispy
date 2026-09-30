@@ -76,7 +76,9 @@ class StubConfigHandler:
     def report_unused(self) -> list:
         return []
 
-    def module_default(self, names: Any, name: str) -> tuple:
+    top_entry: Optional[str] = None
+
+    def module_default(self, names: Any, name: str, *, forced: bool = False) -> tuple:
         return (False, None)
 
 
