@@ -236,3 +236,77 @@ def test_json_out_records_the_template_of_a_generated_name(tmp_path, monkeypatch
     assert _run_gen(tmp_path, monkeypatch, "--json-cfg", "cfg.json") == 0
     (leaf_v,) = (tmp_path / "out").glob("leaf_fast*.v")
     assert "// N=4" in leaf_v.read_text()
+
+
+# ---------------------------------------------------------------------- #
+# InputSource of a forced parameter through --json-out                   #
+# ---------------------------------------------------------------------- #
+
+_FORCE_LEAF = (
+    "//; N = parameter('N', 1)\n"
+    "//; N = parameter('N', N, force=True)\n"
+    "//; W = parameter('W', 3, force=True)\n"
+    "module `mname` (input clk);\nendmodule\n"
+)
+
+
+def _top_of(*insts: str) -> str:
+    body = "".join(f"`{i}.instantiate()` (.clk(clk));\n" for i, _ in insts)
+    decls = "".join(f"//; {i} = unique_inst('leaf', '{i}'{kw})\n" for i, kw in insts)
+    return decls + "module `mname` (input clk);\n" + body + "endmodule\n"
+
+
+def _force_design(tmp_path, top: str) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "top.vpy").write_text(top)
+    (tmp_path / "src" / "leaf.vpy").write_text(_FORCE_LEAF)
+    (tmp_path / "d.py").write_text("BLOCK_PARAMS = {'leaf': {'N': 5}}\n")
+
+
+def _footer_line(text: str, name: str) -> str:
+    return next(ln for ln in text.splitlines() if ln.startswith(f"//   {name} "))
+
+
+def test_json_out_records_the_input_source_of_a_force(tmp_path, monkeypatch) -> None:
+    _force_design(tmp_path, _top_of(("u", "")))
+    flags = ("--defaults", "d.py", "--param-footer", "--json-out", "hier.json")
+    assert _run_gen(tmp_path, monkeypatch, *flags) == 0
+    root = json.loads((tmp_path / "hier.json").read_text())["HierarchyTop"]
+    (u,) = root["SubInstances"]
+    items = {p["Name"]: p for p in u["ImmutableParameters"]}
+    assert items["N"]["Val"] == 5
+    assert items["N"]["InputSource"] == "defaults file (--defaults)"
+    assert "InputSource" not in items["W"]
+    for variant in ("hier-small.json", "hier-tiny.json"):
+        assert "InputSource" not in (tmp_path / variant).read_text()
+
+    (leaf_v,) = (tmp_path / "out").glob("leaf*.v")
+    line = _footer_line(leaf_v.read_text(), "N")
+    assert line.endswith("<- forced (force_param) <- defaults file (--defaults)")
+
+    # Fed back as --json-cfg, the snapshot loads.
+    (tmp_path / "cfg.json").write_text(json.dumps({"HierarchyTop": root}))
+    assert _run_gen(tmp_path, monkeypatch, "--defaults", "d.py", "--json-cfg", "cfg.json") == 0
+
+
+def test_dedup_keeps_the_first_input_source(tmp_path, monkeypatch) -> None:
+    _force_design(tmp_path, _top_of(("u0", ""), ("u1", ", N=5")))
+    assert _run_gen(tmp_path, monkeypatch, "--defaults", "d.py", "--param-footer") == 0
+    (leaf_v,) = (tmp_path / "out").glob("leaf*.v")
+    line = _footer_line(leaf_v.read_text(), "N")
+    assert line.endswith("<- forced (force_param) <- defaults file (--defaults)")
+
+
+def test_json_cfg_reads_a_parameter_item_carrying_input_source(tmp_path, monkeypatch) -> None:
+    """The loader ignores InputSource where it reads values, not only where it skips them."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "top.vpy").write_text(_GEN_TOP)
+    (tmp_path / "src" / "leaf.vpy").write_text(_GEN_LEAF)
+    cfg = {"HierarchyTop": {"InstanceName": "top", "SubInstances": [{
+        "InstanceName": "u",
+        "Parameters": [{"Name": "N", "Val": 4, "InputSource": "declaration default"}],
+    }]}}
+    (tmp_path / "cfg.json").write_text(json.dumps(cfg))
+    assert _run_gen(tmp_path, monkeypatch, "--json-cfg", "cfg.json") == 0
+    (leaf_v,) = (tmp_path / "out").glob("leaf_fast*.v")
+    assert "// N=4" in leaf_v.read_text()

@@ -165,7 +165,7 @@ def test_param_footer_names_the_defaults_tier(tmp_path, monkeypatch):
     argv = _design(tmp_path)
     d = _write_defaults(tmp_path, {"leaf": {"N": 5}})
     assert _run(tmp_path, [*argv, "--defaults", d, "--param-footer"], monkeypatch) == 0
-    assert re.search(r"^//\s+N\s+: 5\s+<- module defaults \(--defaults\)$",
+    assert re.search(r"^//\s+N\s+: 5\s+<- defaults file \(--defaults\)$",
                      _leaf_text(tmp_path), re.M)
 
 
@@ -254,6 +254,108 @@ def test_an_unknown_strict_kind_is_a_usage_error():
     with pytest.raises(SystemExit) as exc:
         parse_args(["--strict-unused", "keys,bogus"])
     assert exc.value.code == 2
+
+
+def test_ignore_unused_parses_like_strict_unused():
+    assert parse_args([]).ignore_unused == frozenset()
+    args = parse_args(["--ignore-unused", "entries", "--ignore-unused", "keys,"])
+    assert args.ignore_unused == frozenset({"entries", "keys"})
+    assert parse_args(["--ignore-unused", "all"]).ignore_unused == frozenset(
+        {"overrides", "entries", "keys"})
+
+
+def test_an_unknown_ignore_kind_is_a_usage_error(capsys):
+    with pytest.raises(SystemExit) as exc:
+        parse_args(["--ignore-unused", "entry"])
+    assert exc.value.code == 2
+    assert "--ignore-unused: unknown kind 'entry'" in capsys.readouterr().err
+
+
+def _run_kind(tmp_path: Path, monkeypatch, kind: str, flags: list[str]) -> tuple[int, str]:
+    """Run the UNUSED_KINDS[kind] case with ``flags``; exit status and message."""
+    tree, extra, message = UNUSED_KINDS[kind]
+    argv = _design(tmp_path)
+    d = _write_defaults(tmp_path, tree)
+    return _run(tmp_path, [*argv, *extra, "--defaults", d, *flags], monkeypatch), message
+
+
+def _reported(level: str, message: str, err: str) -> bool:
+    return re.search(rf"{level}:\S* {re.escape(message)}", err) is not None
+
+
+def test_an_ignored_kind_writes_nothing(tmp_path, monkeypatch, capsys):
+    flags = ["--strict-unused", "keys", "--ignore-unused", "entries", "--log", "gen.log"]
+    rc, message = _run_kind(tmp_path, monkeypatch, "entries", flags)
+    assert rc == 0
+    assert message not in capsys.readouterr().err
+    assert not (tmp_path / "gen.log").exists()
+
+
+def test_without_ignore_the_kind_still_warns_and_logs(tmp_path, monkeypatch, capsys):
+    flags = ["--strict-unused", "keys", "--log", "gen.log"]
+    rc, message = _run_kind(tmp_path, monkeypatch, "entries", flags)
+    assert rc == 0
+    assert _reported("warning", message, capsys.readouterr().err)
+    assert message in (tmp_path / "gen.log").read_text()
+
+
+def test_ignore_leaves_a_strict_kind_an_error(tmp_path, monkeypatch, capsys):
+    flags = ["--ignore-unused", "entries", "--strict-unused", "keys"]
+    rc, message = _run_kind(tmp_path, monkeypatch, "keys", flags)
+    assert rc == 3
+    assert _reported("error", message, capsys.readouterr().err)
+    assert not list(tmp_path.glob("out/*.v"))
+
+
+def test_ignore_leaves_an_unlisted_kind_a_warning(tmp_path, monkeypatch, capsys):
+    rc, message = _run_kind(tmp_path, monkeypatch, "overrides", ["--ignore-unused", "entries"])
+    assert rc == 0
+    assert _reported("warning", message, capsys.readouterr().err)
+
+
+def test_strict_wins_over_ignore(tmp_path, monkeypatch, capsys):
+    flags = ["--ignore-unused", "entries", "--strict-unused", "entries"]
+    rc, message = _run_kind(tmp_path, monkeypatch, "entries", flags)
+    assert rc == 3
+    assert _reported("error", message, capsys.readouterr().err)
+
+
+@pytest.mark.parametrize("kind, status", [("entries", 0), ("overrides", 0), ("keys", 3)])
+def test_ignore_all_with_one_strict_kind(tmp_path, monkeypatch, capsys, kind, status):
+    flags = ["--ignore-unused", "all", "--strict-unused", "keys"]
+    rc, message = _run_kind(tmp_path, monkeypatch, kind, flags)
+    assert rc == status
+    err = capsys.readouterr().err
+    if status == 0:
+        assert "never used" not in err
+    else:
+        assert _reported("error", message, err)
+
+
+def test_strict_all_with_an_ignored_kind(tmp_path, monkeypatch, capsys):
+    flags = ["--strict-unused", "all", "--ignore-unused", "entries"]
+    rc, message = _run_kind(tmp_path, monkeypatch, "entries", flags)
+    assert rc == 3
+    assert _reported("error", message, capsys.readouterr().err)
+
+
+def test_strict_all_and_ignore_all(tmp_path, monkeypatch, capsys):
+    flags = ["--strict-unused", "all", "--ignore-unused", "all"]
+    rc, message = _run_kind(tmp_path, monkeypatch, "keys", flags)
+    assert rc == 3
+    assert _reported("error", message, capsys.readouterr().err)
+
+
+def test_an_ignored_kind_stays_out_of_a_written_log(tmp_path, monkeypatch):
+    tree, _, entry_message = UNUSED_KINDS["entries"]
+    _, extra, override_message = UNUSED_KINDS["overrides"]
+    argv = _design(tmp_path)
+    d = _write_defaults(tmp_path, tree)
+    flags = ["--ignore-unused", "entries", "--log", "gen.log"]
+    assert _run(tmp_path, [*argv, *extra, "--defaults", d, *flags], monkeypatch) == 0
+    log = (tmp_path / "gen.log").read_text()
+    assert override_message in log
+    assert entry_message not in log
 
 
 def _leaf_as_top(tmp_path: Path) -> list[str]:

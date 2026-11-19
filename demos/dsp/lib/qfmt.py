@@ -19,7 +19,11 @@ from fractions import Fraction
 
 _Q_RE = re.compile(r"(U?)Q(-?\d+)\.(-?\d+)")
 
-ROUND_MODES = ("trunc", "half_up", "half_even", "half_away", "to_zero")
+ROUND_MODES = ("trunc", "half_up", "half_even", "half_away", "to_zero", "to_odd", "von_neumann")
+
+# Modes that truncate and OR one bit into the kept LSB instead of adding a carry: to_odd ORs
+# in the OR of the dropped bits, von_neumann a 1.
+OR_MODES = ("to_odd", "von_neumann")
 
 
 class QError(ValueError):
@@ -223,7 +227,11 @@ def round_consts(shift: int, mode: str) -> tuple[int, int]:
     Adding half - 1 to a negative code carries only when the remainder passes half, which
     leaves an exact tie at the larger magnitude; adding 2**shift - 1 carries on any
     remainder, which is the ceiling.
+
+    Raises QError for an OR_MODES mode, which adds no constant.
     """
+    if mode in OR_MODES:
+        raise QError(f"round_consts: {mode} ORs into the LSB and adds no constant")
     if shift <= 0:
         return 0, 0
     half, full = 1 << (shift - 1), (1 << shift) - 1
@@ -243,6 +251,10 @@ def _round_code(code: int, shift: int, mode: str) -> int:
     """
     if shift <= 0:
         return code << -shift
+    if mode == "to_odd":
+        return (code >> shift) | ((code & ((1 << shift) - 1)) != 0)
+    if mode == "von_neumann":
+        return (code >> shift) | 1
     add_c, add_c_neg = round_consts(shift, mode)
     acc = (code + (add_c_neg if code < 0 else add_c)) >> shift
     if mode == "half_even" and (code & ((1 << shift) - 1)) == (1 << (shift - 1)) and acc & 1:

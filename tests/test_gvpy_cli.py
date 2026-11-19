@@ -569,11 +569,30 @@ def test_param_footer_appears_in_gvpy_stdout(tmp_path, capsys):
     rc = main(["--param-footer", "-p", "W=16", str(_write_param_module(tmp_path))])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "// Genesis-Py resolved parameter provenance" in out
+    assert "// Genesis-Py resolved parameter sources:" in out
     assert re.search(r"^//\s+W\s+: 16\s+<- command line", out, re.M)
 
 
 def test_param_footer_absent_by_default(tmp_path, capsys):
     rc = main(["-p", "W=16", str(_write_param_module(tmp_path))])
     assert rc == 0
-    assert "resolved parameter provenance" not in capsys.readouterr().out
+    assert "resolved parameter sources:" not in capsys.readouterr().out
+
+
+def test_set_widen_form_warns_in_a_gvpy_template(tmp_path, capsys):
+    src = tmp_path / "w.vpy"
+    src.write_text("//; verilog.set_widen_form('cast')\n"
+                   "assign y = `verilog.sext('x', 8, 11)`;\n")
+    assert main([str(src)]) == 0
+    out = capsys.readouterr()
+    assert "assign y = 11'(signed'(x));" in out.out
+    assert "set_widen_form('cast') called during elaboration" in out.err
+
+
+def test_gvpy_clears_the_elaboration_flag_after_an_error(tmp_path):
+    from genesispy import cache
+
+    src = tmp_path / "e.vpy"
+    src.write_text("//; raise ValueError('boom')\n")
+    assert main([str(src)]) == 1
+    assert cache.ELABORATING is False

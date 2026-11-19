@@ -277,11 +277,11 @@ def test_param_footer_end_to_end(tmp_path: Path) -> None:
     )
     text = _pf_leaf_text()
 
-    assert "Genesis-Py resolved parameter provenance" in text
+    assert "Genesis-Py resolved parameter sources:" in text
     # The block sits past the end of the module, not in the banner.
-    assert text.index("resolved parameter provenance") > text.rindex("endmodule")
+    assert text.index("resolved parameter sources:") > text.rindex("endmodule")
 
-    footer = text[text.index("// Genesis-Py resolved parameter provenance"):]
+    footer = text[text.index("// Genesis-Py resolved parameter sources:"):]
     assert re.search(r"^//\s+DEPTH\s+: 32\s+<- command line", footer, re.M)
     assert re.search(r"^//\s+WIDTH\s+: 16\s+<- parent instantiation", footer, re.M)
 
@@ -292,4 +292,4 @@ def test_param_footer_absent_by_default(tmp_path: Path) -> None:
         tmp_path, PF / "pf_top.vpy", "pf_top",
         ("--input", str(PF / "pf_leaf.vpy"), "-p", "DEPTH=32", "--params-global"),
     )
-    assert "resolved parameter provenance" not in _pf_leaf_text()
+    assert "resolved parameter sources:" not in _pf_leaf_text()

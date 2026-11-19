@@ -153,6 +153,8 @@ class Manager:
     # (e.g. args.unq_style, args.parameter).
     args: "argparse.Namespace"
 
+    # Seeds cache.WIDEN_FORM from args.verilog_default_widen_form, before any
+    # .cfg is read, so a .cfg's verilog.set_widen_form overrides the flag.
     def __init__(self, args: argparse.Namespace) -> None: ...
     # Resolve a relative template path. With paths=None (the --input case,
     # manager.parse_files) the search order is src_path + inc_path + ['.'].
@@ -175,10 +177,14 @@ class Manager:
     # CLI orchestration entry points (also called directly by tests).
     def parse_files(self) -> None: ...
     def load_top_module(self) -> type: ...
+    # Sets cache.ELABORATING after the config is read and clears it in a
+    # finally once the top's parameters are locked.
     # Elaborates, then passes each report_unused() message to
     # reporting.warning, or to reporting.error when its kind is in
-    # args.strict_unused (a frozenset of UNUSED_KINDS); any error raises
-    # UnusedError before flush_outputs, so nothing is written.
+    # args.strict_unused (a frozenset of UNUSED_KINDS); a message whose kind
+    # is in args.ignore_unused and not in args.strict_unused is dropped
+    # without a reporting call. Any error raises UnusedError before
+    # flush_outputs, so nothing is written.
     def gen_verilog(self) -> None: ...
     def flush_outputs(self) -> None: ...
     # Removes everything _clean_targets names: raw/synth/verif dirs, the
@@ -232,14 +238,15 @@ class Manager:
 # flags.get("priority", 0), so an untouched default is 0, not DECLARATION.
 # priority_label() falls back to the nearest rung at or below an unlisted
 # value (configure() accepts any integer) and appends the raw number.
-# Consumed by UniqueModule.emit_param_footer for --param-footer.
+# Consumed by UniqueModule.emit_param_footer for --param-footer, which also
+# saves a forced parameter's prior label for write_json's InputSource.
 PRIORITY_LABELS: dict[int, str]
 # Priority ladder: DECLARATION=5 < MODULE_DEFAULT=7 (--defaults) <
 # EXTERNAL_CONFIG=10 < EXTERNAL_PARAM_FILE=20 < CMD_LINE=30 <
 # INHERITANCE=40 < IMMUTABLE=50.
 class Priority(IntEnum): ...
 def priority_label(priority: int | None) -> str: ...
-# report_unused() kinds; --strict-unused accepts these and "all".
+# report_unused() kinds; --strict-unused and --ignore-unused accept these and "all".
 UNUSED_KINDS = ("overrides", "entries", "keys")
 
 class ConfigHandler:
@@ -288,6 +295,9 @@ class ConfigHandler:
     # splitext(basename(path)). Every node, clone and synonym stubs included,
     # carries InstanceName, UniqueModuleName, BaseModuleName (emitted class
     # name) and TemplateName (sname); read_json ignores the name fields.
+    # A forced item with input_source also carries it as InputSource, which
+    # read_json ignores and genesispy-json2xml drops, since Genesis2 discards
+    # Range and Doc and then allows only Name and one value key in an item.
     # Values are written under ``Val``, which read_json accepts alongside
     # ``__Val__``. ``top_inst`` is required;
     # passing None raises GenesisPyError.
@@ -504,7 +514,9 @@ class UniqueModule:
     def synonym(self, name: str) -> None: ...
 
     # Forced override (pinned, cannot be re-overridden by parameter()). A
-    # second force of the same name is fatal (UniqueModule.pm:2443).
+    # second force of the same name is fatal (UniqueModule.pm:2443). When the
+    # name already had an entry, the footer label it carried until then is
+    # saved as input_source, the source the force replaced.
     def force_param(self, name: str, value: object) -> None: ...
     # {name: value} for all parameters (Perl get_mod_param_list, :2691).
     def get_mod_param_list(self) -> dict[str, object]: ...
@@ -612,12 +624,14 @@ class UniqueModule:
     # template/emitter.CLASS_BODY_TAIL after the user body and before the
     # final _flush_outfile(), so it sees the fully resolved parameter set --
     # unlike the to_verilog banner, written before the body runs. Rows read
-    # "NAME : value <- source"; the separator is ':' not '=' because
+    # "NAME : value <- source"; a forced row with input_source reads
+    # "NAME : value <- forced (force_param) <- source". The separator is ':' not '=' because
     # tests/_parity_normalize.parse_header scans for "// NAME = value" rows
     # with an unbounded window on files that have no `module` keyword. A wide
     # value wraps through _value_lines and the source label trails the last
     # of its lines; the provenance column is reserved off the budget for the
-    # whole table so every row wraps at the same margin.
+    # whole table so every row wraps at the same margin, and the value column
+    # shrinks to fit what remains.
     def emit_param_footer(self) -> None: ...
     # Runs child.execute() with user_config.context bound to the child, so
     # include() and other bare-name helpers inside a sub-instance body resolve
@@ -1054,6 +1068,18 @@ OUTFILE_ORDER: List[str]
 # Append order; deduped at read time. Cleared by clear_all().
 INCLUDED_FILES: List[str]
 
+# Default form of lib.verilog.sext/pad_low when a call passes form=None:
+# "concat" or "cast". Seeded by Manager.__init__ from
+# --verilog-default-widen-form, overwritten by verilog.set_widen_form.
+# Reset to "concat" by clear_all().
+WIDEN_FORM: str
+
+# True while Manager.gen_verilog elaborates the top (set after the config
+# is read, cleared in a finally), and while gvpy_cli._process runs one file's
+# execute(). verilog.set_widen_form warns when it is set. Reset to False by
+# clear_all().
+ELABORATING: bool
+
 # Also clears template.runtime's line maps, user_config's pyinclude state
 # and the reporting log tee (set_log_file(None)); tests/conftest.py calls
 # it before and after every test.
@@ -1099,16 +1125,41 @@ class VerilogError(ValueError): ...
 
 # Sized decimal literal: "8'sd5", "-8'sd5", "8'd5". A negative value is the
 # negation of its magnitude, so the most negative value of `width` is right only
-# in a self-determined context of that width. Raises if value does not fit.
-def lit(value: int, width: int, signed: bool = True) -> str: ...
+# in a self-determined context of that width. fmt "bin" or "hex" writes the
+# two's-complement digits instead, "8'sb11111011", "8'shfb", "8'hff", exact in
+# any context; None and "dec" are decimal. Raises if value does not fit, or for
+# another fmt.
+def lit(value: int, width: int, signed: bool = True,
+        fmt: str | None = None) -> str: ...
 
-# "{ { n {term[msb]} }, term }", or zero fill when not signed. msb defaults to
-# from_w - 1. Raises unless to_w > from_w >= 1.
+# The min or max end of a width-bit format as lit(value, width, signed, fmt):
+# signed -2^(width-1) (+1 with symm) and 2^(width-1)-1, unsigned 0 and
+# 2^width-1. bound is "min" or "max"; fmt is "bin" (default), "hex" or "dec",
+# and None raises. Raises for another bound, symm when unsigned, or a width
+# below 1 (through lit).
+def limit(bound: str, width: int, signed: bool = True, symm: bool = False,
+          fmt: str = "bin") -> str: ...
+
+# form "concat": "{ { n {term[msb]} }, term }", or zero fill when not signed;
+# msb defaults to from_w - 1. form "cast": "to_w'(signed'(term))", or
+# "to_w'(unsigned'(term))" when not signed; msb is ignored. form=None takes
+# get_widen_form(). Raises unless to_w > from_w >= 1, or for an unknown form.
 def sext(term: str, from_w: int, to_w: int, msb: int | None = None,
-         signed: bool = True) -> str: ...
+         signed: bool = True, form: str | None = None) -> str: ...
 
-# "{ term, { n {1'b0} } }"; term unchanged for n == 0. Raises for n < 0.
-def pad_low(term: str, n: int) -> str: ...
+# form "concat": "{ term, { n {1'b0} } }"; from_w is ignored. form "cast":
+# "(from_w+n'(term) << n)", needs from_w >= 1, right only for a destination of
+# exactly from_w + n bits. term unchanged for n == 0 in both. form=None takes
+# get_widen_form(). Raises for n < 0, or for an unknown form.
+def pad_low(term: str, n: int, from_w: int | None = None,
+            form: str | None = None) -> str: ...
+
+# Set cache.WIDEN_FORM, the form sext and pad_low use when called with
+# form=None. Warns, then sets, when called during elaboration
+# (cache.ELABORATING). Raises for a form other than "concat" or "cast".
+def set_widen_form(form: str) -> None: ...
+
+def get_widen_form() -> str: ...
 
 # Signedness keyword plus range. `what` is a width, or any object with
 # int_bits/frac/signed (range [int_bits-1:-frac], signed from the object unless

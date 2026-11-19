@@ -283,6 +283,10 @@ def _from_native(value: Any) -> Any:
             elif k == "__Val__":
                 out["Val"] = _from_native(v)
             elif k in _PLURAL_WRAPPERS and isinstance(v, list):
+                if k in ("Parameters", "ImmutableParameters"):
+                    # Genesis2 drops Range and Doc, then allows only Name and one value key.
+                    v = [{ik: iv for ik, iv in item.items() if ik != "InputSource"}
+                         if isinstance(item, dict) else item for item in v]
                 out[k] = {_PLURAL_WRAPPERS[k]: [_from_native(item) for item in v]}
             else:
                 out[k] = _from_native(v)

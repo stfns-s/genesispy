@@ -9,16 +9,18 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
+from genesispy import cache, reporting
+
 
 class VerilogError(ValueError):
     """A value that cannot be written in the requested Verilog form."""
 
 
-def lit(value: int, width: int, signed: bool = True) -> str:
-    """A sized Verilog decimal literal.
+def lit(value: int, width: int, signed: bool = True, fmt: str | None = None) -> str:
+    """A sized Verilog literal: decimal by default, binary or hex on request.
 
-    Verilog has no sign inside a sized literal, so a negative value is emitted as a
-    unary negation of its magnitude. The most negative value of a width is the one
+    Verilog has no sign inside a sized literal, so in decimal a negative value is emitted
+    as a unary negation of its magnitude. The most negative value of a width is the one
     case where that magnitude does not itself fit: the negation wraps back to the
     same bit pattern, which is the intended value only in a self-determined context
     of that width -- a comparison against an operand of it, or an assignment to a
@@ -26,9 +28,12 @@ def lit(value: int, width: int, signed: bool = True) -> str:
     then yields the positive magnitude. lit cannot see the context it lands in, so
     the caller owns that.
 
-    The base is decimal because every caller states a numeric bound. Raises if the
-    value does not fit the width.
+    fmt is None or "dec" for decimal, "bin" or "hex" for the two's-complement digits, which need
+    no negation and so are exact in any context width. Raises if the value does not fit the width,
+    or for another format.
     """
+    if fmt not in (None, "dec", "bin", "hex"):
+        raise VerilogError(f"lit: fmt ({fmt!r}) must be None, 'dec', 'bin' or 'hex'")
     if width < 1:
         raise VerilogError(f"lit: width must be at least one bit, got {width}")
     lo = -(1 << (width - 1)) if signed else 0
@@ -36,31 +41,111 @@ def lit(value: int, width: int, signed: bool = True) -> str:
     if not lo <= value <= hi:
         kind = "signed" if signed else "unsigned"
         raise VerilogError(f"lit: {value} does not fit {width} {kind} bits [{lo}, {hi}]")
+    if fmt in ("bin", "hex"):
+        code = value & ((1 << width) - 1)
+        digits = f"{code:0{width}b}" if fmt == "bin" else f"{code:0{-(-width // 4)}x}"
+        return f"{width}'{'s' if signed else ''}{fmt[0]}{digits}"
     if not signed:
         return f"{width}'d{value}"
     return f"{width}'sd{value}" if value >= 0 else f"-{width}'sd{-value}"
 
 
-def sext(term: str, from_w: int, to_w: int, msb: int | None = None, signed: bool = True) -> str:
+def limit(
+    bound: str, width: int, signed: bool = True, symm: bool = False, fmt: str = "bin"
+) -> str:
+    """The min or max end of a width-bit format as a sized literal.
+
+    symm raises the signed min end by one, to the negative of the max end. fmt is "bin", "hex" or
+    "dec"; None raises, since lit reads it as decimal while the default here is binary. Raises for
+    another bound, for symm on an unsigned format, or for a width below 1.
+    """
+    if not isinstance(bound, str) or bound not in ("min", "max"):
+        raise VerilogError(f"limit: bound ({bound!r}) must be 'min' or 'max'")
+    if fmt not in ("bin", "hex", "dec"):
+        raise VerilogError(f"limit: fmt ({fmt!r}) must be 'bin', 'hex' or 'dec'")
+    if symm and not signed:
+        raise VerilogError("limit: symm needs a signed format")
+    if width < 1:
+        return lit(0, width, signed, fmt)  # raises the width error, before 1 << -1 would
+    if signed:
+        hi = (1 << (width - 1)) - 1
+        value = hi if bound == "max" else -hi - (not symm)
+    else:
+        value = (1 << width) - 1 if bound == "max" else 0
+    return lit(value, width, signed, fmt)
+
+
+_FORMS = ("concat", "cast")
+
+
+def _form(form: str | None, who: str) -> str:
+    form = cache.WIDEN_FORM if form is None else form
+    if form not in _FORMS:
+        raise VerilogError(f"{who}: form ({form!r}) must be one of {_FORMS}")
+    return form
+
+
+def set_widen_form(form: str) -> None:
+    """Set the form sext and pad_low use when called with form=None.
+
+    Called during elaboration it warns and still takes effect: templates elaborated earlier keep
+    the previous form.
+    """
+    _form(form, "set_widen_form")
+    if cache.ELABORATING:
+        reporting.warning(f"set_widen_form({form!r}) called during elaboration; templates "
+                          "elaborated earlier keep the previous form")
+    cache.WIDEN_FORM = form
+
+
+def get_widen_form() -> str:
+    """The form sext and pad_low use when called with form=None."""
+    return cache.WIDEN_FORM
+
+
+def sext(
+    term: str,
+    from_w: int,
+    to_w: int,
+    msb: int | None = None,
+    signed: bool = True,
+    form: str | None = None,
+) -> str:
     """Widen a term by replicating its sign bit, or by zeros when unsigned.
 
     msb is the index of the term's sign bit, defaulting to from_w - 1. It is a
     separate argument because a net declared with the binary point in its range,
     [int_bits-1:-frac], has its sign bit at int_bits-1 rather than at width-1.
+    The cast form is SystemVerilog and ignores msb. form=None takes get_widen_form().
     """
+    form = _form(form, "sext")
     if to_w <= from_w:
         raise VerilogError(f"sext: to_w ({to_w}) must exceed from_w ({from_w})")
     if from_w < 1:
         raise VerilogError(f"sext: from_w must be at least one bit, got {from_w}")
+    if form == "cast":
+        return f"{to_w}'({'signed' if signed else 'unsigned'}'({term}))"
     fill = f"{term}[{from_w - 1 if msb is None else msb}]" if signed else "1'b0"
     return f"{{ {{ {to_w - from_w} {{{fill}}} }}, {term} }}"
 
 
-def pad_low(term: str, n: int) -> str:
-    """Append n zero bits below a term's lsb, moving its binary point down."""
+def pad_low(term: str, n: int, from_w: int | None = None, form: str | None = None) -> str:
+    """Append n zero bits below a term's lsb, moving its binary point down.
+
+    The cast form is SystemVerilog and needs from_w, the term's width. The left operand of <<
+    takes its width from the context (IEEE 1800-2017 11.6.1), so the cast form is right only for
+    a destination of exactly from_w + n bits. form=None takes get_widen_form().
+    """
+    form = _form(form, "pad_low")
     if n < 0:
         raise VerilogError(f"pad_low: n must not be negative, got {n}")
-    return term if n == 0 else f"{{ {term}, {{ {n} {{1'b0}} }} }}"
+    if n == 0:
+        return term
+    if form == "concat":
+        return f"{{ {term}, {{ {n} {{1'b0}} }} }}"
+    if from_w is None or from_w < 1:
+        raise VerilogError(f"pad_low: the cast form needs from_w of at least 1, got {from_w}")
+    return f"({from_w + n}'({term}) << {n})"
 
 
 def _range(what: object, signed: bool | None) -> tuple[int, int, bool | None]:

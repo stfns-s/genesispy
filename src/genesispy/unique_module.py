@@ -112,7 +112,10 @@ def _param_provenance(entry: Dict[str, Any]) -> str:
     """
     prio = int(entry.get("priority") or 0)
     if entry.get("state") == STATE_FORCED:
-        return PRIORITY_LABELS[int(Priority.IMMUTABLE)]
+        forced = PRIORITY_LABELS[int(Priority.IMMUTABLE)]
+        if "input_source" in entry:
+            return f"{forced} <- {entry['input_source']}"
+        return forced
     if entry.get("state") == STATE_OVERRIDDEN and prio <= int(Priority.DECLARATION):
         return "external configuration (source not recorded)"
     return priority_label(prio)
@@ -574,7 +577,8 @@ class UniqueModule:
         """Forced override -- pinned, cannot be re-overridden. A second
         force of the same name is fatal (UniqueModule.pm:2443-2452)."""
         self._check_params_open("force_param")
-        if name not in self._params:
+        had_entry = name in self._params
+        if not had_entry:
             self._new_entry(name, value, declared=True)
         entry = self._params[name]
         if entry["seen_forced"]:
@@ -582,6 +586,9 @@ class UniqueModule:
                 f"{self._module_name}->force_param: Parameter {name} already "
                 f"declared/seen at the same priority {Priority.IMMUTABLE.name}"
             )
+        if had_entry:
+            # The footer and --json-out name the source the force replaced.
+            entry["input_source"] = _param_provenance(entry)
         entry["seen_forced"] = True
         entry["declared"] = True
         entry["value"] = value
@@ -1507,7 +1514,9 @@ class UniqueModule:
         # every value wraps at the same margin.
         suffix_w = max(len(p) for p in prov.values()) + len("  <- ")
         budget = self._comment_budget() - suffix_w
-        lines = ["Genesis-Py resolved parameter provenance"]
+        # Short values are padded to the value column, so it must fit the budget too.
+        val_w = max(1, min(val_w, budget - indent))
+        lines = ["Genesis-Py resolved parameter sources:"]
         for n in names:
             rows = _value_lines(self._params[n]["value"], indent, budget)
             rows[0] = f"  {n:<{name_w}} : {rows[0]}"

@@ -114,6 +114,13 @@ OUTFILE_ORDER: List[str] = []
 # Append order; deduped at read time.
 INCLUDED_FILES: List[str] = []
 
+# Default form of lib.verilog.sext and pad_low: "concat" or "cast". Seeded by Manager from
+# --verilog-default-widen-form, overwritten by verilog.set_widen_form.
+WIDEN_FORM: str = "concat"
+
+# True while Manager.gen_verilog elaborates the top; verilog.set_widen_form warns then.
+ELABORATING: bool = False
+
 
 def clear_all() -> None:
     """Reset every process-global: the caches here, the runtime line maps,
@@ -125,6 +132,9 @@ def clear_all() -> None:
     OUTFILE_ORDER.clear()
     UNUNIQUE_REGISTRY.clear()
     INCLUDED_FILES.clear()
+    global WIDEN_FORM, ELABORATING
+    WIDEN_FORM = "concat"
+    ELABORATING = False
     # Recycled tmpdir paths could otherwise inherit a stale .vpy mapping.
     from .template import runtime as _rt
     _rt.clear_line_maps()

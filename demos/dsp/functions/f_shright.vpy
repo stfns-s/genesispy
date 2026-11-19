@@ -1,6 +1,6 @@
     // shift right - with more accuracy than power of 2
     //  out = in/2^sh*( 1 + frac*0.25 ), truncated once, saturating
-//; from genesispy.lib.verilog import lit, sext
+//; from genesispy.lib.verilog import limit, sext
 //; h         = self.include_params
 //; func_name = h.get('func_name', 'f_shright')
 //; iwidth    = h.get('iwidth', 8)
@@ -11,8 +11,6 @@
 //;     error(f"{func_name}: cwidth ({cwidth}) must be >= 1")
 //; # endif
 //; isw       = iwidth + 3      # holds in*(4+frac)
-//; shr_max   = (1 << (iwidth-1)) - 1
-//; shr_minn  = -(1 << (iwidth-1))
     function `lifetime` signed [`iwidth-1`:0] `func_name`;
         input   signed  [`iwidth-1`:0] in;
         input           [`cwidth-1`:0] sh;
@@ -40,15 +38,15 @@
             ovf = ~in[`iwidth-1`] &  (|scaled[`isw-1`:`iwidth-1`]);
             udf =  in[`iwidth-1`] & ~(&scaled[`isw-1`:`iwidth-1`]);
 //; if osymm:
-            udf =  udf | in[`iwidth-1`] & ( scaled[`iwidth-1`:0] == `lit(shr_minn, iwidth)` );
+            udf =  udf | in[`iwidth-1`] & ( scaled[`iwidth-1`:0] == `limit("min", iwidth)` );
 //; # endif
 
             case ( {ovf, udf} ) // synthesis parallel_case full_case
-                2'b10:   `func_name` = `lit(shr_max, iwidth)`;
+                2'b10:   `func_name` = `limit("max", iwidth)`;
 //; if osymm:
-                2'b01:   `func_name` = `lit(shr_minn+1, iwidth)`;
+                2'b01:   `func_name` = `limit("min", iwidth, symm=True)`;
 //; else:
-                2'b01:   `func_name` = `lit(shr_minn, iwidth)`;
+                2'b01:   `func_name` = `limit("min", iwidth)`;
 //; # endif
                 default: `func_name` = scaled[`iwidth-1`:0];
             endcase

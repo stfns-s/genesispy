@@ -1,5 +1,5 @@
     // reduce width and saturate if needed
-//; from genesispy.lib.verilog import lit
+//; from genesispy.lib.verilog import limit
 //; h         = self.include_params
 //; func_name = h.get('func_name', 'f_sat')
 //; iwidth    = h.get('iwidth', 8)
@@ -13,8 +13,6 @@
 //; if ow < 1:
 //;     error(f"{func_name}: ow ({ow}) must be >= 1")
 //; # endif
-//; omax      = (1 << (ow-1)) - 1
-//; ominn     = -(1 << (ow-1))
     function `lifetime` signed [`ow-1`:0] `func_name`;
         input signed [`iwidth-1`:0] x;
         reg                     oflow;
@@ -23,16 +21,16 @@
             oflow = x[`iwidth-1`] == 1'b0 && x[`iwidth-2`:`ow-1`] != {`iwidth-ow` {1'b0}};
             uflow = x[`iwidth-1`] == 1'b1 && x[`iwidth-2`:`ow-1`] != {`iwidth-ow` {1'b1}};
 //; if osymm:
-            uflow = uflow | x[`iwidth-1`] & ( x[`ow-1`:0] == `lit(ominn, ow)` );
+            uflow = uflow | x[`iwidth-1`] & ( x[`ow-1`:0] == `limit("min", ow)` );
 //; # endif
 
             case ( { oflow, uflow } ) // synthesis parallel_case full_case
 //; if osymm:
-                2'b01:   `func_name` = `lit(ominn+1, ow)`;
+                2'b01:   `func_name` = `limit("min", ow, symm=True)`;
 //; else:
-                2'b01:   `func_name` = `lit(ominn, ow)`;
+                2'b01:   `func_name` = `limit("min", ow)`;
 //; # endif
-                2'b10:   `func_name` = `lit(omax, ow)`;
+                2'b10:   `func_name` = `limit("max", ow)`;
                 default: `func_name` = x[`ow-1`:0];
             endcase
         end

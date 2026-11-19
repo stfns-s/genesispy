@@ -337,7 +337,7 @@ def test_badd_rejects_misaligned_and_empty():
         badd([])
 
 
-def ref_requant(v: Fraction, dst: Fmt, mode: str, osymm: bool) -> int:
+def ref_requant(v: Fraction, src: Fmt, dst: Fmt, mode: str, osymm: bool) -> int:
     q = v / dst.lsb
     if mode == "trunc":
         c = floor(q)
@@ -351,6 +351,10 @@ def ref_requant(v: Fraction, dst: Fmt, mode: str, osymm: bool) -> int:
         c = int(q)  # Fraction.__trunc__ rounds toward zero
     elif mode == "half_even":
         c = round(q)  # Fraction.__round__ is half-to-even
+    elif mode == "to_odd":
+        c = floor(q) | (q != floor(q))
+    elif mode == "von_neumann":
+        c = floor(q) | (src.frac > dst.frac)  # sets the LSB only when bits are dropped
     else:
         raise AssertionError(f"ref_requant does not model {mode!r}")
     lo = -dst.max_code if (dst.signed and osymm) else dst.min_code
@@ -369,7 +373,7 @@ def test_requant_matches_fraction_reference(mode, osymm):
             continue
         rq = qfmt.requant(src, dst, mode, osymm)
         for c in src.codes():
-            assert rq.apply(c) == ref_requant(src.decode(c), dst, mode, osymm), (src, dst, c)
+            assert rq.apply(c) == ref_requant(src.decode(c), src, dst, mode, osymm), (src, dst, c)
 
 
 @pytest.mark.parametrize("osymm", [False, True])
@@ -592,11 +596,19 @@ def _shift_ref(code: int, shift: int, mode: str) -> int:
     if mode == "half_away":
         c = floor(abs(q) + Fraction(1, 2))
         return -c if q < 0 else c
+    if mode == "to_odd":
+        return floor(q) | (q != floor(q))
+    if mode == "von_neumann":
+        return floor(q) | 1
     return int(q)  # to_zero; Fraction.__trunc__ rounds toward zero
 
 
+OR_MODES = qfmt.OR_MODES
+CARRY_MODES = tuple(m for m in qfmt.ROUND_MODES if m not in OR_MODES)
+
+
 @pytest.mark.parametrize("shift", [-3, 0, 1, 2, 3, 5])
-@pytest.mark.parametrize("mode", qfmt.ROUND_MODES)
+@pytest.mark.parametrize("mode", CARRY_MODES)
 def test_round_consts_are_the_carry_the_shift_needs(shift, mode):
     """The documented contract: add the constant, shift, and half_even alone still needs the
     tie correction. Every code across two shifts' worth of remainders is walked."""
@@ -608,3 +620,22 @@ def test_round_consts_are_the_carry_the_shift_needs(shift, mode):
         got = (code + (add_c_neg if code < 0 else add_c)) >> shift
         want = _shift_ref(code, shift, "half_up" if mode == "half_even" else mode)
         assert got == want, (code, shift, mode)
+
+
+@pytest.mark.parametrize("mode", OR_MODES)
+def test_round_consts_rejects_or_modes(mode):
+    with pytest.raises(QError):
+        qfmt.round_consts(2, mode)
+
+
+# codes -8 .. 9 shifted right by 2, derived by hand from each rule
+OR_TABLES = {
+    "to_odd": [-2, -1, -1, -1, -1, -1, -1, -1, 0, 1, 1, 1, 1, 1, 1, 1, 2, 3],
+    "von_neumann": [-1, -1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3],
+}
+
+
+@pytest.mark.parametrize("mode", OR_MODES)
+def test_or_modes_match_the_hand_table(mode):
+    rq = qfmt.requant(Bounds(-8, 9, 2), 0, mode)
+    assert [rq.apply(c, saturate=False) for c in range(-8, 10)] == OR_TABLES[mode]

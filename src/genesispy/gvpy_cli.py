@@ -494,9 +494,13 @@ def _process(
     inst.pyinclude = user_config._make_pyinclude(ns)  # type: ignore[attr-defined]
     inst.pinclude = user_config._make_pinclude(ns)  # type: ignore[attr-defined]
 
-    with user_config.context(mgr, inst):
-        inst.execute()
-    inst._lock_params()
+    cache.ELABORATING = True
+    try:
+        with user_config.context(mgr, inst):
+            inst.execute()
+        inst._lock_params()
+    finally:
+        cache.ELABORATING = False
 
     out = inst._outfile_handle.getvalue() if inst._outfile_handle else ""
     sys.stdout.write(out)

@@ -1,17 +1,19 @@
-//; IW    = parameter('IW',    8)   # input width
-//; OW    = parameter('OW',    6)   # requested output width
-//; OSYMM = parameter('OSYMM', 0)   # output range excludes the most negative value
+//; IW         = parameter('IW',         8)          # input width
+//; OW         = parameter('OW',         6)          # requested output width
+//; OSYMM      = parameter('OSYMM',      0)          # output range excludes the most negative value
+//; ROUND_MODE = parameter('ROUND_MODE', 'half_up')  # half_up, to_odd, von_neumann
 // unit test for f_round
 module `mname`;
 
-//; self.include_params = {'func_name': 'dut', 'iwidth': IW, 'owidth': OW, 'osymm': OSYMM}
+//; self.include_params = {'func_name': 'dut', 'iwidth': IW, 'owidth': OW, 'osymm': OSYMM,
+//;     'round_mode': ROUND_MODE}
 //; include('f_round.vpy')
 //; include('tb_util.vpy')
 //; # f_round clamps the requested width, so take the width it emitted rather than
 //; # re-deriving the clamp here and risking a rule that drifts from the function's
 //; ow    = getattr(self, 'dut')['owidth']
 //; OWD   = "" if ow == OW else f" (ow={ow})"
-//; CFG   = f"{mname} IW={IW} OW={OW}{OWD} OSYMM={OSYMM}"
+//; CFG   = f"{mname} IW={IW} OW={OW}{OWD} OSYMM={OSYMM} ROUND_MODE={ROUND_MODE}"
 //; lsb_w = IW - ow
 //; HALF  = 1 << (lsb_w - 1)
 //; DIV   = 1 << lsb_w
@@ -28,7 +30,15 @@ module `mname`;
             x   = i[`IW-1`:0];
             xs  = longint'(x);
             y   = dut(x);
-            exp = clamp(fdiv(xs + `HALF`, `DIV`), `RMIN`, `RMAX`);
+//; if ROUND_MODE == 'to_odd':
+            exp = fdiv(xs, `DIV`);
+            if (xs != exp * `DIV`) exp = exp | 1;
+//; elif ROUND_MODE == 'von_neumann':
+            exp = fdiv(xs, `DIV`) | 1;
+//; else:
+            exp = fdiv(xs + `HALF`, `DIV`);
+//; # endif
+            exp = clamp(exp, `RMIN`, `RMAX`);
 //; if OSYMM:
             exp = clamp(exp, `RMIN+1`, `RMAX`);
 //; # endif

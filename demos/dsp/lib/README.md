@@ -210,24 +210,34 @@ requant(p.fmt(), "Q1.6", "half_up").sat_reachable  -> True: the container Q1.11 
 `round_consts(shift, mode)` returns the pair of constants the shift adds, one for a
 non-negative code and one for a negative one, and is public so that an emitter or a model
 outside `qfmt` builds the same carry rather than its own. `half_even` needs the tie correction
-`apply` makes afterwards, so the pair alone gives `half_up`.
+`apply` makes afterwards, so the pair alone gives `half_up`. It raises `QError` for `to_odd` and
+`von_neumann`, which add no constant.
 
-The five `ROUND_MODES` are `trunc`, `half_up`, `half_even`, `half_away` and `to_zero`. `trunc`
-rounds toward minus infinity, which is what an arithmetic right shift already does and so costs
-nothing; `half_up` adds half an lsb first; `half_even` adds half an lsb and then steps an exact tie
-down to the even neighbour; `half_away` rounds a tie to the larger magnitude; `to_zero` drops the
-fraction toward zero. Each is one carry into the kept bits, so all five cost an incrementer and
-differ only in what drives its carry-in. Below, `Q4.12 -> Q2.6`, where one dst lsb is 64 src
-codes:
+The seven `ROUND_MODES` are `trunc`, `half_up`, `half_even`, `half_away`, `to_zero`, `to_odd` and
+`von_neumann`. `trunc` rounds toward minus infinity, which is what an arithmetic right shift
+already does and so costs nothing; `half_up` adds half an lsb first; `half_even` adds half an lsb
+and then steps an exact tie down to the even neighbour; `half_away` rounds a tie to the larger
+magnitude; `to_zero` drops the fraction toward zero. Each of these five is one carry into the kept
+bits, so each costs an incrementer and they differ only in what drives its carry-in.
 
-| src code | value  | `trunc` | `half_up` | `half_even` | `half_away` | `to_zero` |
-|----------|--------|---------|-----------|-------------|-------------|-----------|
-| 32       | 1/128  | 0       | 1         | 0           | 1           | 0         |
-| 96       | 3/128  | 1       | 2         | 2           | 2           | 1         |
-| 160      | 5/128  | 2       | 3         | 2           | 3           | 2         |
-| -32      | -1/128 | -1      | 0         | 0           | -1          | 0         |
-| -96      | -3/128 | -2      | -1        | -2          | -2          | -1        |
-| -160     | -5/128 | -3      | -2        | -2          | -3          | -2        |
+`to_odd` and `von_neumann` add no carry: they truncate and OR one bit into the kept lsb, so they
+need no carry chain. `to_odd` ORs in the OR of the dropped bits, IEEE P3109's round inexact to odd:
+an exact value is unchanged and the mean error is zero. `von_neumann` sets the kept lsb always, the
+rule of Burks, Goldstine and von Neumann (1946): it costs no logic, but it moves exact values, 0
+to 1, and its mean error is half a source lsb. Some texts give either rule the name "jamming" or
+"von Neumann rounding"; here the names mean what this paragraph says. Both set the lsb only when
+the conversion drops bits. Below, `Q4.12 -> Q2.6`, where one dst lsb is 64 src codes:
+
+| src code | value  | `trunc` | `half_up` | `half_even` | `half_away` | `to_zero` | `to_odd` | `von_neumann` |
+|----------|--------|---------|-----------|-------------|-------------|-----------|----------|---------------|
+| 0        | 0      | 0       | 0         | 0           | 0           | 0         | 0        | 1             |
+| 32       | 1/128  | 0       | 1         | 0           | 1           | 0         | 1        | 1             |
+| 96       | 3/128  | 1       | 2         | 2           | 2           | 1         | 1        | 1             |
+| 128      | 1/32   | 2       | 2         | 2           | 2           | 2         | 2        | 3             |
+| 160      | 5/128  | 2       | 3         | 2           | 3           | 2         | 3        | 3             |
+| -32      | -1/128 | -1      | 0         | 0           | -1          | 0         | -1       | -1            |
+| -96      | -3/128 | -2      | -1        | -2          | -2          | -1        | -1       | -1            |
+| -160     | -5/128 | -3      | -2        | -2          | -3          | -2        | -3       | -3            |
 
 `osymm` puts a signed output's low end at `-max_code` instead of `min_code`, giving a range
 symmetric about zero. `saturate=False` turns a conversion that can saturate into an error,
@@ -266,7 +276,7 @@ Import in the Python prologue, then call in a backtick expression. `functions/f_
 whole datapath from one `requant` call. This is its prologue, verbatim:
 
 ```systemverilog
-//; from genesispy.lib.verilog import decl, lit, sext
+//; from genesispy.lib.verilog import decl, limit, sext
 //; import qfmt
 //; h          = self.include_params
 //; func_name  = h.get('func_name', 'f_qcvt')

@@ -79,25 +79,25 @@ Every function also accepts `lifetime` (`static` or `automatic`). Most take thei
 `iwidth`; the two multipliers take `awidth` and `bwidth` instead, and `f_qcvt` takes Q-format
 strings.
 
-| File              | Does                                                    | Also accepts              |
-|-------------------|---------------------------------------------------------|---------------------------|
-| `f_abs.vpy`      | absolute value, saturating at the most negative input   | `approx`, `isymm`         |
-| `f_negate.vpy`   | two's complement negate                                 | `approx`, `isymm`         |
-| `f_symm.vpy`     | map the most negative value to one above it             | --                        |
-| `f_sat.vpy`      | narrow the width, saturating on overflow                | `owidth`, `osymm`         |
-| `f_trunc.vpy`    | narrow the width by dropping low bits                   | `owidth`, `osymm`         |
-| `f_round.vpy`    | narrow the width, rounding half up, clamped on overflow | `owidth`, `osymm`         |
-| `f_sx.vpy`       | sign extend to a wider word; errors if not wider        | `owidth`                  |
-| `f_sh.vpy`       | shift either way by a signed count, saturating          | `cwidth`                  |
-| `f_shleft.vpy`   | shift left, saturating                                  | `cwidth`, `osymm`         |
-| `f_shright.vpy`  | shift right, saturating                                 | `cwidth`, `osymm`         |
-| `f_s2sm.vpy`     | two's complement to sign magnitude                      | `owidth`, `sm_plus`       |
-| `f_sm2s.vpy`     | sign magnitude to two's complement                      | `owidth`, `sm_plus`       |
-| `f_umod.vpy`     | unsigned remainder, by shift and subtract               | --                        |
-| `f_log2.vpy`     | integer log2, as `{ sign, log2(abs x) }`                | `isymm`, `approx`, `lfrac` |
-| `f_logmult.vpy`  | multiply by adding logs                                 | see below                 |
-| `f_slogmult.vpy` | multiply by shifting, `a * b =~ a << log2(b)`           | see below                 |
-| `f_qcvt.vpy`     | convert between Q formats, rounding and saturating      | see below                 |
+| File             | Does                                                     | Also accepts                    |
+|------------------|----------------------------------------------------------|---------------------------------|
+| `f_abs.vpy`      | absolute value, saturating at the most negative input    | `approx`, `isymm`               |
+| `f_negate.vpy`   | two's complement negate                                  | `approx`, `isymm`               |
+| `f_symm.vpy`     | map the most negative value to one above it              | --                              |
+| `f_sat.vpy`      | narrow the width, saturating on overflow                 | `owidth`, `osymm`               |
+| `f_trunc.vpy`    | narrow the width by dropping low bits                    | `owidth`, `osymm`               |
+| `f_round.vpy`    | narrow the width, rounding by `round_mode`, saturating   | `owidth`, `osymm`, `round_mode` |
+| `f_sx.vpy`       | sign or zero extend to a wider word; errors if not wider | `owidth`, `signed`              |
+| `f_sh.vpy`       | shift either way by a signed count, saturating           | `cwidth`                        |
+| `f_shleft.vpy`   | shift left, saturating                                   | `cwidth`, `osymm`               |
+| `f_shright.vpy`  | shift right, saturating                                  | `cwidth`, `osymm`               |
+| `f_s2sm.vpy`     | two's complement to sign magnitude                       | `owidth`, `sm_plus`             |
+| `f_sm2s.vpy`     | sign magnitude to two's complement                       | `owidth`, `sm_plus`             |
+| `f_umod.vpy`     | unsigned remainder, by shift and subtract                | --                              |
+| `f_log2.vpy`     | integer log2, as `{ sign, log2(abs x) }`                 | `isymm`, `approx`, `lfrac`      |
+| `f_logmult.vpy`  | multiply by adding logs                                  | see below                       |
+| `f_slogmult.vpy` | multiply by shifting, `a * b =~ a << log2(b)`            | see below                       |
+| `f_qcvt.vpy`     | convert between Q formats, rounding and saturating       | see below                       |
 
 | Option              | Default       | Meaning                                                         |
 |---------------------|---------------|-----------------------------------------------------------------|
@@ -112,14 +112,19 @@ strings.
 | `lfrac`             | `0`           | fractional bits in the log returned by `f_log2`                 |
 | `iapprox`/`oapprox` | `1`/`0`       | approximate the input / output negate of a multiplier           |
 | `q_in`/`q_out`      | `Q4.4`/`Q2.2` | `f_qcvt` source and target format, `Qm.n` or `UQm.n`            |
-| `round_mode`        | `trunc`       | `f_qcvt` rounding, one of the five `qfmt.ROUND_MODES`           |
+| `round_mode`        | `trunc`       | `f_qcvt` rounding, one of the seven `qfmt.ROUND_MODES`          |
+| `round_mode`        | `half_up`     | `f_round` rounding: `half_up`, `to_odd` or `von_neumann`        |
+| `signed`            | `1`           | `f_sx`: `0` extends with zeros and returns an unsigned word     |
 | `src_lo`/`src_hi`   | `None`        | `f_qcvt` source code range that actually arrives                |
-| `saturate`          | `1`           | `0` rejects an `f_qcvt` configuration whose clamp can trigger   |
+| `saturate`          | `1`           | `0` rejects an `f_qcvt` configuration that can saturate         |
 
 `approx` defaults to `0` in `f_negate` and `f_abs`, which are exact unless asked otherwise, and to
 `1` in `f_log2` and in the multipliers' `iapprox`, where the cheap negate costs one LSB of a value
 that is already an approximation. That is the operating point the algorithms were written for. The
 `owidth` default differs per function so that each one is usable with no options at all.
+
+`f_round`'s `round_mode` takes three of the `qfmt.ROUND_MODES`: `half_up`, `to_odd` and
+`von_neumann`. The last two OR one bit into the kept lsb instead of adding a carry.
 
 `f_sh` and `f_shright` take an extra 2-bit `frac` port giving a finer step than a power of two: the
 result is scaled by `1 + frac * 0.25`. Both scale before they shift, so the result is truncated once
@@ -172,11 +177,14 @@ in magnitude. The function shifts to align the binary points, rounds by `round_m
 into the output range; `osymm` clamps the low end one above the most negative value. `trunc` rounds
 toward minus infinity, which is what an arithmetic right shift does; `half_up` rounds a tie up,
 `half_away` a tie away from zero, `half_even` a tie to the even neighbour, and `to_zero` truncates
-toward zero.
+toward zero. `to_odd` and `von_neumann` truncate and OR one bit into the kept lsb, the OR of the
+dropped bits and a 1 respectively, so they need no carry chain.
 
 `src_lo` and `src_hi` narrow the source range to the codes that actually arrive, so a clamp end no
-code can reach is left out of the emitted logic; give neither and both ends are emitted, as before.
-`saturate=0` turns a still-reachable clamp into a generation error, for a caller that means to lose
+code can reach is left out of the emitted logic; give neither and every code of `q_in` is assumed,
+so an end is emitted only where one of them reaches it. Saturation reads the guard bits above the
+output field rather than comparing with the bounds. `saturate=0` turns a still-reachable clamp
+into a generation error, for a caller that means to lose
 no range. Generation rejects a malformed or bitless format, an unknown `round_mode`, a source range
 outside `q_in` or with `src_lo` above `src_hi`, and a reachable clamp under `saturate=0`.
 
@@ -192,8 +200,8 @@ outside `q_in` or with `src_lo` above `src_hi`, and a reachable clamp under `sat
 fixed-point formats and the widths they imply, from exact ranges rather than from a bound on the
 widths. `genesispy.lib.verilog` is the other half, writing the Verilog that denotes a
 generation-time value and computing no width of its own. `f_qcvt` gets its shift, rounding
-constant and clamp bounds from `qfmt.requant`; its testbench keeps its own arithmetic, so the two
-stay independent.
+mode and saturation bounds from `qfmt.requant` and builds the rounding carry itself; its testbench
+keeps its own arithmetic, so the two stay independent.
 
 ## Modules
 

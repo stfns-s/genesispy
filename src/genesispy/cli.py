@@ -164,6 +164,29 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     g_in.add_argument(
+        "--ignore-unused",
+        dest="ignore_unused",
+        action="append",
+        default=[],
+        metavar="KIND[,KIND...]",
+        help=(
+            "Drop these unused-item kinds without a message: overrides "
+            "(--parameter, configure()), entries and keys (--defaults), or all. "
+            "May be repeated. A kind also named in --strict-unused is an error."
+        ),
+    )
+    g_in.add_argument(
+        "--verilog-default-widen-form",
+        dest="verilog_default_widen_form",
+        choices=("concat", "cast"),
+        default="concat",
+        help=(
+            "Default form of verilog.sext and verilog.pad_low: concat (default, "
+            "Verilog-2005) or cast (SystemVerilog size cast). verilog.set_widen_form() "
+            "and a call's form= override it."
+        ),
+    )
+    g_in.add_argument(
         "-j", "--json-cfg",
         dest="json_cfg",
         default=None,
@@ -747,6 +770,17 @@ def _warn_duplicate_inputs(inputs: Sequence[str]) -> None:
             warning(f"--input: duplicate path {key} ({count} occurrences)")
 
 
+def _unused_kinds(parser: argparse.ArgumentParser, flag: str, specs: list[str]) -> frozenset[str]:
+    """The UNUSED_KINDS named by ``flag``'s comma lists, ``all`` expanded; an unknown kind
+    is a usage error."""
+    kinds = {k for spec in specs for k in spec.split(",") if k}
+    bad = sorted(kinds - {*UNUSED_KINDS, "all"})
+    if bad:
+        parser.error(f"{flag}: unknown kind {bad[0]!r}; "
+                     f"expected {', '.join(UNUSED_KINDS)} or all")
+    return frozenset(UNUSED_KINDS) if "all" in kinds else frozenset(kinds)
+
+
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     """Parse ``argv`` (defaults to ``sys.argv[1:]``) into a Namespace."""
     parser = _build_parser()
@@ -755,12 +789,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         parser.error("--parse-only and --gen-only are mutually exclusive")
     if args.keep_tmp:
         args.use_tmp = True
-    kinds = {k for spec in args.strict_unused for k in spec.split(",") if k}
-    bad = sorted(kinds - {*UNUSED_KINDS, "all"})
-    if bad:
-        parser.error(f"--strict-unused: unknown kind {bad[0]!r}; "
-                     f"expected {', '.join(UNUSED_KINDS)} or all")
-    args.strict_unused = frozenset(UNUSED_KINDS) if "all" in kinds else frozenset(kinds)
+    args.strict_unused = _unused_kinds(parser, "--strict-unused", args.strict_unused)
+    args.ignore_unused = _unused_kinds(parser, "--ignore-unused", args.ignore_unused)
     if args.top_name is not None and (
         not re.fullmatch(r"[A-Za-z_]\w*", args.top_name, re.ASCII)
         or keyword.iskeyword(args.top_name)

@@ -98,6 +98,7 @@ class Manager:
         # every emitted file is tagged 'verif'.  Mirrors Manager.pm:89.
         self.synth_top = args.synth_top
         self.debug = int(args.debug)
+        cache.WIDEN_FORM = args.verilog_default_widen_form
         self.src_path = list(args.src_path)
         self.inc_path = list(args.inc_path)
         self.cfg_path = list(args.cfg_path)
@@ -484,24 +485,31 @@ class Manager:
         from . import user_config
 
         self._ensure_cfg_handler()
-        top_cls = self.load_top_module()
-        if self.top_name != self.top:
-            top_cls = self.synonym_class(self.top, self.top_name)
-        top = top_cls(self)
-        self._top_inst = top
-        with user_config.context(self, top):
-            top.execute()
-        top._lock_params()
+        cache.ELABORATING = True
+        try:
+            top_cls = self.load_top_module()
+            if self.top_name != self.top:
+                top_cls = self.synonym_class(self.top, self.top_name)
+            top = top_cls(self)
+            self._top_inst = top
+            with user_config.context(self, top):
+                top.execute()
+            top._lock_params()
+        finally:
+            cache.ELABORATING = False
         if self.top_name != self.top and cache.MODULE_CACHE.get(self.top_name) is not top:
             error(f"--top-name {self.top_name}: a submodule is also emitted as "
                   f"{self.top_name!r}", cls=reporting.ElaborationError)
 
         strict = getattr(self.args, "strict_unused", frozenset())
+        ignore = getattr(self.args, "ignore_unused", frozenset())
         n_strict = 0
         for kind, msg in self.cfg_handler.report_unused():
             if kind in strict:
                 reporting.error(msg, fatal=False)
                 n_strict += 1
+            elif kind in ignore:
+                continue
             else:
                 reporting.warning(msg)
         if n_strict:

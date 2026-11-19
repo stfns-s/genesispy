@@ -1,12 +1,14 @@
 """Tests for genesispy.lib.verilog, the Verilog text helpers."""
 
+import json
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
 from genesispy.lib import verilog
-from genesispy.lib.verilog import VerilogError, lit
+from genesispy.lib.verilog import VerilogError, limit, lit
 
 WIDTHS = range(1, 9)
 
@@ -74,9 +76,125 @@ def test_lit_covers_every_unsigned_code(width):
         lit(1 << width, width, signed=False)
 
 
+@pytest.mark.parametrize(
+    "value, width, signed, fmt, expect",
+    [
+        (5, 8, True, "bin", "8'sb00000101"),
+        (-5, 8, True, "bin", "8'sb11111011"),
+        (-128, 8, True, "bin", "8'sb10000000"),
+        (5, 8, False, "bin", "8'b00000101"),
+        (-1, 1, True, "bin", "1'sb1"),
+        (0, 1, False, "bin", "1'b0"),
+        (-5, 8, True, "hex", "8'shfb"),
+        (-128, 8, True, "hex", "8'sh80"),
+        (255, 8, False, "hex", "8'hff"),
+        (-1, 6, True, "hex", "6'sh3f"),
+        (5, 12, True, "hex", "12'sh005"),
+        (-5, 8, True, "dec", "-8'sd5"),
+        (5, 8, False, "dec", "8'd5"),
+    ],
+)
+def test_lit_format_examples(value, width, signed, fmt, expect):
+    assert lit(value, width, signed, fmt=fmt) == expect
+
+
+@pytest.mark.parametrize("width", WIDTHS)
+@pytest.mark.parametrize("signed", (True, False))
+@pytest.mark.parametrize("fmt, base, letter", [("bin", 2, "b"), ("hex", 16, "h")])
+def test_lit_format_decodes_to_every_code(width, signed, fmt, base, letter):
+    lo, hi = (-(1 << (width - 1)), (1 << (width - 1)) - 1) if signed else (0, (1 << width) - 1)
+    prefix = f"{width}'{'s' if signed else ''}{letter}"
+    ndig = width if base == 2 else -(-width // 4)
+    for v in range(lo, hi + 1):
+        s = lit(v, width, signed, fmt=fmt)
+        assert s.startswith(prefix)
+        digits = s[len(prefix):]
+        assert len(digits) == ndig
+        code = int(digits, base)
+        assert code < (1 << width)
+        assert (code - (1 << width) if signed and code >> (width - 1) else code) == v
+    with pytest.raises(VerilogError):
+        lit(lo - 1, width, signed, fmt=fmt)
+    with pytest.raises(VerilogError):
+        lit(hi + 1, width, signed, fmt=fmt)
+
+
+@pytest.mark.parametrize("value, signed", [(-5, True), (200, False)])
+def test_lit_format_none_and_dec_are_the_decimal_text(value, signed):
+    assert lit(value, 8, signed, fmt=None) == lit(value, 8, signed, fmt="dec") \
+        == lit(value, 8, signed)
+
+
+def test_lit_rejects_an_unknown_format():
+    with pytest.raises(VerilogError):
+        lit(5, 8, fmt="oct")
+
+
 def test_lit_rejects_zero_width():
     with pytest.raises(VerilogError):
         lit(0, 0)
+
+
+@pytest.mark.parametrize(
+    "args, kw, expect",
+    [
+        (("max", 8), {}, "8'sb01111111"),
+        (("min", 8), {}, "8'sb10000000"),
+        (("min", 8), {"symm": True}, "8'sb10000001"),
+        (("max", 8), {"symm": True}, "8'sb01111111"),
+        (("max", 8), {"signed": False}, "8'b11111111"),
+        (("min", 8), {"signed": False}, "8'b00000000"),
+        (("max", 8), {"fmt": "hex"}, "8'sh7f"),
+        (("min", 8), {"symm": True, "fmt": "hex"}, "8'sh81"),
+        (("max", 12), {"fmt": "hex"}, "12'sh7ff"),
+        (("min", 8), {"fmt": "dec"}, "-8'sd128"),
+        (("min", 8), {"symm": True, "fmt": "dec"}, "-8'sd127"),
+        (("max", 1), {}, "1'sb0"),
+        (("min", 1), {}, "1'sb1"),
+        (("min", 1), {"symm": True}, "1'sb0"),
+        ((), {"bound": "min", "width": 8, "symm": True}, "8'sb10000001"),
+    ],
+)
+def test_limit_examples(args, kw, expect):
+    assert limit(*args, **kw) == expect
+
+
+@pytest.mark.parametrize("width", WIDTHS)
+@pytest.mark.parametrize("signed, symm", [(True, False), (True, True), (False, False)])
+def test_limit_is_the_format_end(width, signed, symm):
+    if signed:
+        lo, hi = -(1 << (width - 1)) + symm, (1 << (width - 1)) - 1
+    else:
+        lo, hi = 0, (1 << width) - 1
+    for fmt in ("bin", "hex", "dec"):
+        assert limit("min", width, signed, symm, fmt) == lit(lo, width, signed, fmt)
+        assert limit("max", width, signed, symm, fmt) == lit(hi, width, signed, fmt)
+
+
+def test_limit_defaults_to_binary():
+    assert limit("max", 8) == lit(127, 8, fmt="bin")
+
+
+@pytest.mark.parametrize("bound", ["Max", "mid", True])
+def test_limit_rejects_an_unknown_bound(bound):
+    with pytest.raises(VerilogError, match="^limit: bound"):
+        limit(bound, 8)
+
+
+@pytest.mark.parametrize("fmt", [None, "oct"])
+def test_limit_rejects_an_unknown_format(fmt):
+    with pytest.raises(VerilogError, match="^limit: fmt"):
+        limit("max", 8, fmt=fmt)
+
+
+def test_limit_rejects_symm_when_unsigned():
+    with pytest.raises(VerilogError, match="^limit: symm"):
+        limit("min", 8, signed=False, symm=True)
+
+
+def test_limit_rejects_zero_width():
+    with pytest.raises(VerilogError, match="^lit:"):
+        limit("max", 0)
 
 
 def test_error_type_is_a_value_error():
@@ -129,6 +247,112 @@ def test_pad_low_examples(n, expect):
 def test_pad_low_rejects_a_negative_count():
     with pytest.raises(VerilogError):
         verilog.pad_low("x", -1)
+
+
+_CONCAT_0_6_3 = json.loads(
+    (Path(__file__).parent / "fixtures" / "verilog_concat_0_6_3.json").read_text()
+)
+
+
+@pytest.mark.parametrize("term, from_w, to_w, msb, signed, text", _CONCAT_0_6_3["sext"])
+def test_sext_concat_text_matches_0_6_3(term, from_w, to_w, msb, signed, text):
+    assert verilog.sext(term, from_w, to_w, msb=msb, signed=signed) == text
+    assert verilog.sext(term, from_w, to_w, msb=msb, signed=signed, form="concat") == text
+
+
+@pytest.mark.parametrize("term, n, text", _CONCAT_0_6_3["pad_low"])
+def test_pad_low_concat_text_matches_0_6_3(term, n, text):
+    assert verilog.pad_low(term, n) == text
+    assert verilog.pad_low(term, n, from_w=6, form="concat") == text
+
+
+@pytest.mark.parametrize(
+    "args, kwargs, expect",
+    [
+        (("x", 3, 15), {}, "15'(signed'(x))"),
+        (("x", 3, 15), {"signed": False}, "15'(unsigned'(x))"),
+        (("acc", 8, 12), {"msb": 3}, "12'(signed'(acc))"),
+        (("acc[3:0]", 4, 8), {}, "8'(signed'(acc[3:0]))"),
+        (("acc[k +: 4]", 4, 8), {}, "8'(signed'(acc[k +: 4]))"),
+        (("{a, b}", 4, 8), {}, "8'(signed'({a, b}))"),
+        (("x[3]", 1, 4), {}, "4'(signed'(x[3]))"),
+    ],
+)
+def test_sext_cast(args, kwargs, expect):
+    assert verilog.sext(*args, form="cast", **kwargs) == expect
+
+
+def test_pad_low_cast():
+    assert verilog.pad_low("x", 4, from_w=6, form="cast") == "(10'(x) << 4)"
+    assert verilog.pad_low("x", 0, form="cast") == "x"
+
+
+def test_unknown_form_is_rejected():
+    with pytest.raises(VerilogError):
+        verilog.sext("x", 3, 15, form="legacy")
+    with pytest.raises(VerilogError):
+        verilog.pad_low("x", 4, from_w=6, form="legacy")
+    with pytest.raises(VerilogError):
+        verilog.set_widen_form("legacy")
+    assert verilog.get_widen_form() == "concat"
+
+
+def test_pad_low_cast_needs_from_w():
+    with pytest.raises(VerilogError):
+        verilog.pad_low("x", 4, form="cast")
+    with pytest.raises(VerilogError):
+        verilog.pad_low("x", 4, from_w=0, form="cast")
+
+
+def test_cast_keeps_the_width_checks():
+    with pytest.raises(VerilogError):
+        verilog.sext("x", 4, 4, form="cast")
+    with pytest.raises(VerilogError):
+        verilog.sext("x", 0, 4, form="cast")
+    with pytest.raises(VerilogError):
+        verilog.pad_low("x", -1, from_w=6, form="cast")
+
+
+def test_default_is_concat():
+    assert verilog.get_widen_form() == "concat"
+    assert verilog.sext("x", 8, 11) == "{ { 3 {x[7]} }, x }"
+
+
+def test_set_widen_form_changes_the_default():
+    verilog.set_widen_form("cast")
+    assert verilog.get_widen_form() == "cast"
+    assert verilog.sext("x", 8, 11) == "11'(signed'(x))"
+    assert verilog.pad_low("x", 3, from_w=8) == "(11'(x) << 3)"
+
+
+def test_call_form_overrides_the_default():
+    verilog.set_widen_form("cast")
+    assert verilog.sext("x", 8, 11, form="concat") == "{ { 3 {x[7]} }, x }"
+
+
+def test_clear_all_resets_the_default():
+    from genesispy import cache
+
+    verilog.set_widen_form("cast")
+    cache.clear_all()
+    assert verilog.get_widen_form() == "concat"
+
+
+def test_set_widen_form_warns_during_elaboration(capsys):
+    from genesispy import cache
+
+    cache.ELABORATING = True
+    verilog.set_widen_form("cast")
+    assert (
+        "set_widen_form('cast') called during elaboration; templates elaborated earlier "
+        "keep the previous form"
+    ) in capsys.readouterr().err
+    assert verilog.get_widen_form() == "cast"
+
+
+def test_set_widen_form_is_silent_outside_elaboration(capsys):
+    verilog.set_widen_form("cast")
+    assert "set_widen_form" not in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
@@ -367,3 +591,59 @@ def test_port_map_keeps_the_order_and_every_net():
 def test_port_map_rejects_an_empty_list_or_a_repeated_port(ports):
     with pytest.raises(VerilogError):
         verilog.port_map(ports)
+
+
+_WIDEN_TOP = (
+    "module `mname` (input [7:0] x, output [10:0] y);\n"
+    "assign y = `verilog.sext('x', 8, 11)`;\n"
+    "endmodule\n"
+)
+
+
+def _widen_run(tmp_path, monkeypatch, argv=(), top=_WIDEN_TOP, cfg=None):
+    from genesispy.cli import parse_args
+    from genesispy.manager import Manager
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "top.vpy").write_text(top)
+    args = ["--input", "top.vpy", "--top", "top", "--src-path", "src", "--out-dir", "out",
+            *argv]
+    if cfg is not None:
+        (tmp_path / "w.cfg").write_text(cfg)
+        args += ["--cfg", "w.cfg"]
+    monkeypatch.chdir(tmp_path)
+    rc = Manager(parse_args(args)).execute()
+    files = sorted((tmp_path / "out").glob("top*.v"))
+    return rc, files[0].read_text() if files else ""
+
+
+def test_flag_sets_the_run_default(tmp_path, monkeypatch):
+    rc, text = _widen_run(tmp_path, monkeypatch, ["--verilog-default-widen-form", "cast"])
+    assert rc == 0
+    assert "assign y = 11'(signed'(x));" in text
+
+
+def test_cfg_setter_overrides_the_flag(tmp_path, monkeypatch, capsys):
+    cfg = "from genesispy.lib import verilog\nverilog.set_widen_form('concat')\n"
+    rc, text = _widen_run(tmp_path, monkeypatch, ["--verilog-default-widen-form", "cast"],
+                          cfg=cfg)
+    assert rc == 0
+    assert "assign y = { { 3 {x[7]} }, x };" in text
+    assert "set_widen_form" not in capsys.readouterr().err
+
+
+def test_template_setter_warns(tmp_path, monkeypatch, capsys):
+    top = "//; verilog.set_widen_form('cast')\n" + _WIDEN_TOP
+    rc, text = _widen_run(tmp_path, monkeypatch, top=top)
+    assert rc == 0
+    assert "assign y = 11'(signed'(x));" in text
+    assert "set_widen_form('cast') called during elaboration" in capsys.readouterr().err
+
+
+def test_elaboration_flag_clears_after_an_error(tmp_path, monkeypatch):
+    from genesispy import cache
+
+    top = "//; raise ValueError('boom')\n" + _WIDEN_TOP
+    rc, _ = _widen_run(tmp_path, monkeypatch, top=top)
+    assert rc != 0
+    assert cache.ELABORATING is False

@@ -1,7 +1,7 @@
     // convert 2's complement to sign,magnitude
     //  The most negative input has no magnitude counterpart, so it folds to MIN+1 first.
     //  Both ports are min(iwidth, owidth) wide: this converts, it does not change width.
-//; from genesispy.lib.verilog import lit
+//; from genesispy.lib.verilog import limit
 //; h         = self.include_params
 //; func_name = h.get('func_name', 'f_s2sm')
 //; iwidth    = h.get('iwidth', 8)
@@ -12,12 +12,11 @@
 //; if ow < 2:
 //;     error(f"{func_name}: ow ({ow}) must be >= 2; sign magnitude needs a sign bit and a magnitude bit")
 //; # endif
-//; minn      = -(1 << (ow-1))
     function `lifetime` unsigned [`ow-1`:0] `func_name`;
         input signed [`ow-1`:0] snum;
         reg signed [`ow-1`:0] t;
 
-        t = (snum == `lit(minn, ow)`) ? `lit(minn+1, ow)` : snum;
+        t = (snum == `limit("min", ow)`) ? `limit("min", ow, symm=True)` : snum;
         t = t[`ow-1`] ? -t : t;
         `func_name`[`ow-1`]   = `sm_plus` ^ snum[`ow-1`];
         `func_name`[`ow-2`:0] = t[`ow-2`:0];

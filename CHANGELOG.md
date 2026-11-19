@@ -2,6 +2,25 @@
 
 Notable changes to genesispy. Versions follow `pyproject.toml`.
 
+## 0.6.4
+
+- Incompatible: the `--param-footer` header reads "Genesis-Py resolved parameter sources:", and
+  the `--defaults` source is labelled `defaults file (--defaults)`.
+- `--param-footer`: a forced parameter names the source of its input after a second `<-`.
+- `--json-out`: forced items carry `InputSource`, the source of the value the force replaced.
+  `genesispy-json2xml` drops it, since Genesis2 rejects an unknown key in a parameter item.
+- New `--ignore-unused KIND[,KIND...]`: listed unused kinds are dropped without a message; a kind
+  also in `--strict-unused` stays an error.
+- New `form=` on `verilog.sext` and `verilog.pad_low`: `cast` emits a size cast with a signing
+  cast, `concat` (default) the 0.6.3 text. The default is set by `verilog.set_widen_form()` or
+  `--verilog-default-widen-form`; a `set_widen_form()` call during elaboration warns, in genesispy
+  and gvpy.
+- New `fmt=` on `verilog.lit`: `"bin"` or `"hex"` writes the two's-complement digits, `8'sb11111011`
+  or `8'shfb`, exact in any context width; `None` (default) and `"dec"` keep the decimal text.
+- New `verilog.limit(bound, width, signed=True, symm=False, fmt="bin")`: the min or max end of a
+  format as a sized literal, `8'sb10000000`; `symm` raises the min end by one.
+- dsp demo: updated to showcase the new features of `genesispy.lib.verilog`.
+
 ## 0.6.3
 
 - Incompatible: `--json-out` puts parent-keyword parameters under `ImmutableParameters`, as Perl

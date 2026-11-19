@@ -715,3 +715,18 @@ def test_param_footer_reaches_manager(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert Manager(parse_args(["--param-footer"])).param_footer is True
     assert Manager(parse_args([])).param_footer is False
+
+
+def test_verilog_default_widen_form_defaults_to_concat():
+    assert parse_args([]).verilog_default_widen_form == "concat"
+
+
+def test_verilog_default_widen_form_accepts_cast():
+    ns = parse_args(["--verilog-default-widen-form", "cast"])
+    assert ns.verilog_default_widen_form == "cast"
+
+
+def test_verilog_default_widen_form_rejects_an_unknown_form():
+    with pytest.raises(SystemExit) as exc:
+        parse_args(["--verilog-default-widen-form", "legacy"])
+    assert exc.value.code == 2

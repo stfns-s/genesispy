@@ -214,3 +214,19 @@ def test_json2xml_types_a_val_as_genesis2_does(tmp_path, val, key):
     xml_json.xml_to_json(str(xml), str(back))
     (param,) = json.loads(back.read_text())["HierarchyTop"]["Parameters"]
     assert param == {"Name": "P", key: val}
+
+
+def test_json2xml_drops_input_source(tmp_path):
+    """Genesis2 allows only Name and one value key in a parameter item."""
+    snap = {"HierarchyTop": {
+        "InstanceName": "top",
+        "Parameters": [{"Name": "A", "Val": 1, "InputSource": "declaration default"}],
+        "ImmutableParameters": [{"Name": "B", "Val": 2, "InputSource": "command line"}],
+    }}
+    src, out = tmp_path / "snap.json", tmp_path / "snap.xml"
+    src.write_text(json.dumps(snap))
+    xml_json.json_to_xml(str(src), str(out))
+    text = out.read_text()
+    assert "InputSource" not in text
+    for elem in ("<Name>A</Name>", "<Val>1</Val>", "<Name>B</Name>", "<Val>2</Val>"):
+        assert elem in text

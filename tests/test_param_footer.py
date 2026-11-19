@@ -8,6 +8,7 @@ import re
 import pytest
 
 from genesispy.config_handler import Priority
+from genesispy.reporting import ParameterError
 from genesispy.unique_module import (
     _COMMENT_LINE_WIDTH,
     _PARAM_FOOTER_VALUE_WIDTH,
@@ -69,7 +70,7 @@ def test_param_footer_reports_every_provenance() -> None:
     mgr = StubManager()
     mgr.param_footer = True
     footer = _footer_of(_five_provenance_module(mgr))
-    assert "// Genesis-Py resolved parameter provenance" in footer
+    assert "// Genesis-Py resolved parameter sources:" in footer
     assert re.search(r"^//\s+AWIDTH\s+: 5\s+<- declaration default$", footer, re.M)
     assert re.search(r"^//\s+CFGVAL\s+: 1\s+<- config script", footer, re.M)
     assert re.search(r"^//\s+DEPTH\s+: 32\s+<- command line", footer, re.M)
@@ -88,7 +89,7 @@ def test_param_footer_honours_output_comment_block_style() -> None:
     lines = _footer_of(top).splitlines()
     assert lines[0] == "/*"
     assert lines[-1] == "*/"
-    assert " Genesis-Py resolved parameter provenance" in lines
+    assert " Genesis-Py resolved parameter sources:" in lines
     assert "//" not in "\n".join(lines)
 
 
@@ -173,5 +174,93 @@ def test_param_footer_respects_comment_line_width(n: int) -> None:
     top = Top(mgr)
     top.define_param("COEFFS", default=list(range(n)))
     top.define_param("TAPS", default={f"key{i}": i * 1000 for i in range(4)})
+    top.define_param("SEL", default=1)
+    top.force_param("SEL", 1)
     for ln in _footer_of(top).splitlines():
         assert len(ln) <= _COMMENT_LINE_WIDTH, ln
+
+
+# ------------------------------------------------ forced: the input's source
+def _forced_n_line(setup) -> str:
+    """Footer line for N after ``setup(top)`` then a force of N to 4."""
+    mgr = StubManager()
+    mgr.param_footer = True
+    top = Top(mgr)
+    setup(top)
+    top.force_param("N", 4)
+    return next(ln for ln in _footer_of(top).splitlines() if re.match(r"^//\s+N\s+: ", ln))
+
+
+def _overridden(top: UniqueModule, priority: int) -> None:
+    _overridden_name(top, "N", priority)
+
+
+def test_forced_declared_default_names_its_input() -> None:
+    line = _forced_n_line(lambda top: top.define_param("N", default=4))
+    assert line.endswith("<- forced (force_param) <- declaration default")
+
+
+def test_forced_command_line_value_names_its_input() -> None:
+    line = _forced_n_line(lambda top: _overridden(top, Priority.CMD_LINE))
+    assert line.endswith("<- forced (force_param) <- command line (--parameter)")
+
+
+def test_forced_defaults_value_names_its_input() -> None:
+    line = _forced_n_line(lambda top: _overridden(top, Priority.MODULE_DEFAULT))
+    assert line.endswith("<- forced (force_param) <- defaults file (--defaults)")
+
+
+def test_forced_parent_keyword_names_its_input() -> None:
+    line = _forced_n_line(lambda top: top.override_param("N", 8))
+    assert line.endswith("<- forced (force_param) <- parent instantiation")
+
+
+def test_forced_new_name_has_no_input() -> None:
+    line = _forced_n_line(lambda top: None)
+    assert line.endswith("<- forced (force_param)")
+
+
+def test_forced_off_ladder_priority_keeps_the_number() -> None:
+    line = _forced_n_line(lambda top: _overridden(top, 15))
+    assert line.endswith(
+        "<- forced (force_param) <- config script (--cfg / configure) (priority 15)")
+
+
+@pytest.mark.parametrize("source", [
+    Priority.MODULE_DEFAULT, Priority.EXTERNAL_CONFIG, Priority.CMD_LINE])
+@pytest.mark.parametrize("n", [1, 8, 40])
+def test_a_forced_row_with_a_long_input_label_fits_the_width(source, n: int) -> None:
+    """The second <- link widens the source column; the value column must give way."""
+    mgr = StubManager()
+    mgr.param_footer = True
+    top = Top(mgr)
+    top.define_param("COEFFS", default=list(range(n)))
+    _overridden_name(top, "SEL", source)
+    top.force_param("SEL", 1)
+    for ln in _footer_of(top).splitlines():
+        assert len(ln) <= _COMMENT_LINE_WIDTH, ln
+
+
+def _overridden_name(top: UniqueModule, name: str, priority: int) -> None:
+    top.define_param(name, default=1)
+    top._params[name]["state"] = "OVERRIDDEN"
+    top._params[name]["priority"] = int(priority)
+
+
+def test_forced_unrecorded_source_keeps_its_label() -> None:
+    """The input's label is the one the row would carry unforced."""
+    line = _forced_n_line(lambda top: _overridden(top, 0))
+    assert line.endswith("<- forced (force_param) <- external configuration (source not recorded)")
+
+
+def test_a_second_force_keeps_the_first_input_source() -> None:
+    mgr = StubManager()
+    mgr.param_footer = True
+    top = Top(mgr)
+    _overridden(top, Priority.CMD_LINE)
+    top.force_param("N", 4)
+    with pytest.raises(ParameterError):
+        top.force_param("N", 5)
+    line = next(ln for ln in _footer_of(top).splitlines() if re.match(r"^//\s+N\s+: ", ln))
+    assert line.endswith("<- forced (force_param) <- command line (--parameter)")
+    assert top._params["N"]["value"] == 4

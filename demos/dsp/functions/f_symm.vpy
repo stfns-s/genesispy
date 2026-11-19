@@ -1,5 +1,5 @@
     // enforce 2's complement symmetry - i.e. min=-2^(iwidth-1)+1 == -max
-//; from genesispy.lib.verilog import lit
+//; from genesispy.lib.verilog import limit
 //; h         = self.include_params
 //; func_name = h.get('func_name', 'f_symm')
 //; iwidth    = h.get('iwidth', 8)
@@ -7,8 +7,7 @@
 //; if iwidth < 1:
 //;     error(f"{func_name}: iwidth ({iwidth}) must be >= 1")
 //; # endif
-//; min_neg   = -(1 << (iwidth-1))
     function `lifetime` signed [`iwidth-1`:0] `func_name`;
         input signed [`iwidth-1`:0] x;
-        `func_name` = (x == `lit(min_neg, iwidth)`) ? `lit(min_neg+1, iwidth)` : x;
+        `func_name` = (x == `limit("min", iwidth)`) ? `limit("min", iwidth, symm=True)` : x;
     endfunction

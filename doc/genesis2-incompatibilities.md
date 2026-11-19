@@ -70,7 +70,9 @@ Perl emits `FILE`, `small_<basename>`, `tiny_<basename>` (underscore prefix). ge
 `FILE`, `<stem>-small<ext>`, `<stem>-tiny<ext>` (suffix on the stem). Content differences: genesispy
 lists every parameter the template declares, where Perl leaves out those it never read, and Perl
 also files a parameter whose value refers to an instance under `ImmutableParameters`
-(`ConfigHandler.pm:676-708`). Each node also carries `TemplateName`.
+(`ConfigHandler.pm:676-708`). Each node also carries `TemplateName`, and a forced item may carry
+`InputSource`; `genesispy-json2xml` drops the latter, since Genesis2 discards `Range` and `Doc` and
+then rejects any item key besides `Name` and one value key (`ConfigHandler.pm:901-906`).
 
 ## 5. Command-line overrides: bare names, unused overrides warn
 

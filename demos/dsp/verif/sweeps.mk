@@ -12,13 +12,19 @@ SWEEP_f_abs      := default IW=2 IW=3 IW=5 IW=16 IW=8:APPROX=1 IW=8:ISYMM=1 \
 SWEEP_f_negate   := default IW=2 IW=3 IW=5 IW=16 IW=8:APPROX=1 IW=8:ISYMM=1 \
                     IW=8:APPROX=1:ISYMM=1 IW=5:APPROX=1:ISYMM=1
 SWEEP_f_symm     := default IW=2 IW=3 IW=5 IW=16
-SWEEP_f_sx       := default IW=12:OW=13 IW=8:OW=9 IW=2:OW=8 IW=5:OW=6 IW=1:OW=2
+SWEEP_f_sx       := default IW=12:OW=13 IW=8:OW=9 IW=2:OW=8 IW=5:OW=6 IW=1:OW=2 \
+                    SIGNED=0 IW=1:OW=2:SIGNED=0 IW=3:OW=100 IW=1:OW=128:SIGNED=0 \
+                    IW=5:OW=6:SIGNED=0
 SWEEP_f_sat      := default IW=8:OW=2 IW=8:OW=3 IW=8:OW=7 IW=5:OW=3 IW=8:OW=6:OSYMM=1 \
                     IW=5:OW=3:OSYMM=1 IW=16:OW=8 IW=5:OW=8 IW=2:OW=3
 SWEEP_f_trunc    := default IW=8:OW=2 IW=8:OW=3 IW=8:OW=6:OSYMM=1 IW=5:OW=2 IW=16:OW=8 \
                     IW=4:OW=6 IW=8:OW=8
 SWEEP_f_round    := default IW=8:OW=2 IW=8:OW=3 IW=8:OW=6:OSYMM=1 IW=5:OW=2 IW=16:OW=8 \
-                    IW=8:OW=8 IW=8:OW=9 IW=8:OW=8:OSYMM=1
+                    IW=8:OW=8 IW=8:OW=9 IW=8:OW=8:OSYMM=1 \
+                    IW=2:OW=1:OSYMM=1 IW=8:OW=6:ROUND_MODE=to_odd \
+                    IW=8:OW=2:OSYMM=1:ROUND_MODE=to_odd IW=2:OW=1:ROUND_MODE=to_odd \
+                    IW=8:OW=6:ROUND_MODE=von_neumann IW=8:OW=2:OSYMM=1:ROUND_MODE=von_neumann \
+                    IW=2:OW=1:ROUND_MODE=von_neumann
 # f_s2sm and f_sm2s give both ports w = min(IW, OW), so a configuration differing only in the
 # wider width repeats one already listed. These vary w itself and SM_PLUS.
 SWEEP_f_s2sm     := default IW=3:OW=3 IW=16:OW=16 IW=5:OW=5 IW=2:OW=2 IW=8:OW=8:SM_PLUS=0 \
@@ -54,7 +60,29 @@ SWEEP_f_qcvt     := default Q_IN=Q4.12:Q_OUT=Q2.6:ROUND_MODE=half_even \
                     Q_IN=Q2.5:Q_OUT=Q7.5 Q_IN=UQ4.4:Q_OUT=UQ5.4 Q_IN=UQ4.4:Q_OUT=UQ6.4 \
                     Q_IN=UQ4.4:Q_OUT=UQ12.4 \
                     Q_IN=UQ4.4:Q_OUT=UQ12.2:ROUND_MODE=half_up \
-                    Q_IN=UQ4.4:Q_OUT=UQ12.2:ROUND_MODE=half_even
+                    Q_IN=UQ4.4:Q_OUT=UQ12.2:ROUND_MODE=half_even \
+                    Q_IN=Q4.4:Q_OUT=Q2.4:SRC_LO=-16:SRC_HI=40 \
+                    Q_IN=Q4.4:Q_OUT=Q4.2:SRC_LO=-64:SRC_HI=60:SATURATE=0 \
+                    Q_IN=Q4.12:Q_OUT=Q2.6:ROUND_MODE=half_away \
+                    Q_IN=Q4.12:Q_OUT=Q2.6:ROUND_MODE=to_zero \
+                    Q_IN=Q4.4:Q_OUT=Q2.2:ROUND_MODE=half_away:OSYMM=1 \
+                    Q_IN=Q4.4:Q_OUT=Q3.2:ROUND_MODE=to_zero:SRC_LO=0:SRC_HI=60 \
+                    Q_IN=Q4.12:Q_OUT=Q2.6:ROUND_MODE=to_odd \
+                    Q_IN=UQ8.8:Q_OUT=UQ4.4:ROUND_MODE=to_odd \
+                    Q_IN=Q4.4:Q_OUT=Q4.3:ROUND_MODE=to_odd \
+                    Q_IN=Q4.12:Q_OUT=Q2.6:ROUND_MODE=von_neumann \
+                    Q_IN=UQ8.8:Q_OUT=UQ4.4:ROUND_MODE=von_neumann \
+                    Q_IN=Q4.4:Q_OUT=Q4.3:ROUND_MODE=von_neumann \
+                    Q_IN=Q4.4:Q_OUT=Q2.4:SRC_LO=-64:SRC_HI=20 \
+                    Q_IN=Q4.4:Q_OUT=Q3.2:ROUND_MODE=half_up:SRC_LO=-20:SRC_HI=20 \
+                    Q_IN=UQ8.8:Q_OUT=UQ4.4:ROUND_MODE=half_away \
+                    Q_IN=UQ8.8:Q_OUT=UQ4.4:ROUND_MODE=to_zero \
+                    Q_IN=Q4.4:Q_OUT=Q4.3:ROUND_MODE=half_even \
+                    Q_IN=Q4.4:Q_OUT=Q4.3:ROUND_MODE=half_away \
+                    Q_IN=Q4.4:Q_OUT=Q4.3:ROUND_MODE=to_zero \
+                    Q_IN=Q-2.6:Q_OUT=Q-1.4:ROUND_MODE=half_away \
+                    Q_IN=Q4.4:Q_OUT=Q4.4:ROUND_MODE=to_zero \
+                    Q_IN=Q3.5:Q_OUT=Q3.9:ROUND_MODE=half_away
 
 # intg. EXH_MIN makes the exhaustive sweep's state count a check rather than a number nothing
 # reads. The walk reaches every accumulator state only when a legal shift puts a term on its
@@ -123,8 +151,8 @@ NEG_iir := IW=1 MW=0 OW=0 IW=4:OW=9:MW=2 IW=2:OW=2:MW=6 IW=32:OW=8:MW=5 EXH=1 \
 # no wider; both error rather than emit an empty slice. f_sat and f_round derive the output
 # width as iwidth-1 when the requested one is no narrower, so IW=1 leaves them nothing.
 NEG_f_sat   := IW=8:OW=8 IW=1:OW=2
-NEG_f_sx    := IW=8:OW=8 IW=8:OW=4
-NEG_f_round := IW=1:OW=2
+NEG_f_sx    := IW=8:OW=8 IW=8:OW=4 SIGNED=2
+NEG_f_round := IW=1:OW=2 IW=8:OW=6:ROUND_MODE=half_even
 
 # A zero-width input leaves nothing to operate on; the functions reject it instead of
 # letting the literal builder raise.

@@ -60,7 +60,7 @@ class Priority(IntEnum):
 PRIORITY_LABELS: dict[int, str] = {
     0:                                 "declaration default",
     int(Priority.DECLARATION):         "declaration default",
-    int(Priority.MODULE_DEFAULT):      "module defaults (--defaults)",
+    int(Priority.MODULE_DEFAULT):      "defaults file (--defaults)",
     int(Priority.EXTERNAL_CONFIG):     "config script (--cfg / configure)",
     int(Priority.EXTERNAL_PARAM_FILE): "config file (--json-cfg)",
     int(Priority.CMD_LINE):            "command line (--parameter)",
@@ -1136,6 +1136,8 @@ def _split_params(
         doc = p.get("doc")
         if doc:
             item["Doc"] = doc
+        if "input_source" in p:
+            item["InputSource"] = p["input_source"]
         if prio >= inherited:
             if variant == "full":
                 immut.append(item)
