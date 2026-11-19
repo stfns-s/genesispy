@@ -2,6 +2,12 @@
 
 Notable changes to genesispy. Versions follow `pyproject.toml`.
 
+## 0.6.5
+
+- `verilog.limit` splits signed binary text into sign bit, body and symm last bit with `_`,
+  `8'sb1_000000_1`; `fields=False` gives the 0.6.4 text, `8'sb10000001`.
+- `tests/test_vp2vpy_smoke.py` finds Genesis2 through `GENESIS_HOME`; unset, it skips.
+
 ## 0.6.4
 
 - Incompatible: the `--param-footer` header reads "Genesis-Py resolved parameter sources:", and

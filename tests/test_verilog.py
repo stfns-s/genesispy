@@ -138,10 +138,10 @@ def test_lit_rejects_zero_width():
 @pytest.mark.parametrize(
     "args, kw, expect",
     [
-        (("max", 8), {}, "8'sb01111111"),
-        (("min", 8), {}, "8'sb10000000"),
-        (("min", 8), {"symm": True}, "8'sb10000001"),
-        (("max", 8), {"symm": True}, "8'sb01111111"),
+        (("max", 8), {}, "8'sb0_1111111"),
+        (("min", 8), {}, "8'sb1_0000000"),
+        (("min", 8), {"symm": True}, "8'sb1_000000_1"),
+        (("max", 8), {"symm": True}, "8'sb0_1111111"),
         (("max", 8), {"signed": False}, "8'b11111111"),
         (("min", 8), {"signed": False}, "8'b00000000"),
         (("max", 8), {"fmt": "hex"}, "8'sh7f"),
@@ -152,7 +152,11 @@ def test_lit_rejects_zero_width():
         (("max", 1), {}, "1'sb0"),
         (("min", 1), {}, "1'sb1"),
         (("min", 1), {"symm": True}, "1'sb0"),
-        ((), {"bound": "min", "width": 8, "symm": True}, "8'sb10000001"),
+        ((), {"bound": "min", "width": 8, "symm": True}, "8'sb1_000000_1"),
+        (("min", 2), {}, "2'sb1_0"),
+        (("min", 2), {"symm": True}, "2'sb1_1"),
+        (("min", 8), {"symm": True, "fields": False}, "8'sb10000001"),
+        (("min", 8, True, True, "bin", False), {}, "8'sb10000001"),
     ],
 )
 def test_limit_examples(args, kw, expect):
@@ -167,12 +171,40 @@ def test_limit_is_the_format_end(width, signed, symm):
     else:
         lo, hi = 0, (1 << width) - 1
     for fmt in ("bin", "hex", "dec"):
-        assert limit("min", width, signed, symm, fmt) == lit(lo, width, signed, fmt)
-        assert limit("max", width, signed, symm, fmt) == lit(hi, width, signed, fmt)
+        assert limit("min", width, signed, symm, fmt, fields=False) == lit(lo, width, signed, fmt)
+        assert limit("max", width, signed, symm, fmt, fields=False) == lit(hi, width, signed, fmt)
+
+
+@pytest.mark.parametrize("width", WIDTHS)
+@pytest.mark.parametrize("signed, symm", [(True, False), (True, True), (False, False)])
+@pytest.mark.parametrize("bound", ["min", "max"])
+def test_limit_fields_only_add_underscores(width, signed, symm, bound):
+    text = limit(bound, width, signed, symm)
+    assert text.replace("_", "") == limit(bound, width, signed, symm, fields=False)
+    if not signed:
+        assert "_" not in text
+
+
+@pytest.mark.parametrize("width", WIDTHS)
+@pytest.mark.parametrize("symm", [False, True])
+@pytest.mark.parametrize("bound", ["min", "max"])
+def test_limit_field_widths(width, symm, bound):
+    last = int(symm and bound == "min" and width >= 2)
+    want = [n for n in (1, width - 1 - last, last) if n > 0] if width >= 2 else [1]
+    digits = limit(bound, width, symm=symm).split("'sb")[1]
+    assert [len(f) for f in digits.split("_")] == want
+
+
+@pytest.mark.parametrize("fmt", ["hex", "dec"])
+@pytest.mark.parametrize("bound", ["min", "max"])
+@pytest.mark.parametrize("symm", [False, True])
+def test_limit_fields_ignored_outside_binary(fmt, bound, symm):
+    on = limit(bound, 8, symm=symm, fmt=fmt)
+    assert on == limit(bound, 8, symm=symm, fmt=fmt, fields=False)
 
 
 def test_limit_defaults_to_binary():
-    assert limit("max", 8) == lit(127, 8, fmt="bin")
+    assert limit("max", 8, fields=False) == lit(127, 8, fmt="bin")
 
 
 @pytest.mark.parametrize("bound", ["Max", "mid", True])

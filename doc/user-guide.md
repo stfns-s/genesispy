@@ -1176,19 +1176,19 @@ as the bare name `verilog`; anywhere else, including a `.cfg` file, import it:
 
 A local of your own named `verilog` shadows the bound module in that scope.
 
-| Call                                                         | Returns                                                              |
-|--------------------------------------------------------------|----------------------------------------------------------------------|
-| `lit(value, width, signed=True, fmt=None)`                   | a sized literal: `8'sd5`, `-8'sd5`, `8'd5`, `8'sb11111011`, `8'shfb` |
-| `limit(bound, width, signed=True, symm=False, fmt="bin")`    | the min or max end of a format: `8'sb10000000`, `8'sb01111111`       |
-| `sext(term, from_w, to_w, msb=None, signed=True, form=None)` | `term` widened by its sign bit, or by zeros when `signed=False`      |
-| `pad_low(term, n, from_w=None, form=None)`                   | `term` with `n` zero bits appended below its lsb                     |
-| `set_widen_form(form)`                                       | nothing; sets the `form` that `sext` and `pad_low` use by default    |
-| `get_widen_form()`                                           | that default: `"concat"` or `"cast"`                                 |
-| `decl(what, signed=None, pad=True, col=())`                  | the type part of a declaration: `signed [3:-6]`                      |
-| `port_map(ports, indent=8)`                                  | `.port (net)` lines with the parentheses in one column               |
-| `idx(base, i, n, min_width=1)`                               | a zero-padded name from a family of `n`                              |
-| `wrap_sum(head, expr, width=100)`                            | the lines of `head` plus a `' + '` sum, broken after a `+`           |
-| `parenthesize(terms, op=" + ", leaf=2)`                      | one expression, grouped into a balanced tree                         |
+| Call                                                                   | Returns                                                              |
+|------------------------------------------------------------------------|----------------------------------------------------------------------|
+| `lit(value, width, signed=True, fmt=None)`                             | a sized literal: `8'sd5`, `-8'sd5`, `8'd5`, `8'sb11111011`, `8'shfb` |
+| `limit(bound, width, signed=True, symm=False, fmt="bin", fields=True)` | the min or max end of a format: `8'sb1_0000000`, `8'sb0_1111111`     |
+| `sext(term, from_w, to_w, msb=None, signed=True, form=None)`           | `term` widened by its sign bit, or by zeros when `signed=False`      |
+| `pad_low(term, n, from_w=None, form=None)`                             | `term` with `n` zero bits appended below its lsb                     |
+| `set_widen_form(form)`                                                 | nothing; sets the `form` that `sext` and `pad_low` use by default    |
+| `get_widen_form()`                                                     | that default: `"concat"` or `"cast"`                                 |
+| `decl(what, signed=None, pad=True, col=())`                            | the type part of a declaration: `signed [3:-6]`                      |
+| `port_map(ports, indent=8)`                                            | `.port (net)` lines with the parentheses in one column               |
+| `idx(base, i, n, min_width=1)`                                         | a zero-padded name from a family of `n`                              |
+| `wrap_sum(head, expr, width=100)`                                      | the lines of `head` plus a `' + '` sum, broken after a `+`           |
+| `parenthesize(terms, op=" + ", leaf=2)`                                | one expression, grouped into a balanced tree                         |
 
 ```python
 lit(5, 8)                          -> "8'sd5"
@@ -1196,8 +1196,10 @@ lit(-5, 8)                         -> "-8'sd5"
 lit(5, 8, signed=False)            -> "8'd5"
 lit(-5, 8, fmt="bin")              -> "8'sb11111011"
 lit(-5, 8, fmt="hex")              -> "8'shfb"
-limit("max", 8)                    -> "8'sb01111111"
-limit("min", 8, symm=True)         -> "8'sb10000001"
+limit("max", 8)                    -> "8'sb0_1111111"
+limit("min", 8, symm=True)         -> "8'sb1_000000_1"
+limit("min", 8, symm=True, fields=False)
+                                   -> "8'sb10000001"
 limit("max", 8, signed=False, fmt="hex")
                                    -> "8'hff"
 sext("x", 8, 11)                   -> "{ { 3 {x[7]} }, x }"

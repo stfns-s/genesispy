@@ -1135,10 +1135,12 @@ def lit(value: int, width: int, signed: bool = True,
 # The min or max end of a width-bit format as lit(value, width, signed, fmt):
 # signed -2^(width-1) (+1 with symm) and 2^(width-1)-1, unsigned 0 and
 # 2^width-1. bound is "min" or "max"; fmt is "bin" (default), "hex" or "dec",
-# and None raises. Raises for another bound, symm when unsigned, or a width
-# below 1 (through lit).
+# and None raises. fields (default True) splits signed binary digits into sign
+# bit, body and symm last bit with _, the last bit at width 2 and above;
+# unsigned, hex and dec ignore it. Raises for another bound, symm when
+# unsigned, or a width below 1 (through lit).
 def limit(bound: str, width: int, signed: bool = True, symm: bool = False,
-          fmt: str = "bin") -> str: ...
+          fmt: str = "bin", fields: bool = True) -> str: ...
 
 # form "concat": "{ { n {term[msb]} }, term }", or zero fill when not signed;
 # msb defaults to from_w - 1. form "cast": "to_w'(signed'(term))", or

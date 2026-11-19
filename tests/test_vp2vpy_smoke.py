@@ -9,8 +9,8 @@ generated ``execute()`` method body. Runtime semantic correctness is
 verified by the workspace ``test_parity/`` suite, which wires up a
 ``Manager`` per-demo.
 
-Skipped when ``perl`` + ``PPI`` aren't available, or when the Genesis2
-submodule isn't checked out.
+Skipped when ``perl`` + ``PPI`` aren't available, or when ``GENESIS_HOME``
+does not name a Genesis2 checkout.
 """
 
 from __future__ import annotations
@@ -29,12 +29,15 @@ from genesispy.template.parser import parse_vpy
 from genesispy.tools.vp2vpy import FileTranslator, Helper
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-GENESIS2_DEMO_ROOT = REPO_ROOT / "Genesis2" / "demo"
+_GENESIS_HOME = os.environ.get("GENESIS_HOME", "")
+GENESIS2_ROOT = Path(_GENESIS_HOME)
+GENESIS2_DEMO_ROOT = GENESIS2_ROOT / "demo"
 GLCTEST_ROOT = (
-    REPO_ROOT / "Genesis2" / "test" / "glctest"
+    GENESIS2_ROOT / "test" / "glctest"
     / "global_controller" / "rtl" / "genesis"
 )
+# An empty GENESIS_HOME would make the paths above relative to the cwd.
+_HAVE_GENESIS2 = bool(_GENESIS_HOME) and GENESIS2_DEMO_ROOT.is_dir()
 
 
 
@@ -44,14 +47,16 @@ pytestmark = [
         reason="perl + PPI not on PATH (try `module load ramyx/perl/5.42.0/0.1.0`)",
     ),
     pytest.mark.skipif(
-        not GENESIS2_DEMO_ROOT.exists(),
-        reason=f"Genesis2 submodule not present at {GENESIS2_DEMO_ROOT}",
+        not _HAVE_GENESIS2,
+        reason=f"GENESIS_HOME ({_GENESIS_HOME!r}) is not a Genesis2 checkout",
     ),
 ]
 
 
 def _all_inputs() -> list[Path]:
     inputs: list[Path] = []
+    if not _HAVE_GENESIS2:
+        return inputs
     for ext in (".vp", ".vph"):
         inputs.extend(sorted(GENESIS2_DEMO_ROOT.rglob(f"*{ext}")))
     if GLCTEST_ROOT.is_dir():
@@ -63,7 +68,7 @@ def _src_id(p: Path) -> str:
     try:
         return str(p.relative_to(GENESIS2_DEMO_ROOT))
     except ValueError:
-        return str(p.relative_to(REPO_ROOT / "Genesis2"))
+        return str(p.relative_to(GENESIS2_ROOT))
 
 
 @pytest.fixture(scope="module")

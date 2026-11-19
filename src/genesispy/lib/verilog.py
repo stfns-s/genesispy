@@ -51,13 +51,20 @@ def lit(value: int, width: int, signed: bool = True, fmt: str | None = None) -> 
 
 
 def limit(
-    bound: str, width: int, signed: bool = True, symm: bool = False, fmt: str = "bin"
+    bound: str,
+    width: int,
+    signed: bool = True,
+    symm: bool = False,
+    fmt: str = "bin",
+    fields: bool = True,
 ) -> str:
     """The min or max end of a width-bit format as a sized literal.
 
     symm raises the signed min end by one, to the negative of the max end. fmt is "bin", "hex" or
-    "dec"; None raises, since lit reads it as decimal while the default here is binary. Raises for
-    another bound, for symm on an unsigned format, or for a width below 1.
+    "dec"; None raises, since lit reads it as decimal while the default here is binary. fields
+    splits binary digits into sign bit, body and symm last bit with _; on by default, ignored for
+    unsigned formats and for hex and decimal. Raises for another bound, for symm on an unsigned
+    format, or for a width below 1.
     """
     if not isinstance(bound, str) or bound not in ("min", "max"):
         raise VerilogError(f"limit: bound ({bound!r}) must be 'min' or 'max'")
@@ -72,7 +79,13 @@ def limit(
         value = hi if bound == "max" else -hi - (not symm)
     else:
         value = (1 << width) - 1 if bound == "max" else 0
-    return lit(value, width, signed, fmt)
+    text = lit(value, width, signed, fmt)
+    if not (fields and signed and fmt == "bin" and width >= 2):
+        return text
+    prefix, digits = text.split("'sb")
+    last = int(symm and bound == "min")
+    parts = (digits[0], digits[1 : width - last], digits[width - last :])
+    return f"{prefix}'sb" + "_".join(p for p in parts if p)
 
 
 _FORMS = ("concat", "cast")
