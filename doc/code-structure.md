@@ -145,7 +145,7 @@ resolves another generated class (`Manager.resolve_module_class` loads on demand
 
 **Emission & caching.** Each `UniqueModule` instance has a private `_outfile_handle` populated by `emit(...)`
 calls. After the body finishes, the footer in `template/emitter.py` calls `UniqueModule.emit_param_footer()`
-(a no-op unless `--param-footer` is set) and then `UniqueModule._flush_outfile()`, which copies the buffer into
+(a no-op under `--no-param-footer`) and then `UniqueModule._flush_outfile()`, which copies the buffer into
 `cache.OUTFILE_CONTENT_CACHE[<unique_module_name><output_suffix>]` and mirrors it under every registered
 synonym name (from `synonym`; a clone keeps the source's unique module name and needs no mirror).
 
@@ -182,8 +182,8 @@ The frontend is the only place that knows the `.vpy` input syntax. Four files:
   `super().execute()`, and pastes `template/aliases.alias_prelude_source()`, which binds the bare-name
   aliases as locals so user code can write `parameter(...)` instead of `self.parameter(...)`. The `_FOOTER` block appends the shared `CLASS_BODY_TAIL` (the
   `emit_param_footer()` call) and then flushes the per-instance buffer into `cache.OUTFILE_CONTENT_CACHE` and
-  mirrors synonyms. `gvpy_cli._build_class_from_vpy` is a second class factory with no `_FOOTER` of its own;
-  it appends the same `CLASS_BODY_TAIL` so the two cannot drift.
+  mirrors synonyms, marking the output final. `gvpy_cli._build_class_from_vpy` is a second class factory;
+  it appends the same `_FOOTER` so the two cannot drift.
 - **`runtime.py`** is the import target for generated files. It re-exports `UniqueModule` and `UserMixin` (so
   generated files have a single import path), defines `StrCallable` (a `str` subclass whose `__call__` returns
   self, so `` `mname` `` and `` `mname()` `` both produce the same name), and owns the `LINE_MAP` registry
@@ -202,7 +202,7 @@ happens in `unique_module.py` / `user_lib.py` / `cache.py` / `config_handler.py`
 
 ## 5. Dedup model
 
-`cache.py` exposes seven module-level singletons, reset by `cache.clear_all()` (the test fixture and
+`cache.py` exposes ten module-level singletons, reset by `cache.clear_all()` (the test fixture and
 `gvpy_cli.main` call it; `genesispy` runs once per process and never needs to):
 
 - `MODULE_CACHE: Dict[str, UniqueModule]` -- `unique_name` -> elaborated instance.
@@ -212,12 +212,22 @@ happens in `unique_module.py` / `user_lib.py` / `cache.py` / `config_handler.py`
   text. Flushed by `output_writer.flush_to_disk`.
 - `UNUNIQUE_REGISTRY: Dict[str, Dict]` -- base name -> ununique_inst call record; deduplication for
   `ununique_inst` / `generate_base`.
+- `SIDE_FILES: Dict[str, Dict]` -- side file name -> writer instance path and `listed` flag, set by
+  `UniqueModule.write_side_file`. The text is in `OUTFILE_CONTENT_CACHE` under the same name.
 - `OUTFILE_TAGS: Dict[str, str]` -- filename -> `'synth' | 'verif' | 'synth_and_verif'`; built by
   Manager before flush from a path-based DFS over the elaborated instance tree.
 - `OUTFILE_ORDER: List[str]` -- output filenames in DFS first-seen walk order; used by output_writer
   to emit product lists in a consistent order matching Perl Manager.pm:1330-1395.
 - `INCLUDED_FILES: List[str]` -- resolved paths of `include()`'d template files; consumed by
   `output_writer.write_file_lists` as the `.depend` prerequisite list.
+- `OUTFILE_UNLISTED: Set[str]` and `OUTFILE_COMMENT: Dict[str, Any]` -- file names kept out of the file
+  lists, and file name -> comment style where it differs from `--output-comment`. Both are derived
+  by `Manager._populate_outfile_tags` (below), not set by templates.
+
+`MODULE_CACHE`, `OUTFILE_CONTENT_CACHE`, `UNUNIQUE_REGISTRY` and `SIDE_FILES` are journaled
+dicts: `cache.journaled()` records their `__setitem__` and `__delitem__` calls, and a discarded
+duplicate rolls all four back. A `generate_w_name` entry or a side file written by a discarded
+child therefore disappears with it.
 
 Cache keys come from `hashing.sha256_param_signature(module_name, params)` -- canonical-JSON SHA-256 hex
 digest, stable across Python runs (see [genesis2-incompatibilities.md](./genesis2-incompatibilities.md) section 1
@@ -286,6 +296,16 @@ Legacy XML configs convert via `genesispy-xml2json`. Full `ConfigHandler` API: s
 
 - `genesis_synth/<name><suffix>` -- synthesisable flavour.
 - `genesis_verif/<name><suffix>` -- verification flavour.
+- Side files -- files from `UniqueModule.write_side_file` and outputs of templates whose extension
+  `register_extension` or `--extension` registered. Their text is in `cache.OUTFILE_CONTENT_CACHE`
+  and the side-file records in `cache.SIDE_FILES`. `Manager._populate_outfile_tags` gives each side
+  file its instance's tag and a place after the instance's own output in `OUTFILE_ORDER`, so the file
+  lands in the instance's synth or verif directory. The same walk fills `OUTFILE_UNLISTED` (side
+  files with `listed=False` and outputs of `:nolist` extensions), which `output_writer` leaves out of
+  every list, and `OUTFILE_COMMENT` (the comment style of outputs whose extension registered one).
+  `output_writer.flush_to_disk` also leaves out a side file whose `SIDE_FILES` entry has
+  `listed=False`, whether or not the walk reached its instance. Names are written as given, with no
+  `.v` appended.
 - `<top>.vlist` -- full compile-order file list (every emitted `.v`,
   regardless of synth/verif tag). Companion `<top>.vlist.verif` lists
   verif + synth_and_verif paths and is written only when at least one
@@ -319,13 +339,14 @@ Selected flags (`genesispy --help` is authoritative for the full list, including
 | `--out-type synth\|verif\|both` | Filter outputs by flavour.                                                                                                      |
 | `--unq-style numeric\|param`    | Selects `generate(...)` dispatch (numeric suffix vs. param-encoded names).                                                      |
 | `--input-list FILE`             | Recursively expand a listfile of `--input` / `--src-path` / `--inc-path`.                                                       |
-| `--extension EXT_IN=EXT_OUT`    | Map an input extension to an output extension (repeatable; default `.vpy=.v`, `.svpy=.sv`).                                     |
+| `--extension EXT_IN=EXT_OUT`    | Map an input to an output extension (repeatable; default `.vpy=.v`, `.svpy=.sv`); suffixes `:nolist`, `:comment=PREFIX`.        |
 | `--system-verilog` / `-sv`      | Shorthand for `--extension .vpy=.sv`. Conflicts with an explicit `--extension .vpy=...`.                                        |
 | `--product FILE.ext`            | Write `FILE.ext` / `FILE.synth.ext` / `FILE.verif.ext` (Genesis2 semantics).                                                    |
 | `--j2` / `-j2`                  | Parse templates in the j2 directive flavour instead of `//;` + backticks.                                                       |
 | `--source-comment PREFIX`       | Line-comment prefix of the source language; sets the `<comment>;` sentinel.                                                     |
 | `--output-comment P\|O,C`       | Comment style genesispy emits (module banner, `--stdout` separator).                                                            |
-| `--param-footer`                | Append a resolved-parameter provenance block after each generated module.                                                       |
+| `--no-param-footer`             | Omit the resolved-parameter provenance block that follows each generated module by default.                                     |
+| `--param-footer`                | Deprecated; does nothing (the footer is on by default).                                                                         |
 | `--vf-out FILE`                 | Single-file product list (auto-appends `.vf`; no `.synth`/`.verif` side-files, unlike `--product`); conflicts with `--product`. |
 | `--json-out`                    | Dump resolved configuration tree.                                                                                               |
 
@@ -340,6 +361,11 @@ registry contract (a `synonym()` target resolves in a later string-named `genera
 validators) live in `cli_common.py`. Useful for one-off `.vpy` expansion outside the full elaboration
 flow. The flat-parameter flag is `--parameter` / `-p`, matching genesispy; `--defparam` is retained as a
 hidden alias indefinitely and emits a one-time deprecation warning.
+
+After a successful elaboration `gvpy` writes the side files recorded by `write_side_file` (top instance
+and children) to the current directory, once per name and only when the content changed. It writes
+nothing when elaboration raises, no child output, no file list and no `.depend`; `listed=False` has no
+effect. Under `--gvpy-strict` children never run, so only the top instance's side files appear.
 
 ## 10. Pointers
 

@@ -1,4 +1,4 @@
-"""``--param-footer``: the provenance block appended after a generated module."""
+"""Parameter footer: the provenance block appended after a generated module."""
 
 from __future__ import annotations
 
@@ -49,9 +49,16 @@ def _five_provenance_module(mgr: StubManager) -> UniqueModule:
     return top
 
 
-def test_param_footer_off_by_default() -> None:
-    """Without --param-footer the method appends nothing."""
+def test_param_footer_on_by_default() -> None:
+    """A default manager gives the block."""
+    top = Top(StubManager())
+    top.define_param("N", default=8)
+    assert "Genesis-Py resolved parameter sources:" in _footer_of(top)
+
+
+def test_param_footer_off_when_manager_says_so() -> None:
     mgr = StubManager()
+    mgr.param_footer = False
     top = Top(mgr)
     top.define_param("N", default=8)
     assert _footer_of(top) == ""

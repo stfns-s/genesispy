@@ -89,3 +89,12 @@ then rejects any item key besides `Name` and one value key (`ConfigHandler.pm:90
 The `.cfg` API (`configure`, `get_configuration`, `exists_configuration`, `remove_configuration`)
 requires `path.name`, and `get_configuration` on a name nothing set is fatal, as in Genesis2
 (`ConfigHandler.pm:1349-1356, 1512`).
+
+## 6. Parameter footer on by default
+
+**Where:** `UniqueModule.emit_param_footer`, `cli.py`, `gvpy_cli.py`
+
+genesispy appends a comment block after each generated module that has parameters, listing every
+resolved parameter with its value and source. Genesis2 emits no such block, so the Verilog differs
+from a Genesis2 run by these trailing comments. `--no-param-footer` removes the block. The old
+`--param-footer` flag does nothing now: it prints a deprecation warning once and changes no setting.

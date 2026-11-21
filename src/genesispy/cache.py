@@ -5,16 +5,16 @@ These dictionaries replace the Perl ``shared-ref`` globals used in
 are intentionally module-level so that every ``UniqueModule`` instance
 agrees on the dedup state.  Tests reset them via :func:`clear_all`.
 
-The two journaled caches (MODULE_CACHE, OUTFILE_CONTENT_CACHE) record
-writes inside an active :func:`journaled` block so :meth:`UniqueModule.unique_inst`
-can roll back the discarded child's registrations on a post-elaboration
-dedup hit without paying O(N) to copy/restore the entire cache.
+The four journaled caches (MODULE_CACHE, OUTFILE_CONTENT_CACHE, UNUNIQUE_REGISTRY,
+SIDE_FILES) record writes inside an active :func:`journaled` block so
+:meth:`UniqueModule.unique_inst` can roll back the discarded child's registrations on a
+post-elaboration dedup hit without paying O(N) to copy/restore the entire cache.
 """
 
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Set, Tuple
 
 if TYPE_CHECKING:  # pragma: no cover
     from .unique_module import UniqueModule
@@ -91,7 +91,7 @@ OUTFILE_CONTENT_CACHE: _JournaledDict = _JournaledDict()
 # signatures).  Mirrors Perl UnUniquifiedModules + does_generate_same +
 # compare_generated_files (UniqueModule.pm:1610-1700, :3130); global
 # scope (not per-parent) because the on-disk filename is global.
-UNUNIQUE_REGISTRY: Dict[str, Dict[str, Any]] = {}
+UNUNIQUE_REGISTRY: _JournaledDict = _JournaledDict()
 
 
 # Filename -> 'synth' | 'verif' | 'synth_and_verif'.  Built by Manager
@@ -108,11 +108,25 @@ OUTFILE_TAGS: Dict[str, str] = {}
 # fall back to alphabetical after all ordered entries.
 OUTFILE_ORDER: List[str] = []
 
+# Output file name -> comment style (str prefix or (open, close) tuple), for
+# files whose style differs from Manager.output_comment.  Filled by Manager
+# _populate_outfile_tags; read by output_writer.dump_to_stdout.
+OUTFILE_COMMENT: Dict[str, Any] = {}
+
+# Raw names of output files whose template extension is registered unlisted: written to
+# disk but left out of every file list.  Filled by Manager._populate_outfile_tags.
+OUTFILE_UNLISTED: Set[str] = set()
+
 # Resolved paths of include()'d template files, appended by
 # user_config._include.  Consumed together with Manager.parsed_source_files
 # by output_writer.write_file_lists as the .depend prerequisite list.
 # Append order; deduped at read time.
 INCLUDED_FILES: List[str] = []
+
+# Side file name -> {"writer": instance path of the first writer, "listed": bool}.  The text is
+# in OUTFILE_CONTENT_CACHE under the same name; this registry tells a side file from a template
+# output.  Journaled so a discarded duplicate's side files go with it.
+SIDE_FILES: _JournaledDict = _JournaledDict()
 
 # Default form of lib.verilog.sext and pad_low: "concat" or "cast". Seeded by Manager from
 # --verilog-default-widen-form, overwritten by verilog.set_widen_form.
@@ -130,6 +144,9 @@ def clear_all() -> None:
     OUTFILE_CONTENT_CACHE.clear()
     OUTFILE_TAGS.clear()
     OUTFILE_ORDER.clear()
+    OUTFILE_COMMENT.clear()
+    OUTFILE_UNLISTED.clear()
+    SIDE_FILES.clear()
     UNUNIQUE_REGISTRY.clear()
     INCLUDED_FILES.clear()
     global WIDEN_FORM, ELABORATING
@@ -186,38 +203,35 @@ def register(unique_name: str, instance: "UniqueModule") -> None:
     MODULE_CACHE[unique_name] = instance
 
 
-@contextmanager
-def journaled() -> Iterator[Tuple[Dict[Any, Any], Dict[Any, Any]]]:
-    """Context manager: capture writes to MODULE_CACHE and OUTFILE_CONTENT_CACHE.
+# Dicts covered by journaled() / rollback_journal(), in journal order.
+_JOURNALED = (MODULE_CACHE, OUTFILE_CONTENT_CACHE, UNUNIQUE_REGISTRY, SIDE_FILES)
 
-    Yields a ``(mc_journal, oc_journal)`` pair of dicts that map each
-    touched key to its pre-block value (or :data:`_MISSING` if absent at
-    block entry). Pass these to :func:`rollback_journal` to undo only the
+
+@contextmanager
+def journaled() -> Iterator[Tuple[Dict[Any, Any], ...]]:
+    """Context manager: capture writes to every dict in :data:`_JOURNALED`.
+
+    Yields one journal per dict, in ``_JOURNALED`` order. Each journal maps
+    a touched key to its pre-block value (or :data:`_MISSING` if absent at
+    block entry). Pass them to :func:`rollback_journal` to undo only the
     writes recorded inside the block, leaving unrelated entries untouched.
     Journals nest: each scope tracks its own first-touch set.
     """
-    mc_j: Dict[Any, Any] = {}
-    oc_j: Dict[Any, Any] = {}
-    MODULE_CACHE._journals.append(mc_j)
-    OUTFILE_CONTENT_CACHE._journals.append(oc_j)
+    journals = tuple({} for _ in _JOURNALED)
+    for d, j in zip(_JOURNALED, journals, strict=True):
+        d._journals.append(j)
     try:
-        yield mc_j, oc_j
+        yield journals
     finally:
-        OUTFILE_CONTENT_CACHE._journals.pop()
-        MODULE_CACHE._journals.pop()
+        for d in reversed(_JOURNALED):
+            d._journals.pop()
 
 
-def rollback_journal(
-    mc_j: Dict[Any, Any], oc_j: Dict[Any, Any]
-) -> None:
-    """Undo writes recorded by a :func:`journaled` block on both caches."""
-    for key, prev in mc_j.items():
-        if prev is _MISSING:
-            dict.pop(MODULE_CACHE, key, None)
-        else:
-            dict.__setitem__(MODULE_CACHE, key, prev)
-    for key, prev in oc_j.items():
-        if prev is _MISSING:
-            dict.pop(OUTFILE_CONTENT_CACHE, key, None)
-        else:
-            dict.__setitem__(OUTFILE_CONTENT_CACHE, key, prev)
+def rollback_journal(*journals: Dict[Any, Any]) -> None:
+    """Undo writes recorded by a :func:`journaled` block on every journaled dict."""
+    for d, journal in zip(_JOURNALED, journals, strict=True):
+        for key, prev in journal.items():
+            if prev is _MISSING:
+                dict.pop(d, key, None)
+            else:
+                dict.__setitem__(d, key, prev)

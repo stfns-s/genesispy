@@ -701,20 +701,40 @@ def test_deprecated_aliases_hidden_from_help():
 # --param-footer
 # ---------------------------------------------------------------------------
 
-def test_param_footer_defaults_false():
-    assert parse_args([]).param_footer is False
+def test_param_footer_defaults_true():
+    assert parse_args([]).param_footer is True
 
 
-def test_param_footer_flag_sets_true():
+def test_no_param_footer_turns_it_off():
+    assert parse_args(["--no-param-footer"]).param_footer is False
+
+
+def test_param_footer_flag_is_noop(capsys):
     assert parse_args(["--param-footer"]).param_footer is True
+    assert parse_args(["--no-param-footer", "--param-footer"]).param_footer is False
+    assert parse_args(["--param-footer", "--no-param-footer"]).param_footer is False
+    err = capsys.readouterr().err
+    assert err.count("--param-footer is deprecated") == 1
+    assert (
+        "genesispy: --param-footer is deprecated; the parameter footer is on by "
+        "default, use --no-param-footer to turn it off"
+    ) in err
+
+
+def test_param_footer_hidden_from_help(capsys):
+    with pytest.raises(SystemExit):
+        parse_args(["--help"])
+    out = capsys.readouterr().out
+    assert "--no-param-footer" in out
+    assert out.replace("--no-param-footer", "").count("--param-footer") == 0
 
 
 def test_param_footer_reaches_manager(tmp_path, monkeypatch):
     from genesispy.manager import Manager
 
     monkeypatch.chdir(tmp_path)
-    assert Manager(parse_args(["--param-footer"])).param_footer is True
-    assert Manager(parse_args([])).param_footer is False
+    assert Manager(parse_args([])).param_footer is True
+    assert Manager(parse_args(["--no-param-footer"])).param_footer is False
 
 
 def test_verilog_default_widen_form_defaults_to_concat():

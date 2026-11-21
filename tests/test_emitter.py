@@ -124,10 +124,15 @@ def test_emit_module_calls_param_footer_before_flush() -> None:
     """The generated tail emits the footer while the buffer is still open."""
     src = emitter.emit_module("x.vpy", "self.emit('hi')")
     assert "self.emit_param_footer()" in src
-    assert src.index("self.emit_param_footer()") < src.index("self._flush_outfile()")
+    assert src.index("self.emit_param_footer()") < src.index("self._flush_outfile(final=True)")
     compile(src, "x.py", "exec")
 
 
 def test_class_body_tail_is_shared_with_the_footer() -> None:
-    """gvpy reuses CLASS_BODY_TAIL; it must stay a prefix of _FOOTER."""
+    """CLASS_BODY_TAIL must stay a prefix of _FOOTER."""
     assert emitter._FOOTER.startswith(emitter.CLASS_BODY_TAIL)
+
+
+def test_class_header_carries_input_ext() -> None:
+    src = emitter.emit_module("/x/Foo.VPY", "")
+    assert "_INPUT_EXT = '.vpy'" in src

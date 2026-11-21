@@ -82,11 +82,16 @@ class Manager:
     verif_dir: str
     # Input -> output extension pairs. Defaults: {".vpy": ".v", ".svpy": ".sv"};
     # extended by repeatable --extension EXT_IN=EXT_OUT (and the -sv shorthand
-    # which maps to (".vpy", ".sv")). The output extension paired with each
+    # which maps to ExtensionSpec(".vpy", ".sv")). The output extension paired with each
     # input is stamped onto the generated module class as _OUTPUT_SUFFIX in
     # template/emitter._header; UniqueModule._flush_outfile and
     # UniqueModule.synonym read type(self)._OUTPUT_SUFFIX at flush time.
+    # Same dict object as `extensions.map`; later registrations are visible here.
     extension_map: dict[str, str]
+    # Registry behind extension_map; also holds each extension's `listed` flag and
+    # comment prefix. Built by ExtensionRegistry.from_specs(args.extensions);
+    # a ValueError there is raised as GenesisPyError.
+    extensions: ExtensionRegistry
     # Synthesis-top instance bounding the synth cone: either a top-level
     # instance name ("foo") or a dotted instance path ("top.foo.bar"); the
     # walker matches `path == synth_top or path.startswith(synth_top+".")`.
@@ -140,13 +145,16 @@ class Manager:
     # --output-comment; inherits source_comment when unset. A str is a line
     # prefix; a (open, close) tuple is a wrapping block (e.g. ("/*", "*/")).
     # Read by UniqueModule.to_verilog (banner),
-    # UniqueModule.emit_param_footer (--param-footer block) and
+    # UniqueModule.emit_param_footer (parameter footer block) and
     # output_writer.dump_to_stdout (--stdout separator).
     output_comment: "str | tuple[str, str]"
-    # Set from --param-footer. When true, every generated module appends a
-    # comment block listing each resolved parameter with its value and the
-    # configuration source that supplied it. Read at elaboration time by
-    # UniqueModule.emit_param_footer.
+    # True unless --no-param-footer is given (dest="param_footer", default
+    # True; an absent attribute reads as True). When true, every generated
+    # module appends a comment block listing each resolved parameter with its
+    # value and the configuration source that supplied it. Read at elaboration
+    # time by UniqueModule.emit_param_footer. The old --param-footer flag is a
+    # deprecated no-op (cli_common._DeprecatedNoopAction): it warns once and
+    # leaves the namespace untouched, so it never overrides --no-param-footer.
     param_footer: bool
     # Original argparse.Namespace as parsed by cli.parse_args(). Engine
     # classes (ConfigHandler) read late-bound flags directly off this
@@ -238,7 +246,7 @@ class Manager:
 # flags.get("priority", 0), so an untouched default is 0, not DECLARATION.
 # priority_label() falls back to the nearest rung at or below an unlisted
 # value (configure() accepts any integer) and appends the raw number.
-# Consumed by UniqueModule.emit_param_footer for --param-footer, which also
+# Consumed by UniqueModule.emit_param_footer for the parameter footer, which also
 # saves a forced parameter's prior label for write_json's InputSource.
 PRIORITY_LABELS: dict[int, str]
 # Priority ladder: DECLARATION=5 < MODULE_DEFAULT=7 (--defaults) <
@@ -385,6 +393,17 @@ class UniqueModule:
     # Shared state (MODULE_CACHE / MODULE_NAME_NUM_DERIVS /
     # OUTFILE_CONTENT_CACHE) lives in :mod:`cache`; access it there.
 
+    # Lowercased extension of the template that generated the class (stamped
+    # by template/emitter._header and gvpy's class factory next to
+    # _OUTPUT_SUFFIX; gvpy stamps ".vpy" for a ".gvpy" input, the extension
+    # it also maps the suffix by); None for classes not built from a template.
+    _INPUT_EXT: str | None
+    # Comment style of this module's output file: manager.extensions.comment(
+    # _INPUT_EXT) when _INPUT_EXT is set and the registry has a comment for it,
+    # else manager.output_comment, else "//". A manager without `extensions`
+    # falls through to output_comment.
+    def _comment_style(self) -> str | tuple[str, str]: ...
+
     # Param-state sentinels exposed for tests; values are opaque strings
     # ("DEFINED" / "OVERRIDDEN" / "FORCED"). Use the public predicates
     # rather than indexing into _params directly.
@@ -396,7 +415,7 @@ class UniqueModule:
 
     # Comment-emission width, module-level. _COMMENT_LINE_WIDTH is the total
     # budget for an emitted comment line, prefix included;
-    # _PARAM_FOOTER_VALUE_WIDTH caps the --param-footer value column so one
+    # _PARAM_FOOTER_VALUE_WIDTH caps the parameter footer value column so one
     # wide value cannot pad every other row out to its width.
     # _COMMENT_LINE_WIDTH: int        (module-level)
     # _PARAM_FOOTER_VALUE_WIDTH: int  (module-level)
@@ -507,11 +526,21 @@ class UniqueModule:
     #     compares the generated body (blank lines and comments ignored)
     #     against the previous UN-uniquified generation (Perl
     #     UniqueModule.pm:1674): identical bodies reuse the previous file,
-    #     divergence raises ElaborationError.
+    #     divergence raises ElaborationError. On reuse the side files the
+    #     temp run recorded under the child's instance path are deleted from
+    #     OUTFILE_CONTENT_CACHE and SIDE_FILES, and the child takes a copy of
+    #     the previous instance's _side_files.
     # Tracked via cache.UNUNIQUE_REGISTRY.
     def ununique_inst(self, module_cls: type | str, inst_name: str,
                       **params) -> "UniqueModule": ...
+    # Raises ElaborationError when <name><_OUTPUT_SUFFIX> is in cache.SIDE_FILES.
     def synonym(self, name: str) -> None: ...
+    # Register the template extension in_ext -> out_ext on manager.extensions for later
+    # generate calls. listed=False keeps the outputs of in_ext out of every file list;
+    # comment is their comment prefix. A conflicting existing mapping, or comment="",
+    # raises ElaborationError (the ValueError of ExtensionRegistry.register, converted).
+    def register_extension(self, in_ext: str, out_ext: str, *, listed: bool = True,
+                           comment: str | None = None) -> None: ...
 
     # Forced override (pinned, cannot be re-overridden by parameter()). A
     # second force of the same name is fatal (UniqueModule.pm:2443). When the
@@ -609,7 +638,7 @@ class UniqueModule:
     # row per parameter. A value too wide for the line budget wraps through
     # _value_lines.
     def to_verilog(self, infile: str | None = None) -> None: ...
-    # Emit `lines` as one comment block in manager.output_comment style. A str
+    # Emit `lines` as one comment block in _comment_style() style. A str
     # style prefixes every line; an (open, close) tuple puts the delimiters on
     # their own whole lines -- required by _comparable_lines, which strips
     # comments for structural diffing and keys on whole-line delimiters.
@@ -619,8 +648,8 @@ class UniqueModule:
     # _COMMENT_LINE_WIDTH (100) minus len(style)+1 for a str style, minus 1
     # for the (open, close) tuple style.
     def _comment_budget(self) -> int: ...
-    # Append the --param-footer provenance block. No-op unless
-    # manager.param_footer is set and self._params is non-empty. Called from
+    # Append the parameter footer provenance block. No-op when
+    # manager.param_footer is False (--no-param-footer) or self._params is empty. Called from
     # template/emitter.CLASS_BODY_TAIL after the user body and before the
     # final _flush_outfile(), so it sees the fully resolved parameter set --
     # unlike the to_verilog banner, written before the body runs. Rows read
@@ -646,7 +675,37 @@ class UniqueModule:
     # _unique_module_name and every registered synonym. Plain subclasses
     # rely on execute() to call this; generated subclasses re-flush in
     # the footer to overwrite the base-class banner with body content.
-    def _flush_outfile(self) -> None: ...
+    # Write the buffer to OUTFILE_CONTENT_CACHE under the unique name and
+    # every synonym. final=True also sets _output_final (starts False,
+    # copied by _new_as_clone); only the generated footer passes it.
+    def _flush_outfile(self, final: bool = False) -> None: ...
+    # Complete text of this instance's output file: the cache entry for
+    # _outfile_name, footer included. Raises ElaborationError naming the
+    # instance path while _output_final is False (the instance is still
+    # elaborating; the base execute() flush holds the banner alone). A
+    # method on the child, no bare name.
+    def get_output_text(self) -> str: ...
+
+    # Write text as the file name, listed after this instance's own output in the file lists
+    # and in its synth/verif directory. name is a bare file name with an extension, else
+    # ElaborationError. The text goes to cache.OUTFILE_CONTENT_CACHE and an entry to
+    # cache.SIDE_FILES; the name is kept as given (no .v suffix). A text that is not a str
+    # raises ElaborationError. A repeat of a name needs equal text and equal listed (the call
+    # then writes nothing); a different text or listed, or a name that is a template output,
+    # raises ElaborationError naming both instance paths. A call on an instance whose
+    # _output_final is True (a child after generate returned, a clone of one) raises
+    # ElaborationError: an instance writes side files only while it elaborates. listed=False
+    # writes the file but keeps it out of every file list. A method on the instance, no bare
+    # name. gvpy_cli._process writes the tree's side files to the current directory after a
+    # successful execute(), once per name in walk order and only when the content changed; it
+    # writes nothing on failure, no child output, file list or .depend, and ignores listed.
+    # Under --gvpy-strict only the top instance's side files exist.
+    def write_side_file(self, name: str, text: str, *, listed: bool = True) -> None: ...
+    # Side file names this instance wrote, call order, no repeats (copied by _new_as_clone).
+    _side_files: List[str]
+    # Append path to cache.INCLUDED_FILES, so the .depend file names it as a prerequisite
+    # (listed once; deduped by abspath). A path that is not a str raises ElaborationError.
+    def add_depend(self, path: str) -> None: ...
 
 ```
 
@@ -711,16 +770,46 @@ Input -> output extension mapping shared by `cli`, `Manager`, `parse_vpy` and `g
 # The built-in pairs, used when the user passes no --extension/-sv.
 DEFAULT_EXTENSION_MAP: dict[str, str] = {".vpy": ".v", ".svpy": ".sv"}
 
-# Parse one `--extension EXT_IN=EXT_OUT` value. Both sides are lowercased
-# and gain a leading dot if missing. Raises argparse.ArgumentTypeError on
-# malformed input, so it works directly as an argparse `type=`.
-def parse_extension_spec(raw: str) -> tuple[str, str]: ...
+class ExtensionSpec(NamedTuple):
+    in_ext: str
+    out_ext: str
+    listed: bool = True          # False: ":nolist" suffix
+    comment: str | None = None   # ":comment=PREFIX" suffix
+    # The spec in --extension form, e.g. ".x=.y:nolist:comment=#".
+    def __str__(self) -> str: ...
+
+# Parse one `--extension EXT_IN=EXT_OUT[:nolist][:comment=PREFIX]` value. Both
+# extensions are lowercased and gain a leading dot if missing. Everything after
+# ":comment=" is the prefix, verbatim. Raises argparse.ArgumentTypeError on
+# malformed input (empty prefix, unknown suffix, repeated ":nolist"), so it
+# works directly as an argparse `type=`.
+def parse_extension_spec(raw: str) -> ExtensionSpec: ...
 
 # Merge user pairs over DEFAULT_EXTENSION_MAP (user entries win) and return
 # the result. This is what Manager.extension_map holds. Raises ValueError
 # when two pairs give the same input extension different outputs -- the
 # check behind the -sv / --extension .vpy=... conflict error.
 def build_extension_map(pairs: Iterable[tuple[str, str]]) -> dict[str, str]: ...
+
+class ExtensionRegistry:
+    map: dict[str, str]    # in_ext -> out_ext; mutated in place, never rebound
+
+    # Defaults overridden by `specs`. ValueError when two specs for one
+    # in_ext differ in any field; the message gives both in --extension form.
+    # Manager converts it to GenesisPyError; gvpy_cli.main prints it as one
+    # error line and returns 1.
+    @classmethod
+    def from_specs(cls, specs: Iterable[ExtensionSpec]) -> ExtensionRegistry: ...
+
+    # Normalises both extensions as parse_extension_spec does. An identical
+    # existing mapping is a no-op; any other existing mapping for in_ext
+    # (default, CLI or earlier call), comment == "" and an empty or "."
+    # extension raise ValueError. Its messages do not name --extension.
+    def register(self, in_ext: str, out_ext: str, *, listed: bool = True,
+                 comment: str | None = None) -> None: ...
+
+    def listed(self, in_ext: str | None) -> bool: ...        # True for None or unmapped
+    def comment(self, in_ext: str | None) -> str | None: ...  # None for None or unmapped
 
 # Sorted list of accepted input extensions; the `allowed` argument threaded
 # into parse_vpy / write_module.
@@ -731,9 +820,9 @@ def build_extension_map(pairs: Iterable[tuple[str, str]]) -> dict[str, str]: ...
 ```python
 # Statements appended to every generated execute() after the user body:
 # currently the emit_param_footer() call. _FOOTER is CLASS_BODY_TAIL plus the
-# final _flush_outfile(). Exported because gvpy_cli._build_class_from_vpy --
-# the second class factory, which has no _FOOTER of its own -- appends the
-# same tail, so the two cannot drift.
+# final flush, _flush_outfile(final=True). Both class factories, emit_module
+# and gvpy_cli._build_class_from_vpy, append _FOOTER, so the two cannot
+# drift and a gvpy child's cache entry holds its whole text.
 CLASS_BODY_TAIL: str
 
 def write_module(
@@ -765,7 +854,8 @@ def emit_module(
     ``# line N "file.vpy"`` directives are preserved verbatim. ``module_name``
     defaults to the ``vpy_path`` stem. ``output_suffix`` is stamped on the
     class as ``_OUTPUT_SUFFIX``, which ``UniqueModule._flush_outfile`` and
-    ``UniqueModule.synonym`` read at flush time.
+    ``UniqueModule.synonym`` read at flush time. The lowercased extension of
+    ``vpy_path`` is stamped as ``_INPUT_EXT`` for ``UniqueModule._comment_style``.
 
     Split out from write_module so callers can compile a module without
     touching the filesystem; exercised directly by tests/test_emitter.py.
@@ -843,6 +933,8 @@ generate_unq_param      # alias for unique_inst_param
 generate_base           # alias for ununique_inst
 generate_w_name         # synonym_class + ununique_inst
 clone                   # alias for clone_inst
+register_extension      # self.register_extension
+add_depend              # self.add_depend
 include                 # user_config._include (Perl-style //;include(...))
 pyinclude               # raw-Python include into this module's own namespace
 pinclude                # deprecated spelling of pyinclude; warns once
@@ -966,9 +1058,13 @@ class; `tests/_stubs.StubManager` is the minimal stand-in. Attributes read acros
 # verif_dir per cache.OUTFILE_TAGS (untagged -> 'verif'), filtered by
 # manager.out_type. Idempotent: content equal to what is on disk is left
 # untouched. Returns {'synth': [...], 'verif': [...],
-# 'synth_and_verif': [...], 'ordered': [(dest_path, tag), ...]}; 'ordered'
-# follows cache.OUTFILE_ORDER (DFS first-seen) and is what every list
-# writer below iterates, so all products share one ordering.
+# 'synth_and_verif': [...], 'ordered': [(dest_path, tag), ...],
+# 'unlisted': [...]}; 'ordered' follows cache.OUTFILE_ORDER (DFS first-seen)
+# and is what every list writer below iterates, so all products share one
+# ordering. A file in cache.OUTFILE_UNLISTED is written to its tagged
+# directory and appears only in 'unlisted', in no other key; so does a name whose
+# cache.SIDE_FILES entry has listed=False. A name in cache.SIDE_FILES is
+# written as given, without _canonical_filename.
 def flush_to_disk(manager) -> dict[str, list]: ...
 
 # Write <top>.vlist (every emitted file) and, when at least one verif file
@@ -996,8 +1092,9 @@ def write_clean_script(manager) -> str: ...
 def write_pathfile(manager, path: str) -> str: ...
 
 # --stdout: concatenate the Verilog cache to `stream` (default sys.stdout),
-# separated by a 'genesispy:' banner in manager.output_comment style,
-# instead of writing files.
+# separated by a 'genesispy:' banner in manager.output_comment style, or in
+# cache.OUTFILE_COMMENT[name] for a file listed there, instead of writing files.
+# A name in cache.SIDE_FILES is printed as given.
 def dump_to_stdout(manager, stream: TextIO | None = None) -> None: ...
 
 # --clean: remove the run's outputs. Manager.clean additionally drops raw_dir.
@@ -1046,7 +1143,7 @@ OUTFILE_CONTENT_CACHE: _JournaledDict # _JournaledDict <: dict
 # signatures; divergence raises). Global scope, not per-parent, because
 # the on-disk filename is global. Mirrors Perl UnUniquifiedModules +
 # does_generate_same + compare_generated_files.
-UNUNIQUE_REGISTRY: Dict[str, Dict[str, Any]]
+UNUNIQUE_REGISTRY: _JournaledDict       # journaled; see journaled()
 
 # Filename -> 'synth' | 'verif' | 'synth_and_verif'. Built by Manager
 # before flush from a path-based DFS over the elaborated instance tree.
@@ -1062,8 +1159,29 @@ OUTFILE_TAGS: Dict[str, str]
 # after all ordered entries. Cleared by clear_all().
 OUTFILE_ORDER: List[str]
 
+# File name -> comment style (str prefix or (open, close) tuple) for output
+# files whose style differs from Manager.output_comment (those generated from
+# a template whose extension has a registry comment), synonym files included.
+# Cleared at the start of Manager._populate_outfile_tags and by clear_all().
+OUTFILE_COMMENT: Dict[str, Any]
+
+# Raw names of output files (synonym files included) generated from a template whose
+# extension is registered unlisted. Written to disk, left out of every file list.
+# Cleared at the start of Manager._populate_outfile_tags and by clear_all().
+OUTFILE_UNLISTED: Set[str]
+
+# Side file name -> {"writer": instance path of the first writer, "listed": bool}; the text is
+# in OUTFILE_CONTENT_CACHE under the same name. Set by UniqueModule.write_side_file, read by
+# Manager._populate_outfile_tags (promotes and unlists) and output_writer. Journaled.
+# A name in an instance's _side_files but not here (its writer was rolled back) is skipped
+# by Manager._populate_outfile_tags and gvpy_cli._write_side_files.
+# UniqueModule._flush_outfile and UniqueModule.synonym raise when a template output takes a
+# name in it.
+# Cleared by clear_all().
+SIDE_FILES: _JournaledDict
+
 # Resolved paths of include()'d template files, appended by
-# user_config._include. Consumed together with Manager.parsed_source_files
+# user_config._include and UniqueModule.add_depend. Consumed together with Manager.parsed_source_files
 # by output_writer.write_file_lists as the `.depend` prerequisite list.
 # Append order; deduped at read time. Cleared by clear_all().
 INCLUDED_FILES: List[str]
@@ -1091,13 +1209,14 @@ def register(unique_name: str, instance: "UniqueModule") -> None: ...
     # stderr warning and overwrites. `::` in unique_name raises ValueError.
 
 @contextmanager
-def journaled() -> Iterator[Tuple[Dict, Dict]]: ...
-    # Capture first-touch writes to MODULE_CACHE and OUTFILE_CONTENT_CACHE
-    # inside the block. Yields (mc_journal, oc_journal) for rollback_journal.
+def journaled() -> Iterator[Tuple[Dict, ...]]: ...
+    # Capture first-touch writes to every dict in cache._JOURNALED
+    # (MODULE_CACHE, OUTFILE_CONTENT_CACHE, UNUNIQUE_REGISTRY, SIDE_FILES) inside the
+    # block. Yields one journal per dict, in that order, for rollback_journal.
     # Nests; each scope tracks its own first-touch set. Used by
     # UniqueModule.unique_inst to discard a post-key dedup hit's writes.
 
-def rollback_journal(mc_j: Dict, oc_j: Dict) -> None: ...
+def rollback_journal(*journals: Dict) -> None: ...
 ```
 
 Only ``__setitem__`` / ``__delitem__`` on the journaled dicts are journaled;

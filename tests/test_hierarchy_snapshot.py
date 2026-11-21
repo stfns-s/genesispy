@@ -269,7 +269,7 @@ def _footer_line(text: str, name: str) -> str:
 
 def test_json_out_records_the_input_source_of_a_force(tmp_path, monkeypatch) -> None:
     _force_design(tmp_path, _top_of(("u", "")))
-    flags = ("--defaults", "d.py", "--param-footer", "--json-out", "hier.json")
+    flags = ("--defaults", "d.py", "--json-out", "hier.json")
     assert _run_gen(tmp_path, monkeypatch, *flags) == 0
     root = json.loads((tmp_path / "hier.json").read_text())["HierarchyTop"]
     (u,) = root["SubInstances"]
@@ -291,7 +291,7 @@ def test_json_out_records_the_input_source_of_a_force(tmp_path, monkeypatch) -> 
 
 def test_dedup_keeps_the_first_input_source(tmp_path, monkeypatch) -> None:
     _force_design(tmp_path, _top_of(("u0", ""), ("u1", ", N=5")))
-    assert _run_gen(tmp_path, monkeypatch, "--defaults", "d.py", "--param-footer") == 0
+    assert _run_gen(tmp_path, monkeypatch, "--defaults", "d.py") == 0
     (leaf_v,) = (tmp_path / "out").glob("leaf*.v")
     line = _footer_line(leaf_v.read_text(), "N")
     assert line.endswith("<- forced (force_param) <- defaults file (--defaults)")

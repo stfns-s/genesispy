@@ -17,11 +17,28 @@ def _reset_deprecation_warnings() -> None:
     _warned_aliases.clear()
 
 
-def _emit_deprecation(prog: str, old: str, new: str) -> None:
+def _emit_deprecation_note(prog: str, old: str, note: str) -> None:
     if old in _warned_aliases:
         return
     _warned_aliases.add(old)
-    reporting.warning(f"{prog}: {old} is deprecated; use {new}")
+    reporting.warning(f"{prog}: {old} is deprecated; {note}")
+
+
+def _emit_deprecation(prog: str, old: str, new: str) -> None:
+    _emit_deprecation_note(prog, old, f"use {new}")
+
+
+class _DeprecatedNoopAction(argparse.Action):
+    """Deprecated flag that takes no value and leaves the namespace untouched."""
+
+    def __init__(self, option_strings, dest, *, note, prog="genesispy", **kw):
+        self._note = note
+        self._prog = prog
+        kw.setdefault("default", argparse.SUPPRESS)
+        super().__init__(option_strings, dest, nargs=0, help=argparse.SUPPRESS, **kw)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        _emit_deprecation_note(self._prog, option_string, self._note)
 
 
 class _DeprecatedAliasAction(argparse.Action):
@@ -49,6 +66,11 @@ class _DeprecatedAliasAction(argparse.Action):
             setattr(namespace, self.dest, items)
         else:
             setattr(namespace, self.dest, values)
+
+
+PARAM_FOOTER_NOTE = (
+    "the parameter footer is on by default, use --no-param-footer to turn it off"
+)
 
 
 def _add_deprecated_alias(

@@ -26,7 +26,7 @@ from typing import Callable, Dict, List, Optional, Type
 
 from . import cache, reporting
 from .reporting import GenesisPyError, ParseError, error
-from .extensions import build_extension_map
+from .extensions import ExtensionRegistry
 
 
 def _resolve_output_comment(args: argparse.Namespace):
@@ -109,14 +109,15 @@ class Manager:
         self.output_dir = out_dir_arg or "genesis_synth"
         self.synth_dir = synth_dir_arg or out_dir_arg or "genesis_synth"
         self.verif_dir = verif_dir_arg or out_dir_arg or "genesis_verif"
-        # build_extension_map raises ValueError on conflicts among args.extensions;
+        # from_specs raises ValueError on conflicts among args.extensions;
         # surface as GenesisPyError so the CLI prints a clean message.
         try:
-            self.extension_map = build_extension_map(
+            self.extensions = ExtensionRegistry.from_specs(
                 getattr(args, "extensions", []) or []
             )
         except ValueError as exc:
             raise GenesisPyError(str(exc)) from exc
+        self.extension_map = self.extensions.map
 
         self.input_files = list(args.input)
         # Resolved input-template paths, recorded by parse_files; consumed
@@ -164,7 +165,7 @@ class Manager:
         self.syntax = "j2" if getattr(args, "j2", False) else "genesis"
         self.source_comment = getattr(args, "source_comment", "//")
         self.output_comment = _resolve_output_comment(args)
-        self.param_footer = bool(getattr(args, "param_footer", False))
+        self.param_footer = bool(getattr(args, "param_footer", True))
 
         # Track every directory touched during elaboration for --path.
         self.touched_dirs: List[str] = []
@@ -567,6 +568,8 @@ class Manager:
         """
         cache.OUTFILE_TAGS.clear()
         cache.OUTFILE_ORDER.clear()
+        cache.OUTFILE_COMMENT.clear()
+        cache.OUTFILE_UNLISTED.clear()
         if self._top_inst is None:
             return
 
@@ -590,10 +593,28 @@ class Manager:
                 continue
             tag = "synth" if is_synth else "verif"
             _promote(fname, tag)
+            style = inst._comment_style()
+            differs = style != self.output_comment
+            if differs:
+                cache.OUTFILE_COMMENT[fname] = style
             # Synonym output files share the source module's extension.
             suffix = getattr(type(inst), "_OUTPUT_SUFFIX", ".v")
+            unlisted = not self.extensions.listed(type(inst)._INPUT_EXT)
+            if unlisted:
+                cache.OUTFILE_UNLISTED.add(fname)
             for syn in inst._synonyms:
                 _promote(f"{syn}{suffix}", tag)
+                if unlisted:
+                    cache.OUTFILE_UNLISTED.add(f"{syn}{suffix}")
+                if differs:
+                    cache.OUTFILE_COMMENT[f"{syn}{suffix}"] = style
+            for side in inst._side_files:
+                # A rolled-back duplicate may have written through this instance.
+                if side not in cache.SIDE_FILES:
+                    continue
+                _promote(side, tag)
+                if not cache.SIDE_FILES[side]["listed"]:
+                    cache.OUTFILE_UNLISTED.add(side)
 
     def clean(self) -> None:
         """Delete generated output directories, lists and named products."""

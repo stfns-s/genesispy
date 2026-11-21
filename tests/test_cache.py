@@ -32,3 +32,25 @@ def test_register_writes_module_cache() -> None:
     sentinel = object()
     cache.register("Foo_unq1", sentinel)  # type: ignore[arg-type]
     assert cache.MODULE_CACHE["Foo_unq1"] is sentinel
+
+
+def test_journal_rolls_back_ununique_registry() -> None:
+    cache.UNUNIQUE_REGISTRY["keep"] = {"params": {}}
+    with cache.journaled() as journals:
+        cache.UNUNIQUE_REGISTRY["drop"] = {"params": {}}
+        cache.UNUNIQUE_REGISTRY["keep"] = {"params": {"W": 1}}
+        cache.rollback_journal(*journals)
+    assert "drop" not in cache.UNUNIQUE_REGISTRY
+    assert cache.UNUNIQUE_REGISTRY["keep"] == {"params": {}}
+
+
+def test_journal_rolls_back_side_files() -> None:
+    cache.SIDE_FILES["keep.rpt"] = {"writer": "a", "listed": True}
+    assert len(cache._JOURNALED) == 4
+    with cache.journaled() as journals:
+        assert len(journals) == 4
+        cache.SIDE_FILES["drop.rpt"] = {"writer": "b", "listed": True}
+        cache.SIDE_FILES["keep.rpt"] = {"writer": "b", "listed": False}
+        cache.rollback_journal(*journals)
+    assert "drop.rpt" not in cache.SIDE_FILES
+    assert cache.SIDE_FILES["keep.rpt"] == {"writer": "a", "listed": True}

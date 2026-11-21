@@ -144,7 +144,7 @@ def flush_to_disk(manager) -> Dict[str, Union[List[str], List[Tuple[str, str]]]]
     Partitioning follows :data:`cache.OUTFILE_TAGS` (populated by
     Manager): ``'synth'`` and ``'synth_and_verif'`` -> ``synth_dir``;
     ``'verif'`` (and any unmapped file) -> ``verif_dir``.  Returns a dict
-    with four keys:
+    with five keys:
 
     * ``'synth'``, ``'verif'``, ``'synth_and_verif'``: ``List[str]`` of
       destination paths per tag bucket.
@@ -153,6 +153,10 @@ def flush_to_disk(manager) -> Dict[str, Union[List[str], List[Tuple[str, str]]]]
       follow alphabetically).  Used by :func:`write_file_lists` and
       :func:`write_product_lists` to derive all product lists with a
       consistent single ordering.
+    * ``'unlisted'``: ``List[str]`` of destination paths of files whose
+      extension is registered unlisted (:data:`cache.OUTFILE_UNLISTED`) and
+      of side files written with ``listed=False``. They are in none of the
+      other lists.
 
     Idempotent: an entry whose on-disk content matches the cached
     content is left untouched.  Mirrors Perl
@@ -173,6 +177,8 @@ def flush_to_disk(manager) -> Dict[str, Union[List[str], List[Tuple[str, str]]]]
         # ordered entries (preserves prior sorted behaviour for test-only
         # raw cache entries).  List writers use this for consistent ordering.
         "ordered": [],
+        # Paths of files written but left out of every list (unlisted extensions and side files).
+        "unlisted": [],
     }
 
     tags: Dict[str, str] = cache.OUTFILE_TAGS
@@ -192,7 +198,10 @@ def flush_to_disk(manager) -> Dict[str, Union[List[str], List[Tuple[str, str]]]]
     )
     for raw_name in all_keys:
         content = cache.OUTFILE_CONTENT_CACHE[raw_name]
-        filename = _canonical_filename(raw_name, extra_known=extra_known)
+        if raw_name in cache.SIDE_FILES:
+            filename = raw_name
+        else:
+            filename = _canonical_filename(raw_name, extra_known=extra_known)
         base = os.path.basename(filename)
 
         # Try both raw and suffixed keys (tests register raw, prod registers suffixed).
@@ -235,12 +244,19 @@ def flush_to_disk(manager) -> Dict[str, Union[List[str], List[Tuple[str, str]]]]
         _ensure_dir(target_dir)
         dest_path = os.path.join(target_dir, base)
         _write_if_changed(dest_path, content)
+        side = cache.SIDE_FILES.get(raw_name)
+        unlisted = side is not None and not side["listed"]
+        if unlisted or raw_name in cache.OUTFILE_UNLISTED or filename in cache.OUTFILE_UNLISTED:
+            written["unlisted"].append(dest_path)
+            continue
         written[tag].append(dest_path)
         written["ordered"].append((dest_path, tag))
 
     if manager.debug:
         for dest_path, kind in written["ordered"]:
             reporting.info(f"output_writer: wrote {kind} -> {dest_path}")
+        for dest_path in written["unlisted"]:
+            reporting.info(f"output_writer: wrote unlisted -> {dest_path}")
 
     return written
 
@@ -435,25 +451,27 @@ def dump_to_stdout(manager, stream: TextIO | None = None) -> None:
     Used by ``--stdout`` mode. Files are emitted in sorted order with the
     top module (when known) emitted last, each preceded by a
     ``<comment> genesispy: <filename>`` separator (default ``//``,
-    overridden by ``--output-comment``) so consumers can split the stream while
-    keeping it valid in the target language.
+    overridden by ``--output-comment`` and per file by ``cache.OUTFILE_COMMENT``)
+    so consumers can split the stream while keeping it valid in the target
+    language.
     """
     out = stream if stream is not None else sys.stdout
     top = getattr(manager, "top_name", None) or manager.top
     extra_known = _manager_extra_known(manager)
-    style = getattr(manager, "output_comment", "//")
-    if isinstance(style, tuple):
-        _open, _close = style
-        def _sep(name: str) -> str:
-            return f"{_open} genesispy: {name} {_close}"
-    else:
-        def _sep(name: str) -> str:
-            return f"{style} genesispy: {name}"
+    default_style = getattr(manager, "output_comment", "//")
+
+    def _sep(cache_name: str, name: str) -> str:
+        style = cache.OUTFILE_COMMENT.get(cache_name, default_style)
+        if isinstance(style, tuple):
+            return f"{style[0]} genesispy: {name} {style[1]}"
+        return f"{style} genesispy: {name}"
 
     names = sorted(cache.OUTFILE_CONTENT_CACHE.keys())
     if top:
         # Move any cache entry whose canonical filename stem matches top to the end.
         def _is_top(n: str) -> bool:
+            if n in cache.SIDE_FILES:
+                return False
             base = os.path.basename(_canonical_filename(n, extra_known=extra_known))
             stem, _ = os.path.splitext(base)
             return stem == top
@@ -461,8 +479,11 @@ def dump_to_stdout(manager, stream: TextIO | None = None) -> None:
 
     for name in names:
         content = cache.OUTFILE_CONTENT_CACHE[name]
-        filename = os.path.basename(_canonical_filename(name, extra_known=extra_known))
-        out.write(f"{_sep(filename)}\n")
+        if name in cache.SIDE_FILES:
+            filename = name
+        else:
+            filename = os.path.basename(_canonical_filename(name, extra_known=extra_known))
+        out.write(f"{_sep(name, filename)}\n")
         out.write(content)
         if not content.endswith("\n"):
             out.write("\n")

@@ -164,7 +164,7 @@ def test_unused_entries_and_keys_warn_but_pass(tmp_path, monkeypatch, capsys):
 def test_param_footer_names_the_defaults_tier(tmp_path, monkeypatch):
     argv = _design(tmp_path)
     d = _write_defaults(tmp_path, {"leaf": {"N": 5}})
-    assert _run(tmp_path, [*argv, "--defaults", d, "--param-footer"], monkeypatch) == 0
+    assert _run(tmp_path, [*argv, "--defaults", d], monkeypatch) == 0
     assert re.search(r"^//\s+N\s+: 5\s+<- defaults file \(--defaults\)$",
                      _leaf_text(tmp_path), re.M)
 

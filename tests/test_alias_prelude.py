@@ -190,3 +190,14 @@ def test_gvpy_class_factory_source_uses_canonical_prelude(monkeypatch, tmp_path)
     for name, attr in SIMPLE_ALIASES:
         if name != "synonym":
             assert (name, f"self.{attr}") in actual, (name, attr)
+
+
+def test_alias_keys_include_register_extension():
+    assert "register_extension" in EXPECTED_KEYS
+    assert "register_extension" in alias_dict(_fake_self())
+
+
+def test_alias_keys_include_add_depend():
+    assert "add_depend" in EXPECTED_KEYS
+    assert "add_depend" in alias_dict(_fake_self())
+    assert "write_side_file" not in EXPECTED_KEYS

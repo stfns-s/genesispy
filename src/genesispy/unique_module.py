@@ -17,9 +17,10 @@ from __future__ import annotations
 import copy
 import hashlib
 import io
+import os
 import pprint
 import re
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from . import cache, hashing, reporting
 from .config_handler import PRIORITY_LABELS, Priority, priority_label
@@ -35,7 +36,7 @@ STATE_DEFINED = "DEFINED"
 STATE_FORCED = "FORCED"
 STATE_OVERRIDDEN = "OVERRIDDEN"
 
-# Value-column cap for the --param-footer table, in characters.
+# Value-column cap for the parameter footer table, in characters.
 _PARAM_FOOTER_VALUE_WIDTH = 32
 
 # Total width budget for an emitted comment line, comment prefix included.
@@ -74,7 +75,7 @@ def _subtree_tag(subtree_sig) -> str:
 def _comparable_lines(text: str, style) -> List[str]:
     """Lines of ``text`` minus blanks and comments, for structural diffing.
 
-    ``style`` is ``manager.output_comment``: a ``str`` line-comment prefix,
+    ``style`` is a comment style from ``_comment_style``: a ``str`` line-comment prefix,
     or an ``(open, close)`` tuple whose whole-line delimiters bracket block
     comments (the ``to_verilog`` banner shape). Mirrors the comment/blank
     skipping in Perl ``compare_generated_files`` (UniqueModule.pm:3170).
@@ -134,6 +135,10 @@ class UniqueModule:
     # this via ``template/emitter._header`` based on the input extension.
     _OUTPUT_SUFFIX: str = ".v"
 
+    # Lowercased extension of the template that generated the class, or None.
+    # ``_comment_style`` maps it through the manager's extension registry.
+    _INPUT_EXT: Optional[str] = None
+
     # ------------------------------------------------------------------ ctor
     def _init_defaults(
         self, manager: "Manager", parent: Optional["UniqueModule"]
@@ -155,10 +160,14 @@ class UniqueModule:
         self._params_open: bool = True
         self._synonyms: List[str] = []
         self._clone_of: Optional[UniqueModule] = None
+        # Side file names this instance wrote, in call order, without repeats.
+        self._side_files: List[str] = []
 
         # Verilog output buffer, allocated lazily by :meth:`execute`.
         self._outfile_handle: Optional[io.StringIO] = None
         self._outfile_name: Optional[str] = None
+        # True once the generated footer has flushed the complete text.
+        self._output_final = False
 
     def __init__(self, manager: "Manager") -> None:
         # Root constructor (mirrors Perl ``new`` at UniqueModule.pm:130).
@@ -197,9 +206,11 @@ class UniqueModule:
         self._params_open = False
         self._synonyms = list(src._synonyms)
         self._clone_of = src
+        self._side_files = list(src._side_files)
         # Don't share src's StringIO; clone emits leak into src and a renamed
         # flush would exfiltrate src's content. Lazy-alloc in emit() if needed.
         self._outfile_name = src._outfile_name
+        self._output_final = src._output_final
         return self
 
     # ----------------------------------------------------------- parameters
@@ -1006,7 +1017,8 @@ class UniqueModule:
         tmp_file = f"{tmp_name}{suffix}"
         base_file = f"{base_name}{suffix}"
         if not self._compare_generated_files(
-            tmp_file, base_file, {tmp_name: base_name}
+            tmp_file, base_file, {tmp_name: base_name},
+            child._comment_style(),
         ):
             # Keep tmp_file in OUTFILE_CONTENT_CACHE so the user can diff
             # the two generations (Perl :1685 keeps the temp file too).
@@ -1020,12 +1032,19 @@ class UniqueModule:
         # not .pop() -- only __setitem__/__delitem__ are journaled for the
         # nested-inside-unique_inst case.
         del cache.OUTFILE_CONTENT_CACHE[tmp_file]
+        # The temp run's own side files may carry the temp name; the first generation's stand.
+        here = child.get_instance_path()
+        for name in [n for n, e in cache.SIDE_FILES.items() if e["writer"] == here]:
+            del cache.OUTFILE_CONTENT_CACHE[name]
+            del cache.SIDE_FILES[name]
+        child._side_files = list(cache.UNUNIQUE_REGISTRY[base_name]["instance"]._side_files)
         child._unique_module_name = base_name
         child._outfile_name = base_file
         return child
 
     def _compare_generated_files(
-        self, file_a: str, file_b: str, name_map: Dict[str, str]
+        self, file_a: str, file_b: str, name_map: Dict[str, str],
+        style: Union[str, Tuple[str, str]],
     ) -> bool:
         """Structural equality of two cached generated files.
 
@@ -1033,7 +1052,8 @@ class UniqueModule:
         line-by-line comparison ignoring blank lines and comments, with a
         word-boundary ``name_map`` applied to ``file_a`` (temp -> base
         module names). ``file_b`` missing from the cache means its
-        generation is still in flight (recursion) -> no match.
+        generation is still in flight (recursion) -> no match. ``style`` is
+        the comment style of the two files (see ``_comment_style``).
         """
         if file_a not in cache.OUTFILE_CONTENT_CACHE:
             raise ElaborationError(
@@ -1042,7 +1062,6 @@ class UniqueModule:
             )
         if file_b not in cache.OUTFILE_CONTENT_CACHE:
             return False
-        style = getattr(self._manager, "output_comment", "//")
         lines_a = _comparable_lines(cache.OUTFILE_CONTENT_CACHE[file_a], style)
         lines_b = _comparable_lines(cache.OUTFILE_CONTENT_CACHE[file_b], style)
         for key in sorted(name_map):
@@ -1081,19 +1100,92 @@ class UniqueModule:
         gen_cls = self._manager.synonym_class(base_module_name, gen_module_name)
         return self.ununique_inst(gen_cls, inst_name, **params)
 
+    def register_extension(
+        self,
+        in_ext: str,
+        out_ext: str,
+        *,
+        listed: bool = True,
+        comment: Optional[str] = None,
+    ) -> None:
+        """Map template extension ``in_ext`` to ``out_ext`` for later ``generate`` calls.
+
+        ``listed=False`` keeps the outputs of that extension out of every file list.
+        ``comment`` is their comment prefix. Conflicts with an existing mapping raise.
+        """
+        try:
+            self._manager.extensions.register(in_ext, out_ext, listed=listed, comment=comment)
+        except ValueError as exc:
+            raise ElaborationError(f"register_extension: {exc}") from exc
+
+    def write_side_file(self, name: str, text: str, *, listed: bool = True) -> None:
+        """Write ``text`` as the file ``name`` beside this module's output.
+
+        ``name`` is a bare file name with an extension. Two instances may write the same name
+        only with equal text and equal ``listed``. ``listed=False`` keeps it out of file lists.
+        """
+        if not name or name != os.path.basename(name) or not os.path.splitext(name)[1]:
+            raise ElaborationError(
+                f"write_side_file: {name!r} must be a bare file name with an extension"
+            )
+        if not isinstance(text, str):
+            raise ElaborationError(
+                f"write_side_file: text of {name!r} must be a str, not {type(text).__name__}"
+            )
+        here = self.get_instance_path()
+        if self._output_final:
+            raise ElaborationError(
+                f"write_side_file: {here} has finished elaborating; call write_side_file "
+                f"from that instance's own template"
+            )
+        entry = cache.SIDE_FILES.get(name)
+        if entry is None:
+            if name in cache.OUTFILE_CONTENT_CACHE:
+                owner = cache.MODULE_CACHE.get(os.path.splitext(name)[0])
+                by = f" of {owner.get_instance_path()}" if owner is not None else ""
+                raise ElaborationError(
+                    f"write_side_file: {name!r} written by {here} is already a template "
+                    f"output{by}"
+                )
+            cache.OUTFILE_CONTENT_CACHE[name] = text
+            cache.SIDE_FILES[name] = {"writer": here, "listed": listed}
+        else:
+            if cache.OUTFILE_CONTENT_CACHE[name] != text:
+                raise ElaborationError(
+                    f"write_side_file: {name!r} written with different text by "
+                    f"{entry['writer']} and {here}"
+                )
+            if entry["listed"] != listed:
+                raise ElaborationError(
+                    f"write_side_file: {name!r} written with different listed flags by "
+                    f"{entry['writer']} and {here}"
+                )
+        if name not in self._side_files:
+            self._side_files.append(name)
+
+    def add_depend(self, path: str) -> None:
+        """Name a file this template read as a prerequisite in the ``.depend`` file."""
+        if not isinstance(path, str):
+            raise ElaborationError(f"add_depend: path must be a str, not {type(path).__name__}")
+        cache.INCLUDED_FILES.append(path)
+
     def synonym(self, name: str) -> None:
         """Record an alternate name for this module's generated Verilog."""
         if name in self._synonyms:
             return
+        suffix = type(self)._OUTPUT_SUFFIX
+        syn_file = f"{name}{suffix}"
+        if syn_file in cache.SIDE_FILES:
+            raise ElaborationError(
+                f"output {syn_file!r} of {self.get_instance_path()} collides with the side "
+                f"file of that name written by {cache.SIDE_FILES[syn_file]['writer']}"
+            )
         self._synonyms.append(name)
         cache.register(name, self)
 
-        suffix = type(self)._OUTPUT_SUFFIX
         src_file = f"{self._unique_module_name}{suffix}"
         if src_file in cache.OUTFILE_CONTENT_CACHE:
-            cache.OUTFILE_CONTENT_CACHE[f"{name}{suffix}"] = (
-                cache.OUTFILE_CONTENT_CACHE[src_file]
-            )
+            cache.OUTFILE_CONTENT_CACHE[syn_file] = cache.OUTFILE_CONTENT_CACHE[src_file]
 
     def get_synonyms(self) -> List[str]:
         """Return a shallow copy of the synonym names registered on this module.
@@ -1451,14 +1543,27 @@ class UniqueModule:
             self._outfile_handle = io.StringIO()
         self._outfile_handle.write(text + "\n")
 
+    def _comment_style(self) -> Union[str, Tuple[str, str]]:
+        """Comment style of this module's output file.
+
+        The extension registry's comment for ``_INPUT_EXT`` when it has
+        one, else ``manager.output_comment``, else ``"//"``.
+        """
+        registry = getattr(self._manager, "extensions", None)
+        if registry is not None and type(self)._INPUT_EXT is not None:
+            comment = registry.comment(type(self)._INPUT_EXT)
+            if comment is not None:
+                return comment
+        return getattr(self._manager, "output_comment", "//")
+
     def _comment_budget(self) -> int:
         """Width left for a comment block's payload after its prefix."""
-        style = getattr(self._manager, "output_comment", "//")
+        style = self._comment_style()
         prefix = 1 if isinstance(style, tuple) else len(style) + 1
         return _COMMENT_LINE_WIDTH - prefix
 
     def _emit_comment_block(self, lines: List[str]) -> None:
-        """Emit ``lines`` as one comment block in ``manager.output_comment`` style.
+        """Emit ``lines`` as one comment block in the :meth:`_comment_style` style.
 
         A ``str`` style prefixes every line; an ``(open, close)`` tuple emits
         the delimiters on their own whole lines with the payload indented one
@@ -1466,7 +1571,7 @@ class UniqueModule:
         strips comments for structural diffing and keys on whole-line
         delimiters.
         """
-        style = getattr(self._manager, "output_comment", "//")
+        style = self._comment_style()
         if isinstance(style, tuple):
             open_d, close_d = style
             self.emit(open_d)
@@ -1480,8 +1585,8 @@ class UniqueModule:
     def emit_param_footer(self) -> None:
         """Append a resolved-parameter provenance block after the module body.
 
-        No-op unless ``manager.param_footer`` is set (``--param-footer``) and
-        this module has at least one parameter. Called from the tail of every
+        No-op when ``manager.param_footer`` is off (``--no-param-footer``) or
+        this module has no parameter. Called from the tail of every
         generated ``execute()`` (``template/emitter.CLASS_BODY_TAIL``) after
         the user body and before the final ``_flush_outfile()``, so the block
         lands at the end of the file, past ``endmodule``. Unlike the
@@ -1498,7 +1603,7 @@ class UniqueModule:
         ``// NAME = value`` banner rows, and its window is unbounded on files
         with no ``module`` keyword.
         """
-        if not getattr(self._manager, "param_footer", False):
+        if not getattr(self._manager, "param_footer", True):
             return
         if not self._params:
             return
@@ -1529,8 +1634,7 @@ class UniqueModule:
     def to_verilog(self, infile: Optional[str] = None) -> None:
         """Emit a comment banner + parameter table (parity with :2927).
 
-        Style comes from ``manager.output_comment`` via
-        :meth:`_emit_comment_block`.
+        Style comes from :meth:`_comment_style` via :meth:`_emit_comment_block`.
         """
         lines = [
             f"Genesis-Py generated module: {self._unique_module_name}",
@@ -1582,16 +1686,38 @@ class UniqueModule:
         self.to_verilog()
         self._flush_outfile()
 
-    def _flush_outfile(self) -> None:
+    def get_output_text(self) -> str:
+        """Return the complete generated text of this (child) instance.
+
+        Raises ElaborationError while the instance is still elaborating.
+        """
+        if not self._output_final or self._outfile_name is None:
+            raise ElaborationError(
+                f"get_output_text: output of {self.get_instance_path()} is not final; "
+                "call it on a child after generate() returns"
+            )
+        return cache.OUTFILE_CONTENT_CACHE[self._outfile_name]
+
+    def _flush_outfile(self, final: bool = False) -> None:
         """Write current buffer contents to OUTFILE_CONTENT_CACHE under
         ``_unique_module_name`` and every registered synonym name.
+
+        ``final=True`` marks the text complete (see :meth:`get_output_text`).
         """
         if self._outfile_handle is None:
             return
+        if final:
+            self._output_final = True
         suffix = type(self)._OUTPUT_SUFFIX
         self._outfile_name = f"{self._unique_module_name}{suffix}"
         content = self._outfile_handle.getvalue()
-        cache.OUTFILE_CONTENT_CACHE[self._outfile_name] = content
-        for syn in self._synonyms:
-            cache.OUTFILE_CONTENT_CACHE[f"{syn}{suffix}"] = content
+        names = [self._outfile_name] + [f"{syn}{suffix}" for syn in self._synonyms]
+        for name in names:
+            if name in cache.SIDE_FILES:
+                raise ElaborationError(
+                    f"output {name!r} of {self.get_instance_path()} collides with the side "
+                    f"file of that name written by {cache.SIDE_FILES[name]['writer']}"
+                )
+        for name in names:
+            cache.OUTFILE_CONTENT_CACHE[name] = content
 

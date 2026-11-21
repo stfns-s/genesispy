@@ -10,14 +10,37 @@ References (Genesis2/PerlLibs/Genesis2/UniqueModule.pm):
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 
 from genesispy import cache
+from genesispy.cli import parse_args
+from genesispy.manager import Manager
 from genesispy.reporting import ElaborationError
 from genesispy.unique_module import UniqueModule
 
 from ._stubs import StubManager
 
+FIXTURES = Path(__file__).parent / "fixtures"
+UNREG = FIXTURES / "side_outputs"
+
+
+def _run(
+    tmp_path: Path, vpy_path: Path, top: str, extra_args: tuple = ()
+) -> Manager:
+    """Construct a Manager rooted at ``tmp_path`` and run execute()."""
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        args = parse_args(["--input", str(vpy_path), "--top", top, *extra_args])
+        m = Manager(args)
+        rc = m.execute()
+        assert rc == 0, "Manager.execute() should succeed"
+        return m
+    finally:
+        os.chdir(cwd)
 
 
 class _Top(UniqueModule):
@@ -153,3 +176,22 @@ def test_ununique_inst_registers_in_cache() -> None:
     top = _Top(StubManager())
     top.ununique_inst(_Leaf, "u_analog", WIDTH=8)
     assert "_Leaf" in cache.MODULE_CACHE
+
+
+def _unreg_inputs(case: str) -> tuple:
+    return (
+        "--input", str(UNREG / case / "blk.vpy"),
+        "--input", str(UNREG / case / "cell.vpy"),
+    )
+
+
+def test_unreg_discarded_duplicate_equal_w(tmp_path):
+    m = _run(tmp_path, UNREG / "unreg_eq" / "top.vpy", "top", _unreg_inputs("unreg_eq"))
+    assert "blk_unq2_cell.v" in cache.OUTFILE_CONTENT_CACHE
+    vlist = (tmp_path / m.output_dir / "top.vlist").read_text()
+    assert "blk_unq2_cell.v" in vlist
+
+
+def test_unreg_discarded_duplicate_w_from_n(tmp_path):
+    _run(tmp_path, UNREG / "unreg_n" / "top.vpy", "top", _unreg_inputs("unreg_n"))
+    assert "input logic [2:0] d" in cache.OUTFILE_CONTENT_CACHE["blk_unq2_cell.v"]

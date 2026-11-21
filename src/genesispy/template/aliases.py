@@ -62,6 +62,8 @@ SIMPLE_ALIASES: tuple[tuple[str, str], ...] = (
     ("generate_base",        "ununique_inst"),
     ("generate_w_name",      "generate_w_name"),
     ("clone",                "clone_inst"),
+    ("register_extension",   "register_extension"),
+    ("add_depend",           "add_depend"),
 )
 
 # Full set of bare-name aliases bound at every prelude site. The

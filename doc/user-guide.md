@@ -398,7 +398,85 @@ BLOCK_PARAMS = {
   error, a warning or not reported. A kind named in both options is an error. A dropped report
   writes nothing, so it does not create the `--log` file. Example, for a block built against a
   design-wide file: `--strict-unused keys,overrides --ignore-unused entries`.
-- `--param-footer` names the source `defaults file (--defaults)`.
+- The parameter footer names the source `defaults file (--defaults)`.
+
+### 6.6 Side outputs
+
+A template can produce files other than its own Verilog: a constraint file or a register description
+from a template of another type, and files whose text a Python tool computes. Four calls do this.
+`register_extension` and `add_depend` are bare names in a template body and also methods on the
+instance (`self.register_extension(...)`). `write_side_file` is a method of the instance only, so
+write `self.write_side_file(...)`; a bare `write_side_file(...)` raises `NameError`.
+`get_output_text` is a method of a generated child.
+
+- `register_extension(in_ext, out_ext, *, listed=True, comment=None)` maps a template extension to
+  an output extension for the rest of the run, like `--extension`. With `listed=False` the outputs
+  of those templates are written but appear in no file list (`.vlist`, `.vlist.verif`, `--vf-out`
+  and `--product` lists). `comment` is the line-comment prefix of their banner and parameter footer;
+  without it they use `--output-comment`. Extensions are lowercased and gain a leading dot.
+- `child.get_output_text()` returns the text genesispy will write for the child's own output file:
+  body, banner and parameter footer. It works once `generate` (or `generate_w_name`, `unique_inst`)
+  has returned, and on a clone it returns the original's text. On an instance still elaborating,
+  such as `self`, it raises.
+- `self.write_side_file(name, text, *, listed=True)` writes `text` to the file `name`, a bare file
+  name with an extension, in the synth or verif directory of the calling instance. `name` is kept as
+  given: `x_hwif.rpt` does not become `x_hwif.rpt.v`. A listed file follows the instance's own output
+  in the file lists. A repeat of a name needs the same text and the same `listed`; otherwise, or when
+  `name` is a template's output file, the run fails and the message names both instance paths. An
+  instance writes side files only while it elaborates: a call on a child after `generate` returned
+  fails, so a parent that wants a file for a child writes it on itself.
+- `add_depend(path)` adds `path` to the prerequisites in `<top>.depend`, once. Use it for a file the
+  template reads outside genesispy, such as a Python helper module or a file a tool includes.
+
+A file is written only when its content changes, and a side file of a duplicate that `unique_inst`
+discards (section 5 of [code-structure.md](./code-structure.md)) is discarded with it.
+
+Example: a constraint template `con.sdcpy`, with `#` comments, kept out of the file lists, next to a
+note file written from its text. `top.vpy`:
+
+```verilog
+//; register_extension('.sdcpy', '.sdc', listed=False, comment='#')
+//; c = generate('con', 'u_con')
+//; first = c.get_output_text().splitlines()[0]
+//; self.write_side_file(f"{mname()}_notes.txt", f"constraints: {first}\n", listed=False)
+module `mname` ();
+endmodule
+```
+
+`con.sdcpy`:
+
+```text
+//; P = parameter('P', 10)
+create_clock -period `P` [get_ports clk]
+```
+
+`genesispy -i top.vpy -t top --src-path .` writes `genesis_verif/con_unq1.sdc` (banner and footer
+with `#`, `create_clock -period 10 [get_ports clk]` between them), `genesis_verif/top_notes.txt` and
+`genesis_verif/top.v`; both extra files are absent from `top.vlist`.
+
+The same mapping from the command line is `--extension .sdcpy=.sdc:nolist:comment=#`. The order of
+the suffixes is fixed: `:nolist` first, `:comment=PREFIX` last. `PREFIX` runs to the end of the
+argument and may contain `:`, so `:comment=#:nolist` sets the prefix `#:nolist` and leaves the
+outputs listed. An empty `PREFIX` or any other suffix is an error.
+
+Limits:
+
+- `comment` sets only the banner and footer prefix. The directive prefix of the template source
+  stays `--source-comment` (`//;` by default), as the `con.sdcpy` lines above show.
+- A call never changes an existing mapping. Repeating a mapping is a no-op. A call that gives an
+  already mapped extension another output extension, `listed` or `comment` is an error, whether
+  the mapping came from an earlier call, from `--extension` or from the defaults (`.vpy`, `.svpy`).
+  Overriding a default stays a command-line operation (`-sv`, `--extension .vpy=.sv`).
+- `register_extension` serves templates found by name through `--src-path`. A template passed with
+  `--input` is parsed before any template runs, so its extension must be mapped with `--extension`
+  on the command line.
+- A template of a registered type needs a stem that no other template has. Two same-stem templates
+  both given as `--input` raise "two templates cannot share a sanitised stem". Lookup by name takes
+  the first file found over the registered extensions, defaults first, and reports nothing. With
+  `con.vpy` beside `con.sdcpy`, `generate('con', ...)` uses `con.vpy` and writes `con_unq1.v`.
+- Under `gvpy` (section 10) `register_extension` and the `--extension` suffixes work, and `comment`
+  applies wherever gvpy prints a comment block. `listed` and `add_depend` have no effect, and
+  child outputs are not written. `write_side_file` writes its files to the current directory.
 
 ## 7. Syntax
 
@@ -593,6 +671,7 @@ work in plain-Verilog lines via the template parser.
 - **`pyinclude(path)`** -- exec a plain `.py` file into the *calling code's own* namespace, so the names it defines stay reachable as bare names for the rest of that module (see section 11.3). Resolves `path` against `--py-path`, then `--inc-path`.
   - *Example:* `//; pyinclude('helpers.py')`
 - **`pinclude(path)`** -- deprecated spelling of `pyinclude`; emits a one-time warning to stderr.
+- **`register_extension(in_ext, out_ext, *, listed=True, comment=None)`**, **`add_depend(path)`** -- register a template type; add a `.depend` prerequisite. With `self.write_side_file(name, text, *, listed=True)` and `child.get_output_text()` they are described in section 6.6.
 - **`verilog`** -- the module `genesispy.lib.verilog`: literals, sign extension, declarations, port lists and other Verilog text built from Python values (see section 11.7). Bound as a global of the generated module, so a `pyinclude`'d file sees it too.
   - *Example:* `` assign y = x + `verilog.lit(-3, 8)`; ``
 
@@ -848,14 +927,14 @@ from `--help`; section 9.5 lists them.
 - `--out-dir DIR` -- output directory (default: `genesis_synth`). When set, also supplies the default for `--synth-dir` and `--verif-dir`.
 - `--synth-dir DIR` -- directory for synth-tagged Verilog.
 - `--verif-dir DIR` -- directory for verif-tagged Verilog.
-- `--extension EXT_IN=EXT_OUT` -- pair an input template extension with its emitted-Verilog extension (repeatable). Defaults: `.vpy=.v`, `.svpy=.sv`. User entries override defaults; e.g. `--extension .vpy=.sv` or `--extension .tvpy=.tv`. Leading dots are added on either side if missing; both sides are case-folded.
+- `--extension EXT_IN=EXT_OUT[:nolist][:comment=PREFIX]` -- pair an input template extension with its emitted-Verilog extension (repeatable). Defaults: `.vpy=.v`, `.svpy=.sv`. User entries override defaults; e.g. `--extension .vpy=.sv` or `--extension .tvpy=.tv`. Leading dots are added on either side if missing; both sides are case-folded. `:nolist` writes the outputs but keeps them out of every file list; `:comment=PREFIX` sets their banner and footer comment prefix (the rest of the argument, verbatim). The suffixes come in that order, and the same pairs can be made from a template with `register_extension` (section 6.6).
 - `-sv`, `--system-verilog` -- shorthand for `--extension .vpy=.sv`. Errors out if combined with a conflicting `--extension .vpy=...` entry.
 - `--source-comment PREFIX` -- line-comment prefix of the source/target language (default: `//`). Sets the directive sentinel (`<comment>;` replaces `//;` in genesis flavour) and is used as the default for `--output-comment`. j2 mode is unaffected. (`--comment` is a deprecated alias; emits a one-time warning.)
 - `--output-comment PREFIX | OPEN,CLOSE` -- style for comments emitted into the output (banner and `--stdout` separator). A bare prefix (e.g. `#`) emits line comments; a comma-separated pair (e.g. `/*,*/`) emits a wrapping block. Defaults to `--source-comment`.
-- `--param-footer` -- append a comment block after each generated module listing every resolved parameter with its value and the configuration source it came from. Off by default; without it the output is unchanged. Unlike the module banner, which is written before the template body runs, this block is written after, so it also shows parameters the body resolves with `parameter()`. Sources are named from the priority ladder, highest wins: `forced (force_param)` > `parent instantiation` (a parent's `unique_inst` keyword argument) > `command line (--parameter)` > `config file (--json-cfg)` > `config script (--cfg / configure)` > `defaults file (--defaults)` > `declaration default`. A forced parameter that had a value before the force also names that value's source after a second `<-`, as in `<- forced (force_param) <- defaults file (--defaults)`. Note that a parent's `unique_inst` keyword argument outranks `--parameter`. Uses the `--output-comment` style. Modules with no parameters get no block. Under module deduplication one emitted file can back several instances, and the block reports the elaboration that produced the file.
+- `--no-param-footer` -- omit the parameter footer. By default genesispy appends a comment block after each generated module listing every resolved parameter with its value and the configuration source it came from. `--param-footer` is a deprecated flag that does nothing: it warns once, and `--no-param-footer` wins in either order. Unlike the module banner, which is written before the template body runs, this block is written after, so it also shows parameters the body resolves with `parameter()`. Sources are named from the priority ladder, highest wins: `forced (force_param)` > `parent instantiation` (a parent's `unique_inst` keyword argument) > `command line (--parameter)` > `config file (--json-cfg)` > `config script (--cfg / configure)` > `defaults file (--defaults)` > `declaration default`. A forced parameter that had a value before the force also names that value's source after a second `<-`, as in `<- forced (force_param) <- defaults file (--defaults)`. Note that a parent's `unique_inst` keyword argument outranks `--parameter`. Uses the comment prefix of the template's extension when one is registered (section 6.6), else the `--output-comment` style. Modules with no parameters get no block. Under module deduplication one emitted file can back several instances, and the block reports the elaboration that produced the file.
 - `--stdout` -- write generated Verilog to stdout instead of `genesis_synth`/`genesis_verif`. Skips `.vlist`/`.depend`/clean script and removes the raw dir on exit. Overrides `--gen-raw`: no raw `.v` siblings are written and the raw dir is removed regardless.
 - `--product FILE` -- write Genesis2-style product file lists. `--product FILE.ext` produces three files: `FILE.ext` (all modules), `FILE.synth.ext` (synth-cone), `FILE.verif.ext` (verif-cone). Suppresses the default `<top>.vlist`/`<top>.vlist.verif`.
-- `--json-out FILE` -- write a `HierarchyTop` snapshot of the elaborated module tree (port of Perl `-hierarchy`). Emits three files in `dirname(FILE)`: `FILE` (full: every parameter, declared defaults included, with those a parent keyword or a force set under `ImmutableParameters`), `<stem>-small<ext>` (no `ImmutableParameters`), `<stem>-tiny<ext>` (only `Parameters` set by `--json-cfg` or `--parameter`). Each node carries `InstanceName`, `UniqueModuleName`, `BaseModuleName` (the emitted name) and `TemplateName` (the source template, which differs from the emitted name under `generate_w_name`). In the full file, a forced item whose parameter had a value before the force also carries `InputSource`, the `--param-footer` label of that value's source. Values are written under `Val`; `--json-cfg` reads that spelling too and ignores the name fields, so a snapshot can be fed back in. A deduplicated instance is recorded as `CloneOf` with no parameters of its own, so a fed-back snapshot sets values only on the instances that were elaborated. Converted with `genesispy-json2xml`, any of the three files is also a Genesis2 `-xml` config that reproduces the run's Verilog, up to unique module names.
+- `--json-out FILE` -- write a `HierarchyTop` snapshot of the elaborated module tree (port of Perl `-hierarchy`). Emits three files in `dirname(FILE)`: `FILE` (full: every parameter, declared defaults included, with those a parent keyword or a force set under `ImmutableParameters`), `<stem>-small<ext>` (no `ImmutableParameters`), `<stem>-tiny<ext>` (only `Parameters` set by `--json-cfg` or `--parameter`). Each node carries `InstanceName`, `UniqueModuleName`, `BaseModuleName` (the emitted name) and `TemplateName` (the source template, which differs from the emitted name under `generate_w_name`). In the full file, a forced item whose parameter had a value before the force also carries `InputSource`, the parameter footer label of that value's source. Values are written under `Val`; `--json-cfg` reads that spelling too and ignores the name fields, so a snapshot can be fed back in. A deduplicated instance is recorded as `CloneOf` with no parameters of its own, so a fed-back snapshot sets values only on the instances that were elaborated. Converted with `genesispy-json2xml`, any of the three files is also a Genesis2 `-xml` config that reproduces the run's Verilog, up to unique module names.
 - `--vf-out FILE` -- write a single Verilog file-list product to `FILE` (auto-appends `.vf` if missing). Unlike `--product`, no `.synth`/`.verif` side-files are emitted. Suppresses the default `<top>.vlist`/`<top>.vlist.verif`. Mutually exclusive with `--product`.
 - `--depend FILE` -- override the dependency-list output path (default: `<top>.depend`).
 - `--path FILE` -- write the list of directories touched during elaboration to `FILE`.
@@ -884,6 +963,7 @@ be removed at a minor release.
 | `--systemverilog`             | `-sv`, `--system-verilog` | genesispy      |
 | `--unqstyle`                  | `--unq-style`             | genesispy      |
 | `--comment`                   | `--source-comment`        | genesispy, gvpy |
+| `--param-footer`              | (none; on by default)     | genesispy, gvpy |
 | `--inputlist` (in a listfile) | `--input-list`            | listfile       |
 | `--libdirs`                   | `--py-path`               | gvpy           |
 | `--incdirs`                   | `--inc-path`              | gvpy           |
@@ -915,12 +995,20 @@ Usage: `gvpy [options] FILE [FILE ...]` (output goes to stdout).
 - `--defaults FILE` -- per-module parameter defaults, as in genesispy (section 6.5); the module name is the file stem or `--mname`. Repeatable. gvpy does not report unused entries.
 - `--source-comment PREFIX` -- line-comment prefix of the source/target language (default: `//`). Sets the directive sentinel (`<comment>;` replaces `//;`) and is used as the default for `--output-comment`. (`--comment` is a deprecated alias; emits a one-time warning.)
 - `--output-comment PREFIX | OPEN,CLOSE` -- style for comments emitted into the output (banner and stdout separator). A bare prefix (e.g. `#`) emits line comments; a comma-separated pair (e.g. `/*,*/`) emits a wrapping block. Defaults to `--source-comment`.
-- `--param-footer` -- append a resolved-parameter provenance comment block after the generated module (section 9). Off by default.
-- `--extension EXT_IN=EXT_OUT` -- pair an input template extension with its emitted-Verilog extension. Defaults `.vpy=.v`, `.svpy=.sv`. Repeatable.
+- `--no-param-footer` -- omit the resolved-parameter provenance comment block that follows the generated module by default (section 9). `--param-footer` is a deprecated no-op.
+- `--extension EXT_IN=EXT_OUT[:nolist][:comment=PREFIX]` -- pair an input template extension with its emitted-Verilog extension. Defaults `.vpy=.v`, `.svpy=.sv`. Repeatable. `:comment=PREFIX` sets the comment prefix of that extension's banner and footer; `:nolist` is accepted and has no effect, since gvpy writes no file list.
 - `-j2`, `--j2` -- parse templates with the j2 (Jinja2-like) flavour (Appendix A).
 - `--gvpy-strict` -- use gvpy's record-only `generate`/`instantiate`/`synonym` instead of genesispy's elaboration-based versions.
 - `--version` -- print version and exit.
 - `-h`, `--help` -- show help and exit.
+
+Side outputs (section 6.6): after a successful elaboration gvpy writes every file recorded by
+`write_side_file` to the current directory, once per name and only when the content changed. It writes
+nothing when elaboration fails. Child outputs are still discarded, so a run can leave a side file on
+disk without the Verilog of the child that wrote it. `get_output_text()` on a child returns the child's
+module text, banner and footer included. Under `--gvpy-strict` children do not run, so only the top
+module's side files are written, and `generate` returns a record without `get_output_text`.
+`add_depend` and `listed=False` have no effect.
 
 ## 11. Extending genesispy with Python libraries
 
@@ -1271,7 +1359,7 @@ flag style) are listed below. For behaviour-affecting incompatibilities
 - **`--suffix` removed** -- replaced by `--extension`. `-sv`/`--system-verilog` is preserved as a shorthand for `--extension .vpy=.sv`.
 - **`--comment` -> `--source-comment`** -- `--comment PREFIX` is a deprecated alias for `--source-comment PREFIX`; it is retained and emits a one-time stderr warning. New flag `--output-comment PREFIX | OPEN,CLOSE` controls the style for comments emitted into the output (banner and `--stdout` separator); defaults to `--source-comment`. Genesis2 has no equivalent to `--output-comment`.
 - **`--defaults`** -- genesispy-only; per-module parameter defaults below every other source (section 6.5). Genesis2 has no equivalent. Same for `--defaults-entry`, `--top-name`, `--ignore-unused` and `--strict-unused`; the latter also covers the overrides Genesis2's `Finalize` checks, which Genesis2 always treats as fatal.
-- **`--param-footer`** -- genesispy-only; appends a resolved-parameter provenance block after each generated module. Off by default, so migrated designs emit unchanged output. Genesis2 has no equivalent.
+- **Parameter footer** -- genesispy-only; appends a resolved-parameter provenance block after each generated module by default, so migrated designs gain trailing comments that Genesis2 does not emit. `--no-param-footer` removes it; `--param-footer` is a deprecated no-op. Genesis2 has no equivalent.
 - **Config input** -- XML support removed from the core CLI; convert legacy XML once with `genesispy-xml2json in.xml out.json` and pass `--json-cfg out.json`. The reverse helper `genesispy-json2xml` writes XML that Genesis2 reads: it restores the `ParameterItem`, `SubInstanceItem` and `List` wrapper elements, writes a list or dict `Val` as `ArrayType`/`HashType`, and writes booleans as `true`/`false`. The converter types an XML value only when that is lossless (`<Val>8</Val>` becomes `8`, `1.5` becomes `1.5`, `true`/`false` become booleans); `010`, `1e3`, `+5` and any other text stay strings, as XML::Simple handed them to Perl. The JSON loader never coerces: a string leaf reaches the template as typed. A JSON `null` round-trips through `genesispy-json2xml` as an empty element, which reads back as `""`.
 - **`ImmutableParameters` (input config)** -- ignored by both engines. Genesis2 `ConfigHandler.pm:875-919` reads only `{Parameters}` from input XML; `{ImmutableParameters}` is touched only by the writeback path (`ConfigHandler.pm:677, 724`). genesispy reads only a node's `Parameters` in `config_handler.py:_find_param`. The tag is writeback-only metadata in both engines. To actually pin past a parent's `unique_inst` kwarg, use `force_param` (Genesis2) / `parameter(..., force=True)` (genesispy); both write at `IMMUTABLE`.
 - **`//;` body language** -- Perl -> Python.
@@ -1373,7 +1461,8 @@ A `genesispy` run produces:
 - `genesis_raw/<stem>.py` -- generated Python intermediate per `.vpy` input. The raw directory persists after the run (removed by `--clean` or `--stdout`); `--gen-raw` additionally writes the per-module `.v` siblings into it. `--raw-dir DIR` relocates the directory; `--use-tmp` puts it under `/tmp/genesispy_*` (auto-cleaned at exit; `--keep-tmp` preserves the scratch).
 - `genesis_synth/<module>.v` -- elaborated Verilog for instances at or under `--synth-top`. (Empty when `--synth-top` is omitted.)
 - `genesis_verif/<module>.v` -- elaborated Verilog for instances outside the synth cone (everything when `--synth-top` is omitted, mirroring Genesis2's `SynthTop=undef` default).
-- `<outputdir>/<top>.vlist` -- full compile-order file list (every emitted `.v`, regardless of synth/verif tag). Suppressed when `--product` or `--vf-out` is set.
+- `genesis_synth/<name>` or `genesis_verif/<name>` for a side file -- a file written by `write_side_file` or an output of a registered extension (`<module>.sdc`), in the directory of its instance, with the name as given. It follows its instance's own output in the file lists unless it is unlisted (section 6.6).
+- `<outputdir>/<top>.vlist` -- full compile-order file list (every emitted `.v` and every listed side file, regardless of synth/verif tag). Suppressed when `--product` or `--vf-out` is set.
 - `<outputdir>/<top>.vlist.verif` -- emitted only when at least one verif-tagged file exists; lists verif + synth_and_verif paths. Suppressed when `--product` or `--vf-out` is set.
 - `<top>.depend` -- Make-style dependency list, written whenever files are flushed to disk (not under `--stdout` or `--parse-only`). Target is the `.vlist` by default, or the named product file under `--product`/`--vf-out`.
 - `genesispy_clean.sh` -- sweeps the run's output products.

@@ -28,11 +28,18 @@ from typing import Any, Iterable
 
 from genesispy import __version__, cache, user_config
 from genesispy import reporting
-from genesispy.cli_common import _add_deprecated_alias, _comment_arg, _output_comment_arg
+from genesispy.cli_common import (
+    PARAM_FOOTER_NOTE,
+    _add_deprecated_alias,
+    _comment_arg,
+    _DeprecatedNoopAction,
+    _output_comment_arg,
+)
 from genesispy.config_handler import ConfigHandler
 from genesispy.manager import find_file, resolve_cfg_path
+from genesispy.output_writer import _write_if_changed
 from genesispy.reporting import ConfigError, GenesisPyError, ParameterError
-from genesispy.extensions import build_extension_map, parse_extension_spec
+from genesispy.extensions import ExtensionRegistry, parse_extension_spec
 from genesispy.template import emitter
 from genesispy.template.aliases import MODULE_GLOBALS_SOURCE, alias_prelude_source
 from genesispy.template.parser import parse_vpy
@@ -80,14 +87,15 @@ class _GvpyManager:
         self.raw_dir = ""
         self.synth_dir = ""
         self.verif_dir = ""
-        self.extension_map = build_extension_map(
+        self.extensions = ExtensionRegistry.from_specs(
             getattr(args, "extensions", []) or []
         )
+        self.extension_map = self.extensions.map
         self.syntax = "j2" if getattr(args, "j2", False) else "genesis"
         self.source_comment = getattr(args, "source_comment", "//")
         oc = getattr(args, "output_comment", None)
         self.output_comment = oc if oc is not None else self.source_comment
-        self.param_footer = bool(getattr(args, "param_footer", False))
+        self.param_footer = bool(getattr(args, "param_footer", True))
         self.no_module_cache = False
         self.out_type = "both"
         self.gen_raw = False
@@ -187,6 +195,12 @@ def _build_class_from_vpy(
         raise ValueError(
             f"_build_class_from_vpy: {name!r} is not a valid Python identifier"
         )
+    ext = os.path.splitext(path)[1].lower()
+    # ``.gvpy`` is gvpy's canonical input alias and is never present in
+    # ``extension_map`` (the user configures ``.vpy``); resolve it to
+    # whatever ``.vpy`` maps to so a ``--extension .vpy=.sv`` run emits
+    # consistent suffixes and comments across mixed ``.vpy`` / ``.gvpy`` inputs.
+    lookup_ext = ".vpy" if ext == ".gvpy" else ext
     # Allowed input extensions: keys of the configured map, plus the gvpy
     # ``.gvpy`` alias so resolve_module_class fallbacks still parse.
     if extension_map is None:
@@ -194,12 +208,6 @@ def _build_class_from_vpy(
         out_suffix = ".v"
     else:
         allowed = frozenset(list(extension_map.keys()) + [".gvpy"])
-        ext = os.path.splitext(path)[1].lower()
-        # ``.gvpy`` is gvpy's canonical input alias and is never present in
-        # ``extension_map`` (the user configures ``.vpy``); resolve it to
-        # whatever ``.vpy`` maps to so a ``--extension .vpy=.sv`` run emits
-        # consistent suffixes across mixed ``.vpy`` / ``.gvpy`` inputs.
-        lookup_ext = ".vpy" if ext == ".gvpy" else ext
         out_suffix = extension_map.get(lookup_ext, ".v")
     body = parse_vpy(path, allowed, syntax=syntax, comment=comment)
     indent = "        "
@@ -213,6 +221,7 @@ def _build_class_from_vpy(
         + MODULE_GLOBALS_SOURCE
         + f"class {name}(UniqueModule, UserMixin):\n"
         f"    _OUTPUT_SUFFIX = {out_suffix!r}\n"
+        f"    _INPUT_EXT = {lookup_ext!r}\n"
         "    def execute(self):\n"
         "        super().execute()\n"
         + alias_prelude_source(indent="        ")
@@ -220,9 +229,9 @@ def _build_class_from_vpy(
     src += indented
     if not src.endswith("\n"):
         src += "\n"
-    # Shared with template/emitter._FOOTER: the same execute() tail, minus the
-    # _flush_outfile() call (gvpy reads _outfile_handle directly).
-    src += emitter.CLASS_BODY_TAIL
+    # The final flush gives child modules a complete cache entry; the top
+    # module's stdout comes from _outfile_handle and is unaffected.
+    src += emitter._FOOTER
     ns: dict[str, Any] = {"__name__": f"_gvpy_{name}"}
     # Line map keyed by `path` so remap_traceback rewrites synthetic frames.
     from genesispy.template import runtime as _rt
@@ -381,14 +390,20 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
-        "--param-footer",
+        "--no-param-footer",
         dest="param_footer",
-        action="store_true",
-        default=False,
+        action="store_false",
+        default=True,
         help=(
-            "Append a comment block after the generated module listing every "
-            "resolved parameter with its value and the source it came from."
+            "Do not append the comment block after the generated module that "
+            "lists every resolved parameter with its value and source."
         ),
+    )
+    parser.add_argument(
+        "--param-footer",
+        action=_DeprecatedNoopAction,
+        note=PARAM_FOOTER_NOTE,
+        prog=PROG,
     )
     parser.add_argument(
         "--extension",
@@ -396,10 +411,12 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         default=[],
         type=parse_extension_spec,
-        metavar="EXT_IN=EXT_OUT",
+        metavar="EXT_IN=EXT_OUT[:nolist][:comment=PREFIX]",
         help=(
             "Pair an input template extension with its emitted-Verilog "
-            "extension (may be repeated). Defaults: .vpy=.v, .svpy=.sv."
+            "extension (may be repeated). Defaults: .vpy=.v, .svpy=.sv. "
+            "Suffix ':nolist' keeps the output out of the file lists; "
+            "':comment=PREFIX' sets its line-comment prefix."
         ),
     )
     parser.add_argument(
@@ -443,6 +460,10 @@ def main(argv: list[str] | None = None) -> int:
     except (ParameterError, ConfigError) as exc:
         reporting.error(f"{PROG}: {exc}", fatal=False)
         return 2
+    except ValueError as exc:
+        # The extension registry's conflict, reported as genesispy reports it.
+        reporting.error(f"{PROG}: {exc}", fatal=False)
+        return 1
     # ConfigHandler.__init__ has already ingested args.parameter into
     # _cmdln_db / _cmdln_scoped_db; no further seeding required.
 
@@ -502,8 +523,19 @@ def _process(
     finally:
         cache.ELABORATING = False
 
+    _write_side_files(inst)
     out = inst._outfile_handle.getvalue() if inst._outfile_handle else ""
     sys.stdout.write(out)
+
+
+def _write_side_files(top: UniqueModule) -> None:
+    """Write the tree's side files to the current directory, once per name."""
+    written: set = set()
+    for inst, _ in top.get_prod_list_insts(None):
+        for name in inst._side_files:
+            if name in cache.SIDE_FILES and name not in written:
+                written.add(name)
+                _write_if_changed(name, cache.OUTFILE_CONTENT_CACHE[name])
 
 
 def _stem(path: str, extra: Iterable[str] = ()) -> str:

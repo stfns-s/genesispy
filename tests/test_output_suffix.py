@@ -10,6 +10,7 @@ from genesispy import cache
 from genesispy.cli import parse_args
 from genesispy.extensions import (
     DEFAULT_EXTENSION_MAP,
+    ExtensionSpec,
     build_extension_map,
     parse_extension_spec,
 )
@@ -51,16 +52,16 @@ def test_canonical_filename_dotted_basename_gets_suffix() -> None:
 
 
 def test_parse_extension_spec_basic() -> None:
-    assert parse_extension_spec(".vpy=.v") == (".vpy", ".v")
-    assert parse_extension_spec(".tvpy=.tv") == (".tvpy", ".tv")
+    assert parse_extension_spec(".vpy=.v") == ExtensionSpec(".vpy", ".v")
+    assert parse_extension_spec(".tvpy=.tv") == ExtensionSpec(".tvpy", ".tv")
 
 
 def test_parse_extension_spec_adds_leading_dot() -> None:
-    assert parse_extension_spec("vpy=v") == (".vpy", ".v")
+    assert parse_extension_spec("vpy=v") == ExtensionSpec(".vpy", ".v")
 
 
 def test_parse_extension_spec_lowercases() -> None:
-    assert parse_extension_spec(".VPY=.SV") == (".vpy", ".sv")
+    assert parse_extension_spec(".VPY=.SV") == ExtensionSpec(".vpy", ".sv")
 
 
 def test_parse_extension_spec_missing_eq_rejected() -> None:
@@ -114,12 +115,12 @@ def test_cli_extension_repeatable() -> None:
          "--extension", ".tvpy=.tv",
          "--extension", "foo=bar"]
     )
-    assert args.extensions == [(".tvpy", ".tv"), (".foo", ".bar")]
+    assert args.extensions == [ExtensionSpec(".tvpy", ".tv"), ExtensionSpec(".foo", ".bar")]
 
 
 def test_cli_sv_appends_vpy_sv() -> None:
     args = parse_args(["-i", "x.vpy", "-t", "X", "-sv"])
-    assert (".vpy", ".sv") in args.extensions
+    assert ExtensionSpec(".vpy", ".sv") in args.extensions
 
 
 def test_cli_sv_redundant_with_explicit_match() -> None:
@@ -127,7 +128,7 @@ def test_cli_sv_redundant_with_explicit_match() -> None:
         ["-i", "x.vpy", "-t", "X", "-sv", "--extension", ".vpy=.sv"]
     )
     # No duplicate — explicit entry left as-is, -sv finds it and skips.
-    assert args.extensions.count((".vpy", ".sv")) == 1
+    assert args.extensions.count(ExtensionSpec(".vpy", ".sv")) == 1
 
 
 def test_cli_sv_conflicts_with_explicit_vpy_v() -> None:

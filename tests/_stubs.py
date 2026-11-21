@@ -103,10 +103,14 @@ class StubManager:
         self.raw_dir: str = ""
         self.synth_dir: str = ""
         self.verif_dir: str = ""
-        from genesispy.extensions import DEFAULT_EXTENSION_MAP
-        self.extension_map: Dict[str, str] = dict(
-            extension_map if extension_map is not None else DEFAULT_EXTENSION_MAP
-        )
+        from genesispy.extensions import ExtensionRegistry
+        self.extensions = ExtensionRegistry.from_specs([])
+        if extension_map is not None:
+            self.extensions.map.clear()
+            self.extensions._meta.clear()
+            for in_ext, out_ext in extension_map.items():
+                self.extensions.register(in_ext, out_ext)
+        self.extension_map: Dict[str, str] = self.extensions.map
         # Required by ConfigHandler/UniqueModule/output_writer consumers.
         self.args = types.SimpleNamespace(parameter=[], unq_style=None)
         self.no_module_cache: bool = False
@@ -119,7 +123,7 @@ class StubManager:
         self.syntax: str = "genesis"
         self.source_comment: str = "//"
         self.output_comment: str = "//"
-        self.param_footer: bool = False
+        self.param_footer: bool = True
 
     def find_file(self, name: str, paths=None) -> str:  # pragma: no cover
         raise FileNotFoundError(name)

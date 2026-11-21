@@ -272,8 +272,7 @@ def test_param_footer_end_to_end(tmp_path: Path) -> None:
     """
     _run(
         tmp_path, PF / "pf_top.vpy", "pf_top",
-        ("--input", str(PF / "pf_leaf.vpy"), "-p", "DEPTH=32", "--params-global",
-         "--param-footer"),
+        ("--input", str(PF / "pf_leaf.vpy"), "-p", "DEPTH=32", "--params-global"),
     )
     text = _pf_leaf_text()
 
@@ -286,10 +285,28 @@ def test_param_footer_end_to_end(tmp_path: Path) -> None:
     assert re.search(r"^//\s+WIDTH\s+: 16\s+<- parent instantiation", footer, re.M)
 
 
-def test_param_footer_absent_by_default(tmp_path: Path) -> None:
-    """Without the flag the generated Verilog is unchanged."""
+def test_param_footer_present_by_default(tmp_path: Path) -> None:
+    """Without a flag the footer is appended."""
     _run(
         tmp_path, PF / "pf_top.vpy", "pf_top",
         ("--input", str(PF / "pf_leaf.vpy"), "-p", "DEPTH=32", "--params-global"),
     )
+    assert "resolved parameter sources:" in _pf_leaf_text()
+
+
+def test_no_param_footer_removes_block(tmp_path: Path) -> None:
+    _run(
+        tmp_path, PF / "pf_top.vpy", "pf_top",
+        ("--input", str(PF / "pf_leaf.vpy"), "-p", "DEPTH=32", "--params-global",
+         "--no-param-footer"),
+    )
     assert "resolved parameter sources:" not in _pf_leaf_text()
+
+
+def test_no_footer_for_module_without_params(tmp_path: Path) -> None:
+    """A module with no parameter gets no footer, whatever the default."""
+    src = tmp_path / "np.vpy"
+    src.write_text("module np;\nendmodule\n")
+    _run(tmp_path, src, "np", ())
+    key = next(k for k in cache.OUTFILE_CONTENT_CACHE if k.startswith("np"))
+    assert "resolved parameter sources:" not in cache.OUTFILE_CONTENT_CACHE[key]

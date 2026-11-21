@@ -38,6 +38,7 @@ def _header(vpy_path: str, cls_name: str, output_suffix: str) -> str:
         "\n"
         f"class {cls_name}(UniqueModule, UserMixin):\n"
         f"    _OUTPUT_SUFFIX = {output_suffix!r}\n"
+        f"    _INPUT_EXT = {os.path.splitext(vpy_path)[1].lower()!r}\n"
         "\n"
         "    def execute(self):\n"
         "        # Initialize Verilog output buffer + standard banner.\n"
@@ -53,13 +54,13 @@ def _header(vpy_path: str, cls_name: str, output_suffix: str) -> str:
 # drift -- same single-source-of-truth rationale as template/aliases.py.
 CLASS_BODY_TAIL = (
     "        # ===========================================\n"
-    "        # Optional --param-footer provenance block (no-op when off).\n"
+    "        # Parameter footer provenance block (no-op under --no-param-footer).\n"
     "        self.emit_param_footer()\n"
 )
 
 _FOOTER = CLASS_BODY_TAIL + (
     "        # Re-flush after body emit() calls (overwrites base-class flush).\n"
-    "        self._flush_outfile()\n"
+    "        self._flush_outfile(final=True)\n"
 )
 
 

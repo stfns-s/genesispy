@@ -1,0 +1,2 @@
+//; P = parameter('P', 10)
+create_clock -period `P` [get_ports clk]

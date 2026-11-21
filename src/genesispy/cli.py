@@ -18,7 +18,9 @@ from genesispy import __version__
 from genesispy import reporting
 from genesispy.reporting import warning
 from genesispy.cli_common import (  # noqa: F401 -- re-exported for callers and tests
+    PARAM_FOOTER_NOTE,
     _add_deprecated_alias,
+    _DeprecatedNoopAction,
     _comment_arg,
     _output_comment_arg,
     _emit_deprecation,
@@ -26,7 +28,7 @@ from genesispy.cli_common import (  # noqa: F401 -- re-exported for callers and 
     _warned_aliases,
 )
 from genesispy.config_handler import UNUSED_KINDS
-from genesispy.extensions import parse_extension_spec
+from genesispy.extensions import ExtensionSpec, parse_extension_spec
 
 
 _LISTFILE_DIRECTIVES = {
@@ -474,12 +476,14 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         type=parse_extension_spec,
-        metavar="EXT_IN=EXT_OUT",
+        metavar="EXT_IN=EXT_OUT[:nolist][:comment=PREFIX]",
         help=(
             "Pair an input template extension with its emitted-Verilog "
             "extension (may be repeated). Defaults: .vpy=.v, .svpy=.sv. "
             "User entries override defaults; e.g. '--extension .vpy=.sv' "
-            "or '--extension .tvpy=.tv'."
+            "or '--extension .tvpy=.tv'. Suffix ':nolist' keeps the output out "
+            "of the file lists; ':comment=PREFIX' sets its line-comment prefix "
+            "(rest of the string, verbatim)."
         ),
     )
     g_tmpl.add_argument(
@@ -523,16 +527,20 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     g_tmpl.add_argument(
-        "--param-footer",
+        "--no-param-footer",
         dest="param_footer",
-        action="store_true",
-        default=False,
+        action="store_false",
+        default=True,
         help=(
-            "Append a comment block after each generated module listing every "
-            "resolved parameter with its value and the configuration source it "
-            "came from. Unlike the module banner, this is written after the "
-            "template body runs, so it sees the fully resolved parameter set."
+            "Do not append the comment block after each generated module that "
+            "lists every resolved parameter with its value and the "
+            "configuration source it came from."
         ),
+    )
+    g_tmpl.add_argument(
+        "--param-footer",
+        action=_DeprecatedNoopAction,
+        note=PARAM_FOOTER_NOTE,
     )
     g_tmpl.add_argument(
         "-j2", "--j2",
@@ -802,7 +810,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     # any explicit .vpy mapping with a different output extension, raise; if
     # they passed exactly .vpy=.sv it's a redundant no-op.
     if args.system_verilog:
-        vpy_outs = [out for (in_ext, out) in args.extensions if in_ext == ".vpy"]
+        vpy_outs = [out for (in_ext, out, *_) in args.extensions if in_ext == ".vpy"]
         non_sv = [out for out in vpy_outs if out != ".sv"]
         if non_sv:
             parser.error(
@@ -810,7 +818,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                 f"was also given; mappings conflict."
             )
         if not vpy_outs:
-            args.extensions.append((".vpy", ".sv"))
+            args.extensions.append(ExtensionSpec(".vpy", ".sv"))
 
     if args.input_list:
         extra_in, extra_src, extra_inc = _expand_listfiles(args.input_list, parser)

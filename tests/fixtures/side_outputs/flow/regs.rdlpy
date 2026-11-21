@@ -1,0 +1,4 @@
+//; N = parameter('N', 4)
+addrmap regs {
+    reg { field { sw = rw; } f[`N`]; } r0;
+};

@@ -2,6 +2,25 @@
 
 Notable changes to genesispy. Versions follow `pyproject.toml`.
 
+## Unreleased
+
+- New template call `register_extension(in_ext, out_ext, *, listed=True, comment=None)`, also a
+  bare name: registers a template type from a template; `listed=False` keeps its outputs out of the
+  file lists and `comment` sets the prefix of their banner and footer.
+- New `--extension EXT_IN=EXT_OUT[:nolist][:comment=PREFIX]` suffixes, in genesispy and gvpy.
+- The banner and footer of a generated file use the comment prefix of its template's extension.
+- New `child.get_output_text()`: the text genesispy writes for a generated child, footer included.
+- New `self.write_side_file(name, text, *, listed=True)`: writes a file next to the instance's own
+  output, in its file-list position, with write-if-changed; conflicting repeats raise.
+- New `add_depend(path)` (bare name and method): adds a `.depend` prerequisite.
+- gvpy writes the side files of a successful run to the current directory; its child outputs are
+  still discarded. A gvpy child's output text now includes the footer.
+- Fix: `cache.UNUNIQUE_REGISTRY` is journaled, so a `generate_w_name` entry made by a child that
+  `unique_inst` discards as a duplicate no longer survives it. It used to drop the next cell's file
+  silently or stop the run with `Will generate two different UN-uniquified` modules.
+- Incompatible: the parameter footer is on by default; `--no-param-footer` turns it off, and
+  `--param-footer` is a deprecated flag that does nothing and warns once.
+
 ## 0.6.5
 
 - `verilog.limit` splits signed binary text into sign bit, body and symm last bit with `_`,
