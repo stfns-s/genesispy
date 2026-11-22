@@ -1698,6 +1698,32 @@ class UniqueModule:
             )
         return cache.OUTFILE_CONTENT_CACHE[self._outfile_name]
 
+    def get_emitted_text(self, *, clone: str = "source") -> str:
+        """Return the text this instance has emitted so far, banner included.
+
+        ``clone`` selects the result on a clone, which emits no text of its own:
+        ``"source"`` (default) returns the original's output text, ``"raise"``
+        raises ElaborationError, ``"empty"`` returns "". Any other value raises
+        ElaborationError. Returns "" before execute() opens the buffer.
+        """
+        if clone not in ("raise", "source", "empty"):
+            raise ElaborationError(
+                f"get_emitted_text: clone={clone!r} is not one of 'raise', 'source', 'empty'"
+            )
+        if self._clone_of is None:
+            if self._outfile_handle is None:
+                return ""
+            return self._outfile_handle.getvalue()
+        if clone == "source":
+            return self.get_output_text()
+        if clone == "empty":
+            return ""
+        raise ElaborationError(
+            f"get_emitted_text: {self.get_instance_path()} is a clone and emits no text of "
+            "its own. Use get_output_text() or get_emitted_text(clone='source') for the "
+            "original's text, or clone='empty' for an empty string"
+        )
+
     def _flush_outfile(self, final: bool = False) -> None:
         """Write current buffer contents to OUTFILE_CONTENT_CACHE under
         ``_unique_module_name`` and every registered synonym name.

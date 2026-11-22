@@ -10,6 +10,11 @@ Notable changes to genesispy. Versions follow `pyproject.toml`.
 - New `--extension EXT_IN=EXT_OUT[:nolist][:comment=PREFIX]` suffixes, in genesispy and gvpy.
 - The banner and footer of a generated file use the comment prefix of its template's extension.
 - New `child.get_output_text()`: the text genesispy writes for a generated child, footer included.
+- New `self.get_emitted_text(*, clone='source')`: the text an instance has emitted so far, banner
+  included. While the instance elaborates, the parameter footer is not yet in the text. On a
+  finished child the footer is present and the text equals `get_output_text()`. A method only. On
+  a clone it returns the original's text by default. With `clone='raise'` it raises
+  `ElaborationError`, and with `clone='empty'` it returns an empty string.
 - New `self.write_side_file(name, text, *, listed=True)`: writes a file next to the instance's own
   output, listed before it, with write-if-changed; conflicting repeats raise.
 - New `add_depend(path)` (bare name and method): adds a `.depend` prerequisite.

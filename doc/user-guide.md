@@ -403,11 +403,12 @@ BLOCK_PARAMS = {
 ### 6.6 Side outputs
 
 A template can produce files other than its own Verilog: a constraint file or a register description
-from a template of another type, and files whose text a Python tool computes. Four calls do this.
+from a template of another type, and files whose text a Python tool computes. Five calls do this.
 `register_extension` and `add_depend` are bare names in a template body and also methods on the
 instance (`self.register_extension(...)`). `write_side_file` is a method of the instance only, so
 write `self.write_side_file(...)`; a bare `write_side_file(...)` raises `NameError`.
-`get_output_text` is a method of a generated child.
+`get_output_text` is a method of a generated child. `get_emitted_text` is a method of the
+instance, written `self.get_emitted_text()`.
 
 - `register_extension(in_ext, out_ext, *, listed=True, comment=None)` maps a template extension to
   an output extension for the rest of the run, like `--extension`. With `listed=False` the outputs
@@ -418,6 +419,15 @@ write `self.write_side_file(...)`; a bare `write_side_file(...)` raises `NameErr
   body, banner and parameter footer. It works once `generate` (or `generate_w_name`, `unique_inst`)
   has returned, and on a clone it returns the original's text. On an instance still elaborating,
   such as `self`, it raises.
+- `self.get_emitted_text(*, clone='source')` returns the text the instance has emitted so far,
+  banner included. While the instance elaborates, the parameter footer is not yet in the text. On
+  a finished child the footer is present and the text equals `get_output_text()`. It is for a
+  template that hands its own output to a tool while it elaborates. Text from an `include()`d
+  snippet is part of it and a snippet may call it. It reads the same under gvpy. On a clone it
+  returns the original's text by default. With `clone='raise'` it raises `ElaborationError`, and
+  with `clone='empty'` it returns an empty string. A child that `generate` or `unique_inst`
+  returns for an already elaborated module with equal parameters is a clone, as is one from
+  `clone_inst`.
 - `self.write_side_file(name, text, *, listed=True)` writes `text` to the file `name`, a bare file
   name with an extension, in the synth or verif directory of the calling instance. `name` is kept as
   given: `x_hwif.rpt` does not become `x_hwif.rpt.v`. A listed file precedes the instance's own

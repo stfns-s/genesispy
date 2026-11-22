@@ -11,7 +11,11 @@ import pytest
 
 from genesispy import cache
 from genesispy.cli import parse_args
+from genesispy.gvpy_cli import main as gvpy_main
 from genesispy.manager import Manager
+from genesispy.unique_module import UniqueModule
+
+from ._stubs import StubManager
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -205,6 +209,98 @@ def test_get_output_text_includes_footer(tmp_path):
         tmp_path, TEXT / "top.vpy", "top", ("--src-path", str(TEXT))
     )
     assert "resolved parameter sources:" in m._top_inst.texts[0]
+
+
+EMITTED = FIXTURES / "side_outputs" / "emitted"
+EMITTED_SRC = ("--src-path", str(EMITTED), "--inc-path", str(EMITTED))
+
+
+def test_get_emitted_text_body_read(tmp_path):
+    m = _run(tmp_path, EMITTED / "body.vpy", "body")
+    a, b, _ = m._top_inst.reads
+    assert "generated module" in a.splitlines()[0]
+    assert b.startswith(a)
+    assert b[len(a):] == "    wire between;\n"
+    assert (tmp_path / m.verif_dir / "body.v").read_text().startswith(b)
+
+
+def test_get_emitted_text_equals_private_buffer(tmp_path):
+    m = _run(tmp_path, EMITTED / "body.vpy", "body")
+    _, b, buf = m._top_inst.reads
+    assert b == buf
+
+
+def test_get_emitted_text_include_snippet(tmp_path):
+    m = _run(tmp_path, EMITTED / "top_inc.vpy", "top_inc", EMITTED_SRC)
+    before, after, snip = m._top_inst.reads
+    assert after.startswith(before)
+    assert after[len(before):] == "    wire from_snip;\n"
+    assert snip.startswith(before)
+    assert snip.endswith("    wire from_snip;\n")
+
+
+def test_get_emitted_text_finished_child(tmp_path):
+    m = _run(tmp_path, EMITTED / "top_child.vpy", "top_child", EMITTED_SRC)
+    emitted, output = m._top_inst.pair
+    assert emitted == output
+    assert "endmodule" in emitted
+
+
+def test_get_emitted_text_clone_default_source(tmp_path):
+    m = _run(tmp_path, EMITTED / "top_clone_default.vpy", "top_clone_default", EMITTED_SRC)
+    got, expected = m._top_inst.result
+    assert got == expected
+    assert "endmodule" in got
+
+
+def test_get_emitted_text_clone_raise(tmp_path, capsys):
+    err = _run_fail(
+        tmp_path, EMITTED / "top_clone_raise.vpy", "top_clone_raise", EMITTED_SRC, capsys
+    )
+    assert "top_clone_raise.u1" in err
+    assert "get_emitted_text:" in err
+    assert "get_output_text()" in err
+    assert "clone='source'" in err
+
+
+def test_get_emitted_text_dedup_clone(tmp_path):
+    m = _run(tmp_path, EMITTED / "top_dedup.vpy", "top_dedup", EMITTED_SRC)
+    is_clone, got, expected = m._top_inst.result
+    assert is_clone is True
+    assert got == expected
+
+
+def test_get_emitted_text_clone_source(tmp_path):
+    m = _run(tmp_path, EMITTED / "top_clone_source.vpy", "top_clone_source", EMITTED_SRC)
+    got, expected = m._top_inst.result
+    assert got == expected
+    assert "endmodule" in got
+
+
+def test_get_emitted_text_clone_empty(tmp_path):
+    m = _run(tmp_path, EMITTED / "top_clone_empty.vpy", "top_clone_empty", EMITTED_SRC)
+    assert m._top_inst.result == ""
+
+
+def test_get_emitted_text_bad_clone_value(tmp_path, capsys):
+    err = _run_fail(tmp_path, EMITTED / "top_bogus.vpy", "top_bogus", (), capsys)
+    assert "get_emitted_text:" in err
+    assert "'bogus'" in err
+    assert "'raise', 'source', 'empty'" in err
+
+
+def test_get_emitted_text_before_execute():
+    mod = UniqueModule(StubManager())
+    assert mod.get_emitted_text() == ""
+    assert mod._outfile_handle is None
+
+
+@pytest.mark.parametrize("flags", [[], ["--gvpy-strict"]])
+def test_get_emitted_text_gvpy(monkeypatch, capsys, flags):
+    monkeypatch.chdir(EMITTED)
+    rc = gvpy_main([*flags, "top_gvpy.vpy"])
+    assert rc == 0
+    assert "// emitted text matches" in capsys.readouterr().out
 
 
 SIDE = FIXTURES / "side_outputs" / "side"

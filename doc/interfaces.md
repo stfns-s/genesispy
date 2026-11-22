@@ -685,6 +685,18 @@ class UniqueModule:
     # elaborating; the base execute() flush holds the banner alone). A
     # method on the child, no bare name.
     def get_output_text(self) -> str: ...
+    # Text this instance has emitted so far: the whole buffer, banner included. While the
+    # instance elaborates, the parameter footer is not yet in the text. On a finished child
+    # the footer is present and the text equals get_output_text(). Returns "" before
+    # execute() opens the buffer. Reads only: no flush, no allocation. Includes text from
+    # include()d snippets and works under gvpy. clone selects the result on a clone
+    # (_clone_of is not None), which emits no text of its own: "source" (default) returns
+    # get_output_text(), the original's text, "raise" raises ElaborationError naming the
+    # instance path, "empty" returns "". A child that generate or unique_inst returns for an
+    # already elaborated module with equal parameters is a clone, as is one from
+    # clone_inst. On a non-clone the argument has no effect. Any other clone value raises
+    # ElaborationError, checked first on every instance. A method, no bare name.
+    def get_emitted_text(self, *, clone: str = "source") -> str: ...
 
     # Write text as the file name, listed before this instance's own output in the file lists
     # and in its synth/verif directory. name is a bare file name with an extension, else
