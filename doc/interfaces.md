@@ -686,7 +686,7 @@ class UniqueModule:
     # method on the child, no bare name.
     def get_output_text(self) -> str: ...
 
-    # Write text as the file name, listed after this instance's own output in the file lists
+    # Write text as the file name, listed before this instance's own output in the file lists
     # and in its synth/verif directory. name is a bare file name with an extension, else
     # ElaborationError. The text goes to cache.OUTFILE_CONTENT_CACHE and an entry to
     # cache.SIDE_FILES; the name is kept as given (no .v suffix). A text that is not a str

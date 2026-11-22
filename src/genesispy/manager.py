@@ -592,6 +592,14 @@ class Manager:
             if fname is None:
                 continue
             tag = "synth" if is_synth else "verif"
+            # Side files first: one may hold a package that the own output imports.
+            for side in inst._side_files:
+                # A rolled-back duplicate may have written through this instance.
+                if side not in cache.SIDE_FILES:
+                    continue
+                _promote(side, tag)
+                if not cache.SIDE_FILES[side]["listed"]:
+                    cache.OUTFILE_UNLISTED.add(side)
             _promote(fname, tag)
             style = inst._comment_style()
             differs = style != self.output_comment
@@ -608,13 +616,6 @@ class Manager:
                     cache.OUTFILE_UNLISTED.add(f"{syn}{suffix}")
                 if differs:
                     cache.OUTFILE_COMMENT[f"{syn}{suffix}"] = style
-            for side in inst._side_files:
-                # A rolled-back duplicate may have written through this instance.
-                if side not in cache.SIDE_FILES:
-                    continue
-                _promote(side, tag)
-                if not cache.SIDE_FILES[side]["listed"]:
-                    cache.OUTFILE_UNLISTED.add(side)
 
     def clean(self) -> None:
         """Delete generated output directories, lists and named products."""

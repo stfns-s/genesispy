@@ -420,11 +420,12 @@ write `self.write_side_file(...)`; a bare `write_side_file(...)` raises `NameErr
   such as `self`, it raises.
 - `self.write_side_file(name, text, *, listed=True)` writes `text` to the file `name`, a bare file
   name with an extension, in the synth or verif directory of the calling instance. `name` is kept as
-  given: `x_hwif.rpt` does not become `x_hwif.rpt.v`. A listed file follows the instance's own output
-  in the file lists. A repeat of a name needs the same text and the same `listed`; otherwise, or when
-  `name` is a template's output file, the run fails and the message names both instance paths. An
-  instance writes side files only while it elaborates: a call on a child after `generate` returned
-  fails, so a parent that wants a file for a child writes it on itself.
+  given: `x_hwif.rpt` does not become `x_hwif.rpt.v`. A listed file precedes the instance's own
+  output in the file lists, so it can hold a package that the output imports. A repeat of a name
+  needs the same text and the same `listed`; otherwise, or when `name` is a template's output file,
+  the run fails and the message names both instance paths. An instance writes side files only while
+  it elaborates: a call on a child after `generate` returned fails, so a parent that wants a file
+  for a child writes it on itself.
 - `add_depend(path)` adds `path` to the prerequisites in `<top>.depend`, once. Use it for a file the
   template reads outside genesispy, such as a Python helper module or a file a tool includes.
 
@@ -1461,7 +1462,7 @@ A `genesispy` run produces:
 - `genesis_raw/<stem>.py` -- generated Python intermediate per `.vpy` input. The raw directory persists after the run (removed by `--clean` or `--stdout`); `--gen-raw` additionally writes the per-module `.v` siblings into it. `--raw-dir DIR` relocates the directory; `--use-tmp` puts it under `/tmp/genesispy_*` (auto-cleaned at exit; `--keep-tmp` preserves the scratch).
 - `genesis_synth/<module>.v` -- elaborated Verilog for instances at or under `--synth-top`. (Empty when `--synth-top` is omitted.)
 - `genesis_verif/<module>.v` -- elaborated Verilog for instances outside the synth cone (everything when `--synth-top` is omitted, mirroring Genesis2's `SynthTop=undef` default).
-- `genesis_synth/<name>` or `genesis_verif/<name>` for a side file -- a file written by `write_side_file` or an output of a registered extension (`<module>.sdc`), in the directory of its instance, with the name as given. It follows its instance's own output in the file lists unless it is unlisted (section 6.6).
+- `genesis_synth/<name>` or `genesis_verif/<name>` for a side file -- a file written by `write_side_file` or an output of a registered extension (`<module>.sdc`), in the directory of its instance, with the name as given. A `write_side_file` file precedes its instance's own output in the file lists. An extension output is its instance's own output. An unlisted file of either kind is in no list (section 6.6).
 - `<outputdir>/<top>.vlist` -- full compile-order file list (every emitted `.v` and every listed side file, regardless of synth/verif tag). Suppressed when `--product` or `--vf-out` is set.
 - `<outputdir>/<top>.vlist.verif` -- emitted only when at least one verif-tagged file exists; lists verif + synth_and_verif paths. Suppressed when `--product` or `--vf-out` is set.
 - `<top>.depend` -- Make-style dependency list, written whenever files are flushed to disk (not under `--stdout` or `--parse-only`). Target is the `.vlist` by default, or the named product file under `--product`/`--vf-out`.

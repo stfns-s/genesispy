@@ -1,0 +1,10 @@
+//; pkg = 'package blk_pkg;\n    typedef logic [7:0] byte_t;\nendpackage\n'
+//; self.write_side_file('blk_pkg.sv', pkg)
+module `mname`
+    import blk_pkg::*;
+(
+    input  byte_t d,
+    output byte_t q
+);
+    assign q = d;
+endmodule

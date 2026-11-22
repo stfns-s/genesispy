@@ -11,7 +11,7 @@ Notable changes to genesispy. Versions follow `pyproject.toml`.
 - The banner and footer of a generated file use the comment prefix of its template's extension.
 - New `child.get_output_text()`: the text genesispy writes for a generated child, footer included.
 - New `self.write_side_file(name, text, *, listed=True)`: writes a file next to the instance's own
-  output, in its file-list position, with write-if-changed; conflicting repeats raise.
+  output, listed before it, with write-if-changed; conflicting repeats raise.
 - New `add_depend(path)` (bare name and method): adds a `.depend` prerequisite.
 - gvpy writes the side files of a successful run to the current directory; its child outputs are
   still discarded. A gvpy child's output text now includes the footer.

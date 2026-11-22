@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -213,11 +215,65 @@ def _names(path: Path) -> list:
     return [os.path.basename(p) for p in path.read_text().split()]
 
 
-def test_side_file_listed_after_its_instance(tmp_path):
-    m = _run(tmp_path, SIDE / "listed.vpy", "listed", SRC + ("--vf-out", "top.vf"))
-    names = _names(tmp_path / "top.vf")
-    assert names.index("leaf_hwif.rpt") == names.index("leaf_unq1.v") + 1
+@pytest.mark.parametrize("vf", [True, False])
+def test_side_file_listed_before_its_instance(tmp_path, vf):
+    extra = ("--vf-out", "top.vf") if vf else ()
+    m = _run(tmp_path, SIDE / "listed.vpy", "listed", SRC + extra)
+    path = tmp_path / "top.vf" if vf else tmp_path / m.output_dir / "listed.vlist"
+    names = _names(path)
+    assert names.index("leaf_hwif.rpt") == names.index("leaf_unq1.v") - 1
     assert (tmp_path / m.verif_dir / "leaf_hwif.rpt").read_text() == "report\n"
+
+
+def _vf_names(tmp_path, fixture):
+    top = Path(fixture).stem
+    _run(tmp_path, SIDE / fixture, top, SRC + ("--vf-out", "top.vf"))
+    return _names(tmp_path / "top.vf")
+
+
+def test_side_files_keep_call_order(tmp_path):
+    assert _vf_names(tmp_path, "two.vpy") == ["two_b.rpt", "two_a.rpt", "two.v"]
+
+
+def test_child_output_precedes_parent_side_file(tmp_path):
+    assert _vf_names(tmp_path, "blk.vpy") == ["blk_cell.v", "blk.rpt", "blk.v"]
+
+
+def test_side_file_order_with_clones(tmp_path):
+    assert _vf_names(tmp_path, "clones.vpy") == ["cl_unq1.rpt", "cl_unq1.v", "clones.v"]
+
+
+def test_side_file_package_listed_before_its_user(tmp_path):
+    assert _vf_names(tmp_path, "pkguser.svpy") == ["blk_pkg.sv", "pkguser.sv"]
+
+
+@pytest.mark.skipif(shutil.which("verilator") is None, reason="`verilator` not in PATH")
+def test_side_file_package_compiles_from_vf(tmp_path):
+    _vf_names(tmp_path, "pkguser.svpy")
+    res = subprocess.run(
+        ["verilator", "--lint-only", "-f", "top.vf"],
+        cwd=tmp_path, capture_output=True, text=True, check=False,
+    )
+    assert res.returncode == 0, res.stderr
+
+
+def test_shared_side_file_listed_at_first_writer(tmp_path):
+    assert _vf_names(tmp_path, "dup_same.vpy") == [
+        "shared.txt", "wa_unq1.v", "wb_unq1.v", "dup_same.v",
+    ]
+
+
+def test_side_file_written_through_parent_precedes_parent(tmp_path):
+    assert _vf_names(tmp_path, "pdiscard.vpy") == ["pblk_unq1.v", "u_a.rpt", "pdiscard.v"]
+
+
+def test_side_file_order_in_product_lists(tmp_path):
+    _run(
+        tmp_path, SIDE / "listed.vpy", "listed",
+        SRC + ("--product", "top.vf", "--synth-top", "listed"),
+    )
+    for name in ("top.vf", "top.synth.vf"):
+        assert _names(tmp_path / name) == ["leaf_hwif.rpt", "leaf_unq1.v", "listed.v"], name
 
 
 def test_side_file_follows_synth_tag(tmp_path):

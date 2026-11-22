@@ -298,10 +298,11 @@ Legacy XML configs convert via `genesispy-xml2json`. Full `ConfigHandler` API: s
 - `genesis_verif/<name><suffix>` -- verification flavour.
 - Side files -- files from `UniqueModule.write_side_file` and outputs of templates whose extension
   `register_extension` or `--extension` registered. Their text is in `cache.OUTFILE_CONTENT_CACHE`
-  and the side-file records in `cache.SIDE_FILES`. `Manager._populate_outfile_tags` gives each side
-  file its instance's tag and a place after the instance's own output in `OUTFILE_ORDER`, so the file
-  lands in the instance's synth or verif directory. The same walk fills `OUTFILE_UNLISTED` (side
-  files with `listed=False` and outputs of `:nolist` extensions), which `output_writer` leaves out of
+  and the side-file records in `cache.SIDE_FILES`. `Manager._populate_outfile_tags` gives each
+  `write_side_file` file its instance's tag, so the file lands in the instance's synth or verif
+  directory, and a place before the instance's own output in `OUTFILE_ORDER`, in call order. An
+  extension output is its instance's own output. The same walk fills `OUTFILE_UNLISTED` (side files
+  with `listed=False` and outputs of `:nolist` extensions), which `output_writer` leaves out of
   every list, and `OUTFILE_COMMENT` (the comment style of outputs whose extension registered one).
   `output_writer.flush_to_disk` also leaves out a side file whose `SIDE_FILES` entry has
   `listed=False`, whether or not the walk reached its instance. Names are written as given, with no
